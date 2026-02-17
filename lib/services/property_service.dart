@@ -1,0 +1,464 @@
+import '../models/property.dart';
+import '../models/property_status.dart';
+import '../models/user_role.dart';
+import 'hive_service.dart';
+import 'notification_service.dart';
+import 'role_guard.dart';
+import '../data/routes_helpers.dart';
+import 'trip_service.dart';
+
+import 'whatsapp_service.dart';
+import 'audit_service.dart';
+
+import 'pickup_qr_service.dart';
+import '../../services/session.dart';
+
+class PropertyService {
+  static String _generateOtp() {
+    final ms = DateTime.now().millisecondsSinceEpoch;
+    return (100000 + (ms % 900000)).toString();
+  }
+
+  static const Duration _otpTtl = Duration(hours: 12);
+  static const int _maxOtpAttempts = 3;
+  static const Duration _otpLockDuration = Duration(minutes: 10);
+
+  static String _newNonce() {
+    // offline-friendly unique-ish value
+    return DateTime.now().microsecondsSinceEpoch.toString();
+  }
+
+  static bool _isOtpExpired(Property p) {
+    final gen = p.otpGeneratedAt;
+    if (gen == null) return true;
+    return DateTime.now().isAfter(gen.add(_otpTtl));
+  }
+
+  static bool _isOtpLocked(Property p) {
+    final until = p.otpLockedUntil;
+    if (until == null) return false;
+    return DateTime.now().isBefore(until);
+  }
+
+  static bool isOtpExpired(Property p) => _isOtpExpired(p);
+  static bool isOtpLocked(Property p) => _isOtpLocked(p);
+
+  static int remainingLockMinutes(Property p) {
+    final until = p.otpLockedUntil;
+    if (until == null) return 0;
+    final diff = until.difference(DateTime.now());
+    return diff.inMinutes < 0 ? 0 : diff.inMinutes;
+  }
+
+  // =========================
+  // Delivered + OTP + Pickup QR
+  // =========================
+  static Future<void> markDelivered(Property p) async {
+    if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return;
+
+    final box = HiveService.propertyBox();
+    final fresh = box.get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.inTransit) return;
+
+    final now = DateTime.now();
+
+    // ✅ Step 1: mark delivered FIRST (persist)
+    fresh.status = PropertyStatus.delivered;
+    fresh.deliveredAt = now;
+    await fresh.save();
+
+    // ✅ Step 2: issue OTP + QR using PickupQrService (single source of truth)
+    final otp = (fresh.pickupOtp ?? '').trim().isEmpty
+        ? _generateOtp()
+        : fresh.pickupOtp!.trim();
+
+    await PickupQrService.issueForDelivered(fresh, otp: otp);
+
+    // ✅ Notifications
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Property delivered to station',
+      message:
+          'Your property arrived at the destination station. OTP/QR issued for pickup.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Store update: Delivered',
+      message:
+          'Property for ${fresh.receiverName} delivered. OTP/QR issued for pickup.',
+    );
+  }
+
+  static Future<bool> confirmPickupWithOtp(Property p, String otp) async {
+    if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return false;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    if (fresh.status != PropertyStatus.delivered) return false;
+    if (fresh.pickupOtp == null) return false;
+    if (_isOtpLocked(fresh)) return false;
+    if (_isOtpExpired(fresh)) return false;
+
+    if (otp.trim() != fresh.pickupOtp) {
+      fresh.otpAttempts = fresh.otpAttempts + 1;
+
+      if (fresh.otpAttempts >= _maxOtpAttempts) {
+        fresh.otpLockedUntil = DateTime.now().add(_otpLockDuration);
+      }
+
+      await fresh.save();
+      return false;
+    }
+
+    fresh.status = PropertyStatus.pickedUp;
+    fresh.pickedUpAt = DateTime.now();
+    fresh.staffPickupConfirmed = true;
+
+    fresh.pickupOtp = null;
+    fresh.otpGeneratedAt = null;
+    fresh.otpAttempts = 0;
+    fresh.otpLockedUntil = null;
+
+    // ✅ one-time QR: consumed after successful pickup
+    fresh.qrConsumedAt = DateTime.now();
+
+    await fresh.save();
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Property picked up',
+      message: 'Your property was picked up by the receiver.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Pickup confirmed',
+      message:
+          'Receiver pickup confirmed for ${fresh.receiverName} (${fresh.receiverPhone}).',
+    );
+
+    return true;
+  }
+
+  static Future<void> adminUnlockOtp(Property p) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    fresh.otpAttempts = 0;
+    fresh.otpLockedUntil = null;
+    await fresh.save();
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'OTP unlocked',
+      message:
+          'Admin unlocked OTP for ${fresh.receiverName} (${fresh.receiverPhone}).',
+    );
+  }
+
+  static Future<void> adminResetOtp(Property p) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.delivered) return;
+
+    fresh.pickupOtp = _generateOtp();
+    fresh.otpGeneratedAt = DateTime.now();
+    fresh.otpAttempts = 0;
+    fresh.otpLockedUntil = null;
+
+    // ✅ reset QR session on OTP reset
+    fresh.qrIssuedAt = DateTime.now();
+    fresh.qrNonce = _newNonce();
+    fresh.qrConsumedAt = null;
+
+    await fresh.save();
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'OTP reset',
+      message:
+          'The pickup OTP was reset at the station. If you need it, contact the station staff.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'OTP reset',
+      message:
+          'Admin reset OTP for ${fresh.receiverName} (${fresh.receiverPhone}).',
+    );
+  }
+
+  // =========================
+  // In Transit + Route Trip
+  // =========================
+  static Future<void> markInTransit(Property p) async {
+    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.pending) return;
+
+    final route = findRouteById(fresh.routeId);
+    if (route == null) {
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Route missing',
+        message:
+            'Cannot start trip: property for ${fresh.receiverName} has no valid routeId.',
+      );
+      return;
+    }
+
+    final cps = validatedCheckpoints(route);
+    if (cps.isEmpty) {
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Route invalid',
+        message:
+            'Route "${route.name}" has invalid checkpoints. Fix coordinates before tracking.',
+      );
+      return;
+    }
+
+    final active = TripService.getActiveTripForCurrentDriver();
+    if (active != null && active.routeId != route.id) {
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Route mismatch blocked',
+        message:
+            'Driver has an active trip (${active.routeName}) but tried to load cargo for route (${route.name}). Blocked to avoid mixing routes.',
+      );
+      return;
+    }
+
+    fresh.routeId = route.id;
+    fresh.routeName = route.name;
+
+    fresh.status = PropertyStatus.inTransit;
+    fresh.inTransitAt = DateTime.now();
+
+    final trip = await TripService.ensureActiveTrip(
+      routeId: route.id,
+      routeName: route.name,
+      checkpoints: cps,
+    );
+
+    fresh.tripId = trip.tripId;
+    await fresh.save();
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Property in transit',
+      message: 'Your property is now in transit.\nRoute: ${route.name}',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Driver update: In transit',
+      message:
+          'Property for ${fresh.receiverName} is in transit.\nRoute: ${route.name}',
+    );
+  }
+
+  // =========================
+  // Admin override
+  // =========================
+  static Future<void> adminSetStatus(
+    Property p,
+    PropertyStatus newStatus,
+  ) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status == newStatus) return;
+
+    if (newStatus == PropertyStatus.inTransit &&
+        fresh.status == PropertyStatus.pending) {
+      await markInTransit(fresh);
+      return;
+    }
+
+    if (newStatus == PropertyStatus.delivered &&
+        fresh.status == PropertyStatus.inTransit) {
+      await markDelivered(fresh);
+      return;
+    }
+
+    if (newStatus == PropertyStatus.pending) {
+      fresh.status = PropertyStatus.pending;
+      fresh.inTransitAt = null;
+      fresh.deliveredAt = null;
+      fresh.pickedUpAt = null;
+      fresh.pickupOtp = null;
+
+      fresh.otpGeneratedAt = null;
+      fresh.otpAttempts = 0;
+      fresh.otpLockedUntil = null;
+
+      fresh.staffPickupConfirmed = false;
+      fresh.receiverPickupConfirmed = false;
+      fresh.tripId = null;
+
+      // ✅ reset QR state
+      fresh.qrIssuedAt = null;
+      fresh.qrNonce = '';
+      fresh.qrConsumedAt = null;
+
+      // ✅ reset loaded milestone
+      fresh.loadedAt = null;
+      fresh.loadedAtStation = '';
+      fresh.loadedByUserId = '';
+
+      await fresh.save();
+      return;
+    }
+
+    if (newStatus == PropertyStatus.inTransit) {
+      final route = findRouteById(fresh.routeId);
+      if (route != null) {
+        final cps = validatedCheckpoints(route);
+        if (cps.isNotEmpty) {
+          final trip = await TripService.ensureActiveTrip(
+            routeId: route.id,
+            routeName: route.name,
+            checkpoints: cps,
+          );
+          fresh.tripId = trip.tripId;
+          fresh.routeId = route.id;
+          fresh.routeName = route.name;
+        }
+      }
+    }
+
+    if (newStatus == PropertyStatus.inTransit) {
+      fresh.inTransitAt ??= DateTime.now();
+    }
+
+    if (newStatus == PropertyStatus.delivered) {
+      fresh.deliveredAt ??= DateTime.now();
+      fresh.pickupOtp ??= _generateOtp();
+      fresh.otpGeneratedAt ??= DateTime.now();
+      fresh.otpAttempts = 0;
+      fresh.otpLockedUntil = null;
+
+      // ✅ ensure QR session exists for delivered
+      fresh.qrIssuedAt ??= DateTime.now();
+      if (fresh.qrNonce.trim().isEmpty) fresh.qrNonce = _newNonce();
+      fresh.qrConsumedAt = null;
+    }
+
+    if (newStatus == PropertyStatus.pickedUp) {
+      fresh.pickedUpAt ??= DateTime.now();
+      fresh.staffPickupConfirmed = true;
+      fresh.receiverPickupConfirmed = true;
+
+      fresh.pickupOtp = null;
+      fresh.otpGeneratedAt = null;
+      fresh.otpAttempts = 0;
+      fresh.otpLockedUntil = null;
+
+      // ✅ consume QR
+      fresh.qrConsumedAt ??= DateTime.now();
+    }
+
+    fresh.status = newStatus;
+    await fresh.save();
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Admin status update',
+      message:
+          'Admin updated your property for ${fresh.receiverName} to ${newStatus.name}.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Admin override applied',
+      message:
+          'Status set to ${newStatus.name} for ${fresh.receiverName} (${fresh.receiverPhone}).',
+    );
+  }
+
+  // =========================
+  // WhatsApp OTP
+  // =========================
+  static String _otpMessage(Property p) {
+    final otp = p.pickupOtp ?? '';
+    final station = p.destination;
+    return 'Bebeto Cargo\n'
+        'Pickup OTP: $otp\n'
+        'Station: $station\n'
+        'Receiver: ${p.receiverName}\n'
+        'Use this OTP to collect your cargo.';
+  }
+
+  static Future<bool> sendPickupOtpViaWhatsApp(Property p) async {
+    if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return false;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.delivered) return false;
+    if (fresh.pickupOtp == null) return false;
+    if (_isOtpLocked(fresh) || _isOtpExpired(fresh)) return false;
+
+    final phoneE164 = WhatsAppService.ugToE164(fresh.receiverPhone);
+    final ok = await WhatsAppService.openChat(
+      phoneE164: phoneE164,
+      message: _otpMessage(fresh),
+    );
+
+    await AuditService.log(
+      action: ok ? 'staff_whatsapp_otp_opened' : 'staff_whatsapp_otp_failed',
+      propertyKey: fresh.key.toString(),
+      details: 'WhatsApp OTP to ${fresh.receiverPhone}',
+    );
+
+    return ok;
+  }
+
+  // =========================
+  // QR helpers (signed QR flow you already have)
+  // =========================
+
+  /// Call this from UI to force-refresh QR (optional).
+  static Future<void> refreshPickupQr(Property p) async {
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.delivered) return;
+    if (fresh.pickupOtp == null || fresh.otpGeneratedAt == null) return;
+    if (_isOtpLocked(fresh) || _isOtpExpired(fresh)) return;
+    if (fresh.qrConsumedAt != null) return;
+
+    fresh.qrIssuedAt = DateTime.now();
+    fresh.qrNonce = _newNonce();
+    await fresh.save();
+  }
+
+  static Future<bool> markLoaded(Property p, {required String station}) async {
+    if (!RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin})) {
+      return false;
+    }
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    // Recommended: only allow when still pending
+    if (fresh.status != PropertyStatus.pending) return false;
+
+    // Idempotent (don’t rewrite if already loaded)
+    if (fresh.loadedAt != null) return true;
+
+    fresh.loadedAt = DateTime.now();
+    fresh.loadedAtStation = station.trim();
+    fresh.loadedByUserId = (Session.currentUserId ?? '').trim();
+
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'desk_mark_loaded',
+      propertyKey: fresh.key.toString(),
+      details: 'Marked loaded at station: ${fresh.loadedAtStation}',
+    );
+
+    return true;
+  }
+}

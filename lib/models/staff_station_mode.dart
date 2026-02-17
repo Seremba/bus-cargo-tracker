@@ -1,0 +1,4 @@
+enum StaffStationMode {
+  arriving,
+  pickup,
+}

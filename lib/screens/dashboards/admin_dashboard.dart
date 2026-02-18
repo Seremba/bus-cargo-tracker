@@ -182,17 +182,31 @@ class AdminDashboard extends StatelessWidget {
                   minimumSize: const Size.fromHeight(48),
                 ),
                 icon: const Icon(Icons.person_add),
-                label: const Text('Create Staff/Driver'),
-                onPressed: () {
-                  Navigator.push(
+                label: const Text('Create User'),
+                onPressed: () async {
+                  final createdUser = await Navigator.push(
                     context,
                     MaterialPageRoute(
                       builder: (_) => const AdminCreateUserScreen(),
                     ),
                   );
+
+                  // If AdminCreateUserScreen pops(user), we can optionally show a small confirmation here.
+                  if (createdUser != null && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('User created ✅')),
+                    );
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminUsersScreen(),
+                      ),
+                    );
+                  }
                 },
               ),
             ),
+
             const SizedBox(height: 10),
 
             SizedBox(

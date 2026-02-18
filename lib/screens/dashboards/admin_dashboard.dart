@@ -32,6 +32,24 @@ class AdminDashboard extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
+    Widget actionButton({
+      required IconData icon,
+      required String label,
+      required VoidCallback onPressed,
+    }) {
+      return SizedBox(
+        width: double.infinity,
+        child: ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            minimumSize: const Size.fromHeight(48),
+          ),
+          icon: Icon(icon),
+          label: Text(label),
+          onPressed: onPressed,
+        ),
+      );
+    }
+
     return PopScope(
       canPop: false,
       child: Scaffold(
@@ -225,78 +243,56 @@ class AdminDashboard extends StatelessWidget {
                 },
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AdminTripsScreen()),
-                  );
-                },
-                child: const Text('Trips'),
-              ),
+            actionButton(
+              icon: Icons.route_outlined,
+              label: 'Trips',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminTripsScreen()),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminActiveTripsScreen(),
-                    ),
-                  );
-                },
-                child: const Text('Active Trips'),
-              ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.local_shipping_outlined,
+              label: 'Active Trips',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminActiveTripsScreen(),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminPerformanceScreen(),
-                    ),
-                  );
-                },
-                child: const Text('Performance'),
-              ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.speed_outlined,
+              label: 'Performance',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminPerformanceScreen(),
+                  ),
+                );
+              },
             ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton(
-                style: OutlinedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminExceptionsScreen(),
-                    ),
-                  );
-                },
-                child: const Text('Exceptions'),
-              ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.report_problem_outlined,
+              label: 'Exceptions',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminExceptionsScreen(),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 12),
           ],

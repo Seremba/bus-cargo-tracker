@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../widgets/logout_button.dart';
 import 'driver_cargo_screen.dart';
 
+import '../../services/session.dart';
+
 class DriverDashboard extends StatelessWidget {
   const DriverDashboard({super.key});
 
@@ -11,7 +13,20 @@ class DriverDashboard extends StatelessWidget {
       canPop: false,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Driver Dashboard'),
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Driver Dashboard'),
+              Text(
+                (Session.currentUserFullName ?? '—').trim(),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+
           actions: const [LogoutButton()],
         ),
         body: Padding(
@@ -19,7 +34,11 @@ class DriverDashboard extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text('Welcome, Driver', style: TextStyle(fontSize: 18)),
+              Text(
+                'Welcome, ${(Session.currentUserFullName ?? 'Driver').trim()}',
+                style: const TextStyle(fontSize: 18),
+              ),
+
               const SizedBox(height: 20),
               SizedBox(
                 width: double.infinity,

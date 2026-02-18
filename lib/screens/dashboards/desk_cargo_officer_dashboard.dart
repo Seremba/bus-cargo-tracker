@@ -26,13 +26,28 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
 
     final payBox = HiveService.paymentBox();
     final propBox = HiveService.propertyBox();
+    final name = (Session.currentUserFullName ?? '—').trim();
+    final station = (Session.currentStationName ?? '').trim();
 
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         appBar: AppBar(
           centerTitle: true,
-          title: const Text('Desk Cargo Officer'),
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Desk Cargo Officer'),
+              Text(
+                station.isEmpty ? name : '$name • $station',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Scan'),
@@ -56,12 +71,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                        .where(
-                          (x) =>
-                              x.station.trim().toLowerCase() ==
-                              station.toLowerCase(),
-                        )
-                        .toList();
+                          .where(
+                            (x) =>
+                                x.station.trim().toLowerCase() ==
+                                station.toLowerCase(),
+                          )
+                          .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -101,9 +116,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                     );
                     messenger.showSnackBar(
                       SnackBar(
-                        content: Text(
-                          'CSV ready ✅ (payments_today_$slug.csv)',
-                        ),
+                        content: Text('CSV ready ✅ (payments_today_$slug.csv)'),
                       ),
                     );
                   } catch (e) {
@@ -138,9 +151,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                     );
                     messenger.showSnackBar(
                       SnackBar(
-                        content: Text(
-                          'PDF ready ✅ (payments_today_$slug.pdf)',
-                        ),
+                        content: Text('PDF ready ✅ (payments_today_$slug.pdf)'),
                       ),
                     );
                   } catch (e) {
@@ -216,12 +227,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                        .where(
-                          (x) =>
-                              x.station.trim().toLowerCase() ==
-                              station.toLowerCase(),
-                        )
-                        .toList();
+                          .where(
+                            (x) =>
+                                x.station.trim().toLowerCase() ==
+                                station.toLowerCase(),
+                          )
+                          .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -291,11 +302,13 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                             'UGX ${x.amount} • ${x.method.trim().isEmpty ? '—' : x.method.trim()}',
                           ),
                           subtitle: () {
-                            final prop = propBox.get(int.tryParse(x.propertyKey));
+                            final prop = propBox.get(
+                              int.tryParse(x.propertyKey),
+                            );
                             final code =
                                 (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                    ? prop!.propertyCode.trim()
-                                    : '—';
+                                ? prop!.propertyCode.trim()
+                                : '—';
 
                             return Text(
                               'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',

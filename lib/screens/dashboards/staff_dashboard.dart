@@ -7,6 +7,7 @@ import '../staff/staff_station_select_screen.dart';
 import '../../services/pickup_qr_service.dart';
 import '../staff/staff_pickup_qr_scanner_screen.dart';
 import '../staff/staff_confirm_pickup_screen.dart';
+import '../../services/session.dart';
 
 class StaffDashboard extends StatelessWidget {
   const StaffDashboard({super.key});
@@ -17,7 +18,20 @@ class StaffDashboard extends StatelessWidget {
       canPop: false,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('Staff Dashboard'),
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('Staff Dashboard'),
+              Text(
+                (Session.currentUserFullName ?? '—').trim(),
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+
           actions: const [LogoutButton()],
         ),
         body: Padding(
@@ -25,10 +39,11 @@ class StaffDashboard extends StatelessWidget {
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              const Text(
-                'Welcome, Store staff',
-                style: TextStyle(fontSize: 18),
+              Text(
+                'Welcome, ${(Session.currentUserFullName ?? 'Staff').trim()}',
+                style: const TextStyle(fontSize: 18),
               ),
+
               const SizedBox(height: 24),
 
               SizedBox(

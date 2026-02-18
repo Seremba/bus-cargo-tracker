@@ -151,6 +151,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
       HiveService.setUser(user.id);
       Session.currentUserId = user.id;
+      Session.currentUserFullName = user.fullName;
       Session.currentRole = user.role;
       Session.currentStationName = user.stationName;
 

@@ -73,7 +73,7 @@ class StaffDashboard extends StatelessWidget {
                       context,
                       MaterialPageRoute(
                         builder: (_) => const StaffStationSelectScreen(
-                          mode: StaffStationMode.arriving,
+                          mode: StaffStationMode.pickup,
                         ),
                       ),
                     );

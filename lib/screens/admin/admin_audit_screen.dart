@@ -128,67 +128,85 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
   }
 
   Widget _filters() {
-    return Padding(
-      padding: const EdgeInsets.all(8),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _actionFilter,
-                  decoration: const InputDecoration(
-                    labelText: 'Action',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'ALL', child: Text('All')),
-                    DropdownMenuItem(
-                      value: 'staff_mark_delivered',
-                      child: Text('Staff: Mark Delivered'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'staff_confirm_pickup_ok',
-                      child: Text('Staff: Pickup OK'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'staff_confirm_pickup_failed',
-                      child: Text('Staff: Pickup Failed'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'admin_unlock_otp',
-                      child: Text('Admin: Unlock OTP'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'admin_reset_otp',
-                      child: Text('Admin: Reset OTP'),
-                    ),
-                  ],
-                  onChanged: (v) => setState(() => _actionFilter = v ?? 'ALL'),
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  initialValue: _roleFilter,
-                  decoration: const InputDecoration(
-                    labelText: 'Actor Role',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: const [
-                    DropdownMenuItem(value: 'ALL', child: Text('All')),
-                    DropdownMenuItem(value: 'admin', child: Text('Admin')),
-                    DropdownMenuItem(value: 'staff', child: Text('Staff')),
-                    DropdownMenuItem(value: 'driver', child: Text('Driver')),
-                    DropdownMenuItem(value: 'sender', child: Text('Sender')),
-                  ],
-                  onChanged: (v) => setState(() => _roleFilter = v ?? 'ALL'),
-                ),
-              ),
-            ],
+  return Padding(
+    padding: const EdgeInsets.all(8),
+    child: LayoutBuilder(
+      builder: (context, constraints) {
+        final isNarrow = constraints.maxWidth < 520;
+
+        final actionDropdown = DropdownButtonFormField<String>(
+          isExpanded: true, // ✅ important
+          initialValue: _actionFilter,
+          decoration: const InputDecoration(
+            labelText: 'Action',
+            border: OutlineInputBorder(),
           ),
-        ],
-      ),
-    );
-  }
+          items: const [
+            DropdownMenuItem(value: 'ALL', child: Text('All')),
+            DropdownMenuItem(
+              value: 'staff_mark_delivered',
+              child: Text('Staff: Mark Delivered'),
+            ),
+            DropdownMenuItem(
+              value: 'staff_confirm_pickup_ok',
+              child: Text('Staff: Pickup OK'),
+            ),
+            DropdownMenuItem(
+              value: 'staff_confirm_pickup_failed',
+              child: Text('Staff: Pickup Failed'),
+            ),
+            DropdownMenuItem(
+              value: 'admin_unlock_otp',
+              child: Text('Admin: Unlock OTP'),
+            ),
+            DropdownMenuItem(
+              value: 'admin_reset_otp',
+              child: Text('Admin: Reset OTP'),
+            ),
+          ],
+          onChanged: (v) => setState(() => _actionFilter = v ?? 'ALL'),
+        );
+
+        final roleDropdown = DropdownButtonFormField<String>(
+          isExpanded: true, // ✅ important
+          initialValue: _roleFilter,
+          decoration: const InputDecoration(
+            labelText: 'Actor Role',
+            border: OutlineInputBorder(),
+          ),
+          items: const [
+            DropdownMenuItem(value: 'ALL', child: Text('All')),
+            DropdownMenuItem(value: 'admin', child: Text('Admin')),
+            DropdownMenuItem(value: 'desk', child: Text('Desk Cargo Officer')),
+            DropdownMenuItem(value: 'staff', child: Text('Staff')),
+            DropdownMenuItem(value: 'driver', child: Text('Driver')),
+            DropdownMenuItem(value: 'sender', child: Text('Sender')),
+          ],
+          onChanged: (v) => setState(() => _roleFilter = v ?? 'ALL'),
+        );
+
+        if (isNarrow) {
+          // ✅ stack vertically on small widths
+          return Column(
+            children: [
+              actionDropdown,
+              const SizedBox(height: 12),
+              roleDropdown,
+            ],
+          );
+        }
+
+        // ✅ side-by-side on wide widths
+        return Row(
+          children: [
+            Expanded(child: actionDropdown),
+            const SizedBox(width: 8),
+            Expanded(child: roleDropdown),
+          ],
+        );
+      },
+    ),
+  );
+}
+
 }

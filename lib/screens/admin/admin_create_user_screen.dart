@@ -43,7 +43,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        title: const Text('Create Staff/Driver'),
+        title: const Text('Create User'),
       ),
       body: Padding(
         padding: const EdgeInsets.all(16),
@@ -119,7 +119,12 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                     value: UserRole.driver,
                     child: Text('Driver'),
                   ),
+                  DropdownMenuItem(
+                    value: UserRole.deskCargoOfficer,
+                    child: Text('Desk Cargo Officer'),
+                  ),
                 ],
+
                 onChanged: (v) {
                   setState(() {
                     _role = v ?? UserRole.staff;
@@ -134,8 +139,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                 enabled: _stationRequired,
                 decoration: InputDecoration(
                   labelText: _stationRequired
-                      ? 'Station Name (required for staff)'
-                      : 'Station Name (not required for driver)',
+                      ? 'Station Name (required)'
+                      : 'Station Name (optional)',
                   border: const OutlineInputBorder(),
                 ),
                 validator: (v) {

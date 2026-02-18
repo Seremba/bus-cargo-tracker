@@ -1,6 +1,6 @@
-############################################################
+
 # Flutter / Dart
-############################################################
+
 .dart_tool/
 .packages
 .pub/
@@ -16,9 +16,9 @@ coverage/
 .flutter-versions/
 flutter_export_environment.sh
 
-############################################################
+
 # IDE / Editor
-############################################################
+
 .idea/
 .vscode/
 *.iml
@@ -26,20 +26,20 @@ flutter_export_environment.sh
 # Optional: if you use Android Studio/IntelliJ run configs
 *.iws
 
-############################################################
+
 # OS files
-############################################################
+
 .DS_Store
 Thumbs.db
 
-############################################################
+
 # Logs
-############################################################
+
 *.log
 
-############################################################
+
 # Android
-############################################################
+
 android/.gradle/
 android/local.properties
 android/key.properties
@@ -54,9 +54,9 @@ android/fastlane/Preview.html
 android/fastlane/screenshots
 android/fastlane/test_output
 
-############################################################
+
 # iOS / macOS
-############################################################
+
 ios/Pods/
 ios/.symlinks/
 ios/Flutter/Flutter.framework
@@ -81,30 +81,28 @@ ios/Runner/GeneratedPluginRegistrant.*
 .build/
 Package.resolved
 
-############################################################
+
 # Web (if you build for web)
-############################################################
+
 web/.dart_tool/
 web/build/
 
-############################################################
+
 # Windows (if you build for Windows)
-############################################################
+
 windows/flutter/ephemeral/
 
-############################################################
+
 # Linux (if you build for Linux)
-############################################################
+
 linux/flutter/ephemeral/
 
-############################################################
-# macOS (if you build for macOS)
-############################################################
-macos/Flutter/ephemeral/
 
-############################################################
+# macOS (if you build for macOS)
+
+macos/Flutter/ephemeral/
 # Secrets / environment files (if you ever add them)
-############################################################
+
 .env
 .env.*
 *.pem

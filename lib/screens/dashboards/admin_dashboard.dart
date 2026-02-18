@@ -1,26 +1,25 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
-import '../common/notifications_screen.dart';
-import '../admin/admin_properties_screen.dart';
-import '../admin/admin_active_trips_screen.dart';
-import '../admin/admin_trips_screen.dart';
-import '../admin/admin_create_user_screen.dart';
-import '../admin/admin_users_screen.dart';
-import '../admin/admin_reports_screen.dart';
-
 import '../../models/notification_item.dart';
+import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/role_guard.dart';
 import '../../services/session.dart';
 import '../../widgets/logout_button.dart';
 
-import '../../services/role_guard.dart';
-import '../../models/user_role.dart';
+import '../admin/admin_active_trips_screen.dart';
 import '../admin/admin_audit_screen.dart';
-import '../admin/admin_performance_screen.dart';
+import '../admin/admin_create_user_screen.dart';
 import '../admin/admin_exceptions_screen.dart';
 import '../admin/admin_payments_screen.dart';
+import '../admin/admin_performance_screen.dart';
+import '../admin/admin_properties_screen.dart';
+import '../admin/admin_reports_screen.dart';
+import '../admin/admin_trips_screen.dart';
+import '../admin/admin_users_screen.dart';
+import '../common/notifications_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
@@ -30,6 +29,23 @@ class AdminDashboard extends StatelessWidget {
     // ✅ UI guard (admin only)
     if (!RoleGuard.hasRole(UserRole.admin)) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
+    }
+
+    Widget sectionTitle(String text) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 18, bottom: 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              text,
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 4),
+            const Divider(thickness: 1, height: 1),
+          ],
+        ),
+      );
     }
 
     Widget actionButton({
@@ -60,11 +76,12 @@ class AdminDashboard extends StatelessWidget {
           actions: [
             ValueListenableBuilder(
               valueListenable: HiveService.notificationBox().listenable(),
-              builder: (context, Box<NotificationItem> box, _) {
+              builder: (context, Box box, _) {
                 final userId = Session.currentUserId!;
                 final unreadCount = box.values.where((n) {
                   final isForAdminInbox =
-                      n.targetUserId == NotificationService.adminInbox;
+                      (n as NotificationItem).targetUserId ==
+                      NotificationService.adminInbox;
                   final isForThisAdmin = n.targetUserId == userId;
                   return (isForAdminInbox || isForThisAdmin) && !n.isRead;
                 }).length;
@@ -116,135 +133,20 @@ class AdminDashboard extends StatelessWidget {
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminPropertiesScreen(),
-                    ),
-                  );
-                },
-                child: const Text('All Properties'),
-              ),
+            sectionTitle('Operations'),
+            actionButton(
+              icon: Icons.inventory_2_outlined,
+              label: 'All Properties',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminPropertiesScreen(),
+                  ),
+                );
+              },
             ),
             const SizedBox(height: 10),
-
-            // ✅ NEW: Reports
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.insights),
-                label: const Text('Reports'),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminReportsScreen(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.payments_outlined),
-                label: const Text('Payments'),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminPaymentsScreen(),
-                    ),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.history),
-                label: const Text('Audit Log'),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AdminAuditScreen()),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.person_add),
-                label: const Text('Create User'),
-                onPressed: () async {
-                  final createdUser = await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminCreateUserScreen(),
-                    ),
-                  );
-
-                  // If AdminCreateUserScreen pops(user), we can optionally show a small confirmation here.
-                  if (createdUser != null && context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('User created ✅')),
-                    );
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const AdminUsersScreen(),
-                      ),
-                    );
-                  }
-                },
-              ),
-            ),
-
-            const SizedBox(height: 10),
-
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.people),
-                label: const Text('Manage Users'),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 10),
-
             actionButton(
               icon: Icons.route_outlined,
               label: 'Trips',
@@ -265,6 +167,75 @@ class AdminDashboard extends StatelessWidget {
                   MaterialPageRoute(
                     builder: (_) => const AdminActiveTripsScreen(),
                   ),
+                );
+              },
+            ),
+
+            sectionTitle('Finance'),
+            actionButton(
+              icon: Icons.payments_outlined,
+              label: 'Payments',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminPaymentsScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.insights_outlined,
+              label: 'Reports',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminReportsScreen()),
+                );
+              },
+            ),
+
+            sectionTitle('Users'),
+            actionButton(
+              icon: Icons.person_add,
+              label: 'Create User',
+              onPressed: () async {
+                final createdUser = await Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminCreateUserScreen(),
+                  ),
+                );
+
+                // Optional feedback (stay on dashboard)
+                if (createdUser != null && context.mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('User created ✅')),
+                  );
+                }
+              },
+            ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.people_outline,
+              label: 'Manage Users',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
+                );
+              },
+            ),
+
+            sectionTitle('Monitoring'),
+            actionButton(
+              icon: Icons.history,
+              label: 'Audit Log',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (_) => const AdminAuditScreen()),
                 );
               },
             ),

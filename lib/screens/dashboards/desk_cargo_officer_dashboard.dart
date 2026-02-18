@@ -1,19 +1,13 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 
-import 'package:pdf/pdf.dart';
-import 'package:pdf/widgets.dart' as pw;
-
-import '../../models/payment_record.dart';
-import '../../models/property.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
+
+import '../../services/exports/payment_export_service.dart';
+import '../../services/file_share_service.dart';
 
 import '../desk/desk_scan_and_pay_screen.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
@@ -23,177 +17,6 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
   const DeskCargoOfficerDashboard({super.key});
 
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
-
-  String _csvEscape(String v) => '"${v.replaceAll('"', '""')}"';
-
-  Future<void> _exportCsv({
-    required ScaffoldMessengerState messenger,
-    required String filename,
-    required String csv,
-  }) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$filename');
-      await file.writeAsString(csv, flush: true);
-
-      await Share.shareXFiles([
-        XFile(file.path, mimeType: 'text/csv', name: filename),
-      ], text: 'Payments export: $filename');
-
-      messenger.showSnackBar(
-        SnackBar(content: Text('CSV ready ✅ ($filename)')),
-      );
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('CSV export failed: $e')));
-    }
-  }
-
-  Future<void> _exportPdf({
-    required ScaffoldMessengerState messenger,
-    required String filename,
-    required pw.Document doc,
-  }) async {
-    try {
-      final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/$filename');
-
-      await file.writeAsBytes(await doc.save(), flush: true);
-
-      await Share.shareXFiles([
-        XFile(file.path, mimeType: 'application/pdf', name: filename),
-      ], text: 'Payments export: $filename');
-
-      messenger.showSnackBar(
-        SnackBar(content: Text('PDF ready ✅ ($filename)')),
-      );
-    } catch (e) {
-      messenger.showSnackBar(SnackBar(content: Text('PDF export failed: $e')));
-    }
-  }
-
-  String _buildTodayCsv({
-    required String stationLabel,
-    required List<PaymentRecord> todayItems,
-    required Box<Property> propBox,
-  }) {
-    final b = StringBuffer();
-    b.writeln(
-      'station,createdAt,propertyCode,amount,currency,method,txnRef,recordedByUserId',
-    );
-
-    for (final x in todayItems) {
-      final prop = propBox.get(int.tryParse(x.propertyKey));
-      final code = (prop?.propertyCode.trim().isNotEmpty ?? false)
-          ? prop!.propertyCode.trim()
-          : '—';
-
-      b.writeln(
-        [
-          _csvEscape(stationLabel),
-          _csvEscape(_fmt16(x.createdAt)),
-          _csvEscape(code),
-          _csvEscape(x.amount.toString()),
-          _csvEscape(x.currency.trim().isEmpty ? 'UGX' : x.currency.trim()),
-          _csvEscape(x.method.trim().isEmpty ? '—' : x.method.trim()),
-          _csvEscape(x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()),
-          _csvEscape(
-            x.recordedByUserId.trim().isEmpty ? '—' : x.recordedByUserId.trim(),
-          ),
-        ].join(','),
-      );
-    }
-
-    return b.toString();
-  }
-
-  pw.Document _buildTodayPdf({
-    required String title,
-    required String stationLabel,
-    required DateTime todayStart,
-    required List<PaymentRecord> todayItems,
-    required int todayTotal,
-    required Box<Property> propBox,
-  }) {
-    final doc = pw.Document();
-
-    pw.TableRow headerRow(List<String> cols) => pw.TableRow(
-      decoration: const pw.BoxDecoration(color: PdfColors.grey300),
-      children: cols
-          .map(
-            (c) => pw.Padding(
-              padding: const pw.EdgeInsets.all(6),
-              child: pw.Text(
-                c,
-                style: pw.TextStyle(fontWeight: pw.FontWeight.bold),
-              ),
-            ),
-          )
-          .toList(),
-    );
-
-    pw.TableRow row(List<String> cols) => pw.TableRow(
-      children: cols
-          .map(
-            (c) => pw.Padding(
-              padding: const pw.EdgeInsets.all(6),
-              child: pw.Text(c, maxLines: 2),
-            ),
-          )
-          .toList(),
-    );
-
-    doc.addPage(
-      pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        build: (_) => [
-          pw.Text(
-            title,
-            style: pw.TextStyle(fontSize: 18, fontWeight: pw.FontWeight.bold),
-          ),
-          pw.SizedBox(height: 6),
-          pw.Text('Station: $stationLabel'),
-          pw.Text('Date: ${todayStart.toLocal().toString().substring(0, 10)}'),
-          pw.SizedBox(height: 6),
-          pw.Text(
-            'Today total: UGX $todayTotal • Payments: ${todayItems.length}',
-          ),
-          pw.SizedBox(height: 12),
-          if (todayItems.isEmpty)
-            pw.Text('No payments today.')
-          else
-            pw.Table(
-              border: pw.TableBorder.all(color: PdfColors.grey700, width: 0.5),
-              columnWidths: const {
-                0: pw.FlexColumnWidth(2),
-                1: pw.FlexColumnWidth(3),
-                2: pw.FlexColumnWidth(2),
-                3: pw.FlexColumnWidth(3),
-              },
-              children: [
-                headerRow(['Time', 'Property', 'Amount', 'Method / TxnRef']),
-                for (final x in todayItems)
-                  row([
-                    _fmt16(x.createdAt),
-                    () {
-                      final prop = propBox.get(int.tryParse(x.propertyKey));
-                      final code =
-                          (prop?.propertyCode.trim().isNotEmpty ?? false)
-                          ? prop!.propertyCode.trim()
-                          : '—';
-                      return code;
-                    }(),
-                    '${x.currency.trim().isEmpty ? 'UGX' : x.currency.trim()} ${x.amount}',
-                    '${x.method.trim().isEmpty ? '—' : x.method.trim()}\n'
-                        '${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',
-                  ]),
-              ],
-            ),
-        ],
-      ),
-    );
-
-    return doc;
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -233,12 +56,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -257,22 +80,42 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final d = now.day.toString().padLeft(2, '0');
                 final slug = '$y$m$d';
 
+                // ✅ NEW (service-based) export logic
                 if (v == 'csv_today') {
-                  final csv = _buildTodayCsv(
+                  final csv = PaymentExportService.buildTodayCsv(
                     stationLabel: stationLabel,
                     todayItems: todayItems,
                     propBox: propBox,
                   );
-                  await _exportCsv(
-                    messenger: messenger,
-                    filename: 'payments_today_$slug.csv',
-                    csv: csv,
-                  );
+
+                  try {
+                    final file = await FileShareService.writeTempText(
+                      filename: 'payments_today_$slug.csv',
+                      text: csv,
+                    );
+                    await FileShareService.shareFile(
+                      file: file,
+                      filename: 'payments_today_$slug.csv',
+                      mimeType: 'text/csv',
+                      text: 'Payments export: payments_today_$slug.csv',
+                    );
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'CSV ready ✅ (payments_today_$slug.csv)',
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('CSV export failed: $e')),
+                    );
+                  }
                   return;
                 }
 
                 if (v == 'pdf_today') {
-                  final doc = _buildTodayPdf(
+                  final doc = PaymentExportService.buildTodayPdf(
                     title: 'Payments Report (Today)',
                     stationLabel: stationLabel,
                     todayStart: todayStart,
@@ -280,11 +123,31 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                     todayTotal: todayTotal,
                     propBox: propBox,
                   );
-                  await _exportPdf(
-                    messenger: messenger,
-                    filename: 'payments_today_$slug.pdf',
-                    doc: doc,
-                  );
+
+                  try {
+                    final bytes = await doc.save();
+                    final file = await FileShareService.writeTempBytes(
+                      filename: 'payments_today_$slug.pdf',
+                      bytes: bytes,
+                    );
+                    await FileShareService.shareFile(
+                      file: file,
+                      filename: 'payments_today_$slug.pdf',
+                      mimeType: 'application/pdf',
+                      text: 'Payments export: payments_today_$slug.pdf',
+                    );
+                    messenger.showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'PDF ready ✅ (payments_today_$slug.pdf)',
+                        ),
+                      ),
+                    );
+                  } catch (e) {
+                    messenger.showSnackBar(
+                      SnackBar(content: Text('PDF export failed: $e')),
+                    );
+                  }
                   return;
                 }
               },
@@ -301,7 +164,6 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
             ),
           ],
         ),
-
         body: TabBarView(
           children: [
             // ✅ TAB 1: Scan (button + existing scan/pay UI)
@@ -339,7 +201,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
               ],
             ),
 
-            // ✅ TAB 2: Recent (AnimatedBuilder is correct)
+            // ✅ TAB 2: Recent
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),
@@ -354,12 +216,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -429,13 +291,11 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                             'UGX ${x.amount} • ${x.method.trim().isEmpty ? '—' : x.method.trim()}',
                           ),
                           subtitle: () {
-                            final prop = propBox.get(
-                              int.tryParse(x.propertyKey),
-                            );
+                            final prop = propBox.get(int.tryParse(x.propertyKey));
                             final code =
                                 (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                ? prop!.propertyCode.trim()
-                                : '—';
+                                    ? prop!.propertyCode.trim()
+                                    : '—';
 
                             return Text(
                               'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',

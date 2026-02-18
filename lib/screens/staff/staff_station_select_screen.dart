@@ -26,6 +26,14 @@ class StaffStationSelectScreen extends StatelessWidget {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
+    final role = Session.currentRole;
+    final assigned = (Session.currentStationName ?? '').trim();
+
+    // If staff (not admin) already has a station, skip selection screen
+    if (role == UserRole.staff && assigned.isNotEmpty) {
+      return StaffStationScreen(mode: mode);
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text('Select Station')),
       body: ListView.builder(

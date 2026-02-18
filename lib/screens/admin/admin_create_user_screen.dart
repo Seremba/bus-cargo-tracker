@@ -31,6 +31,9 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
     super.dispose();
   }
 
+  bool get _stationEnabled =>
+      _role == UserRole.staff || _role == UserRole.deskCargoOfficer;
+
   bool get _stationRequired => _role == UserRole.staff;
 
   Widget _notAuthorized() =>
@@ -41,10 +44,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
     if (!RoleGuard.hasRole(UserRole.admin)) return _notAuthorized();
 
     return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: const Text('Create User'),
-      ),
+      appBar: AppBar(centerTitle: true, title: const Text('Create User')),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -128,7 +128,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                 onChanged: (v) {
                   setState(() {
                     _role = v ?? UserRole.staff;
-                    if (!_stationRequired) _station.clear();
+                    if (!_stationEnabled) _station.clear();
                   });
                 },
               ),
@@ -136,11 +136,13 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
               TextFormField(
                 controller: _station,
-                enabled: _stationRequired,
+                enabled: _stationEnabled,
                 decoration: InputDecoration(
                   labelText: _stationRequired
                       ? 'Station Name (required)'
-                      : 'Station Name (optional)',
+                      : (_stationEnabled
+                            ? 'Station Name (optional)'
+                            : 'Station Name (not applicable)'),
                   border: const OutlineInputBorder(),
                 ),
                 validator: (v) {
@@ -178,7 +180,9 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
         phone: _phone.text,
         password: _password.text,
         role: _role,
-        stationName: _stationRequired ? _station.text.trim() : null,
+        stationName: _stationEnabled && _station.text.trim().isNotEmpty
+            ? _station.text.trim()
+            : null,
       );
 
       if (!mounted) return;

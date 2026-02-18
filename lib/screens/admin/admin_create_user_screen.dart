@@ -202,11 +202,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
         ),
       );
 
-      _name.clear();
-      _phone.clear();
-      _password.clear();
-      _station.clear();
-      setState(() => _role = UserRole.staff);
+      //  Route back after success
+      Navigator.of(context).pop(user);
     } finally {
       if (mounted) setState(() => _loading = false);
     }

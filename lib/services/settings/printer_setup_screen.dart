@@ -56,7 +56,7 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
     setState(() => _connected = d);
 
     // ✅ Save printer + paper size preference
-    PrinterSettingsService.saveBluetooth(
+    await PrinterSettingsService.saveBluetooth(
       address: d.address ?? '',
       name: d.name,
       paperMm: _paperMm,

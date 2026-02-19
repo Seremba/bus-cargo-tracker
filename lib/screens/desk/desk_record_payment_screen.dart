@@ -8,9 +8,7 @@ import '../../services/payment_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 
-import '../../services/printing/printer_service.dart';
-import '../../services/printing/printer_settings_service.dart';
-import '../../services/printing/escpos_receipt_builder.dart';
+import '../../services/printing/payment_receipt_print_service.dart';
 
 class DeskRecordPaymentScreen extends StatefulWidget {
   final Property property;
@@ -218,31 +216,20 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
         kind: 'payment',
       );
 
-      bool printedOk = false;
-      final connected = await PrinterService.ensureConnectedFromSaved();
-      if (connected) {
-        final settings = PrinterSettingsService.getOrCreate();
-        final bytes = await EscPosReceiptBuilder.buildPaymentReceipt(
-          pay: rec,
-          property: widget.property,
-          paperMm: settings.paperMm,
-        );
-        printedOk = await PrinterService.printBytesBluetooth(bytes);
-      }
+      final printed = await PaymentReceiptPrintService.printAfterPayment(
+        record: rec,
+        property: widget.property,
+      );
 
       if (!mounted) return;
 
-      messenger.showSnackBar(
-        SnackBar(
-          content: Text(
-            printedOk
-                ? 'Payment + receipt ✅'
-                : (connected
-                      ? 'Payment saved (receipt failed) ⚠️'
-                      : 'Payment recorded ✅'),
-          ),
-        ),
-      );
+      final msg = (printed == true)
+          ? 'Payment + receipt ✅'
+          : (printed == false)
+          ? 'Payment saved (receipt failed) ⚠️'
+          : 'Payment recorded ✅';
+
+      messenger.showSnackBar(SnackBar(content: Text(msg)));
 
       Navigator.pop(context, true);
     } catch (e) {

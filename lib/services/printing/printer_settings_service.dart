@@ -14,17 +14,17 @@ class PrinterSettingsService {
     if (existing != null) return existing;
 
     final s = PrinterSettings();
-    box.put(_key, s);
+    box.put(_key, s); // ok to leave sync for init
     return s;
   }
 
-  static void saveBluetooth({
+  static Future<void> saveBluetooth({
     required String address,
     required String name,
     int paperMm = 58,
-  }) {
+  }) async {
     final Box box = HiveService.printerSettingsBox();
-    box.put(
+    await box.put(
       _key,
       PrinterSettings(
         bluetoothAddress: address.trim(),
@@ -34,8 +34,8 @@ class PrinterSettingsService {
     );
   }
 
-  static void clear() {
+  static Future<void> clear() async {
     final Box box = HiveService.printerSettingsBox();
-    box.delete(_key);
+    await box.delete(_key);
   }
 }

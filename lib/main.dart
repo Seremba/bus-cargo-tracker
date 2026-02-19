@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'models/audit_event.dart';
 import 'models/checkpoint.dart';
 import 'models/notification_item.dart';
+import 'models/printer_settings.dart';
 import 'models/property.dart';
 import 'models/property_status.dart';
 import 'models/trip.dart';
@@ -31,6 +32,8 @@ void main() async {
   Hive.registerAdapter(UserAdapter());
   Hive.registerAdapter(UserRoleAdapter());
   Hive.registerAdapter(PaymentRecordAdapter()); 
+  Hive.registerAdapter(PrinterSettingsAdapter());
+
 
   await HiveService.openAllBoxes();
 

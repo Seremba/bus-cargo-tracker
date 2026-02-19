@@ -15,8 +15,8 @@ class HiveService {
   static const String _auditBoxName = 'audit_events';
   static const String _userBoxName = 'users';
 
-  // ✅ NEW
   static const String _paymentBoxName = 'payments';
+  static const String _printerSettingsBoxName = 'printer_settings';
 
   static void setUser(String userId) {
     Session.currentUserId = userId;
@@ -29,6 +29,7 @@ class HiveService {
     await openAuditBox();
     await openUserBox();
     await openPaymentBox();
+    await openPrinterSettingsBox();
   }
 
   static Future<void> openPropertyBox() async {
@@ -115,6 +116,21 @@ class HiveService {
       );
     }
     return Hive.box<PaymentRecord>(_paymentBoxName);
+  }
+
+  static Future openPrinterSettingsBox() async {
+    if (!Hive.isBoxOpen(_printerSettingsBoxName)) {
+      await Hive.openBox(_printerSettingsBoxName);
+    }
+  }
+
+  static Box printerSettingsBox() {
+    if (!Hive.isBoxOpen(_printerSettingsBoxName)) {
+      throw HiveError(
+        'PrinterSettings box is not open.\nCall HiveService.openPrinterSettingsBox() first.',
+      );
+    }
+    return Hive.box(_printerSettingsBoxName);
   }
 
   static Future<void> closeAll() async {

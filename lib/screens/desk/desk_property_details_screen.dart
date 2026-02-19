@@ -188,12 +188,32 @@ class DeskPropertyDetailsScreen extends StatelessWidget {
                   label: const Text('Print Thermal Label (58mm)'),
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
+
                     try {
+                      // ✅ 1. Ensure printer is connected from saved settings
+                      final connected =
+                          await PrinterService.ensureConnectedFromSaved();
+
+                      if (!connected) {
+                        messenger.showSnackBar(
+                          const SnackBar(
+                            content: Text(
+                              'No saved printer. Please set up a printer first.',
+                            ),
+                          ),
+                        );
+                        return;
+                      }
+
+                      // ✅ 2. Build ESC/POS bytes from property
                       final bytes =
                           await EscPosLabelBuilder.buildPropertyLabel58(p);
+
+                      // ✅ 3. Send bytes to printer
                       final ok = await PrinterService.printBytesBluetooth(
                         bytes,
                       );
+
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(ok ? 'Printed ✅' : 'Print failed ❌'),

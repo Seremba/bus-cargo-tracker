@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 
 import '../../services/printing/printer_service.dart';
+import '../../services/printing/printer_settings_service.dart';
 
 class PrinterSetupScreen extends StatefulWidget {
   const PrinterSetupScreen({super.key});
@@ -44,6 +45,12 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
     }
 
     setState(() => _connected = d);
+
+    PrinterSettingsService.saveBluetooth(
+      address: d.address ?? '',
+      name: d.name,
+      paperMm: 58,
+    );
 
     final label = d.name.isNotEmpty ? d.name : (d.address ?? 'Printer');
     messenger.showSnackBar(SnackBar(content: Text('Connected ✅ $label')));

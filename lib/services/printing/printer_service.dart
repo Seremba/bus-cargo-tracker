@@ -3,7 +3,6 @@ import 'dart:typed_data';
 
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 
-
 class PrinterService {
   PrinterService._();
 
@@ -11,15 +10,18 @@ class PrinterService {
 
   static Stream<List<PrinterDevice>> scanBluetooth({
     Duration timeout = const Duration(seconds: 6),
+    bool isBle = false,
   }) async* {
     final List<PrinterDevice> found = [];
     StreamSubscription<PrinterDevice>? sub;
 
     try {
-      sub = _pm.discovery(type: PrinterType.bluetooth).listen((device) {
-        // Avoid duplicates
+      sub = _pm
+          .discovery(type: PrinterType.bluetooth, isBle: isBle)
+          .listen((device) {
         final addr = device.address;
         if (addr == null) return;
+
         final exists = found.any((d) => d.address == addr);
         if (!exists) found.add(device);
       });
@@ -31,21 +33,23 @@ class PrinterService {
     }
   }
 
-  static Future<bool> connectBluetooth(PrinterDevice device) async {
+  static Future<bool> connectBluetooth(
+    PrinterDevice device, {
+    bool isBle = false,
+    bool autoConnect = true,
+  }) async {
     final addr = device.address;
     if (addr == null || addr.trim().isEmpty) return false;
 
-    final res = await _pm.connect(
+    return _pm.connect(
       type: PrinterType.bluetooth,
       model: BluetoothPrinterInput(
         name: device.name,
         address: addr,
-        isBle: false, // ✅ classic bluetooth
-        autoConnect: true,
+        isBle: isBle,
+        autoConnect: autoConnect,
       ),
     );
-
-    return res;
   }
 
   static Future<void> disconnectBluetooth() async {

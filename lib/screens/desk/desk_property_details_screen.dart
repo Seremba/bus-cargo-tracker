@@ -8,12 +8,10 @@ import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/printing/printer_service.dart';
 import '../../services/role_guard.dart';
-import '../../services/property_label_service.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
 
 import '../../services/printing/escpos_label_builder.dart';
-
 
 class DeskPropertyDetailsScreen extends StatelessWidget {
   final String scannedCode; // propertyCode
@@ -192,9 +190,7 @@ class DeskPropertyDetailsScreen extends StatelessWidget {
                     final messenger = ScaffoldMessenger.of(context);
                     try {
                       final bytes =
-                          await EscPosLabelBuilder.buildPropertyLabel58(
-                            property,
-                          );
+                          await EscPosLabelBuilder.buildPropertyLabel58(p);
                       final ok = await PrinterService.printBytesBluetooth(
                         bytes,
                       );

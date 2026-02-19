@@ -3,7 +3,6 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
 
-
 import '../../services/printing/printer_service.dart';
 
 class PrinterSetupScreen extends StatefulWidget {
@@ -15,6 +14,7 @@ class PrinterSetupScreen extends StatefulWidget {
 
 class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
   bool _scanning = false;
+  final bool _isBle = false; // keep false for classic Bluetooth printers first
   List<PrinterDevice> _devices = [];
   PrinterDevice? _connected;
 
@@ -24,7 +24,7 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
       _devices = [];
     });
 
-    await for (final list in PrinterService.scanBluetooth()) {
+    await for (final list in PrinterService.scanBluetooth(isBle: _isBle)) {
       if (!mounted) return;
       setState(() => _devices = list);
     }
@@ -35,7 +35,7 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
   Future<void> _connect(PrinterDevice d) async {
     final messenger = ScaffoldMessenger.of(context);
 
-    final ok = await PrinterService.connectBluetooth(d);
+    final ok = await PrinterService.connectBluetooth(d, isBle: _isBle);
     if (!mounted) return;
 
     if (!ok) {
@@ -44,16 +44,15 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
     }
 
     setState(() => _connected = d);
-    messenger.showSnackBar(
-      SnackBar(content: Text('Connected ✅ ${d.name ?? d.address ?? ''}')),
-    );
+
+    final label = d.name.isNotEmpty ? d.name : (d.address ?? 'Printer');
+    messenger.showSnackBar(SnackBar(content: Text('Connected ✅ $label')));
   }
 
   Future<void> _testPrint() async {
     final messenger = ScaffoldMessenger.of(context);
 
-    // Minimal “init” command (ESC @). Some printers won’t physically print anything,
-    // but it verifies sending bytes works.
+    // init only (ESC @)
     final bytes = Uint8List.fromList([0x1B, 0x40]);
 
     final ok = await PrinterService.printBytesBluetooth(bytes);
@@ -99,11 +98,17 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
                         final isConnected = _connected?.address == d.address;
                         return Card(
                           child: ListTile(
-                            title: Text(d.name ?? 'Unknown printer'),
+                            title: Text(
+                              d.name.isNotEmpty
+                                  ? d.name
+                                  : (d.address ?? 'Printer'),
+                            ),
                             subtitle: Text(d.address ?? '—'),
                             trailing: isConnected
-                                ? const Icon(Icons.check_circle,
-                                    color: Colors.green)
+                                ? const Icon(
+                                    Icons.check_circle,
+                                    color: Colors.green,
+                                  )
                                 : const Icon(Icons.bluetooth),
                             onTap: () => _connect(d),
                           ),

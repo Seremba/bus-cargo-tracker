@@ -6,6 +6,7 @@ import '../../models/property_status.dart';
 import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';
+import '../../services/printing/printer_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/property_label_service.dart';
 import '../../services/property_service.dart';

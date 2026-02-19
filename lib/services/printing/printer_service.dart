@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:typed_data';
 
-import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform.dart';
+import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
+
 
 class PrinterService {
   PrinterService._();

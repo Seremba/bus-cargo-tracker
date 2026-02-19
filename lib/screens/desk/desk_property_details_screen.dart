@@ -11,6 +11,9 @@ import '../../services/property_label_service.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
 
+import '../../services/printing/escpos_label_builder.dart';
+
+
 class DeskPropertyDetailsScreen extends StatelessWidget {
   final String scannedCode; // propertyCode
   const DeskPropertyDetailsScreen({super.key, required this.scannedCode});
@@ -183,16 +186,27 @@ class DeskPropertyDetailsScreen extends StatelessWidget {
                 width: double.infinity,
                 child: ElevatedButton.icon(
                   icon: const Icon(Icons.print),
-                  label: const Text('Share / Print Label (PDF)'),
+                  label: const Text('Print Thermal Label (58mm)'),
                   onPressed: () async {
                     final messenger = ScaffoldMessenger.of(context);
-
-                    await PropertyLabelService.shareLabelPdf(p);
-
-                    if (!context.mounted) return;
-                    messenger.showSnackBar(
-                      const SnackBar(content: Text('Label ready ✅')),
-                    );
+                    try {
+                      final bytes =
+                          await EscPosLabelBuilder.buildPropertyLabel58(
+                            property,
+                          );
+                      final ok = await PrinterService.printBytesBluetooth(
+                        bytes,
+                      );
+                      messenger.showSnackBar(
+                        SnackBar(
+                          content: Text(ok ? 'Printed ✅' : 'Print failed ❌'),
+                        ),
+                      );
+                    } catch (e) {
+                      messenger.showSnackBar(
+                        SnackBar(content: Text('Print error: $e')),
+                      );
+                    }
                   },
                 ),
               ),

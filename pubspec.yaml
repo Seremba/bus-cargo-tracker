@@ -46,6 +46,8 @@ dependencies:
   url_launcher: ^6.3.0
   qr_flutter: ^4.1.0
   mobile_scanner: ^6.0.0
+  esc_pos_utils_plus: ^2.0.4
+  flutter_pos_printer_platform_image_3: ^1.2.4
   
 
 dev_dependencies:

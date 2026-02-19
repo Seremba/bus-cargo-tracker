@@ -8,12 +8,17 @@ import '../../services/payment_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 
+import '../../services/printing/printer_service.dart';
+import '../../services/printing/printer_settings_service.dart';
+import '../../services/printing/escpos_receipt_builder.dart';
+
 class DeskRecordPaymentScreen extends StatefulWidget {
   final Property property;
   const DeskRecordPaymentScreen({super.key, required this.property});
 
   @override
-  State<DeskRecordPaymentScreen> createState() => _DeskRecordPaymentScreenState();
+  State<DeskRecordPaymentScreen> createState() =>
+      _DeskRecordPaymentScreenState();
 }
 
 class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
@@ -38,9 +43,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   Future<void> _copy(BuildContext context, String label, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copied ✅')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label copied ✅')));
   }
 
   @override
@@ -63,8 +68,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
         ? fresh.key.toString()
         : fresh.propertyCode.trim();
 
-    final displayCurrency =
-        fresh.currency.trim().isEmpty ? 'UGX' : fresh.currency.trim();
+    final displayCurrency = fresh.currency.trim().isEmpty
+        ? 'UGX'
+        : fresh.currency.trim();
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Record Payment')),
@@ -85,7 +91,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                           Expanded(
                             child: Text(
                               'Property: $displayCode',
-                              style: const TextStyle(fontWeight: FontWeight.w700),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                           if (fresh.propertyCode.trim().isNotEmpty)
@@ -194,34 +202,52 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
       return;
     }
 
-    final messenger = ScaffoldMessenger.of(context); // ✅ capture BEFORE async gap
+    final messenger = ScaffoldMessenger.of(context);
     setState(() => _saving = true);
 
     try {
       final amount = int.parse(_amount.text.trim());
 
-      try {
-        await PaymentService.recordPayment(
-          property: widget.property,
-          amount: amount,
-          currency: 'UGX',
-          method: _method,
-          txnRef: _txnRef.text.trim(),
-          station: station,
-          kind: 'payment',
-        );
+      final rec = await PaymentService.recordPayment(
+        property: widget.property,
+        amount: amount,
+        currency: 'UGX',
+        method: _method,
+        txnRef: _txnRef.text.trim(),
+        station: station,
+        kind: 'payment',
+      );
 
-        if (!mounted) return;
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Payment recorded ✅')),
+      bool printedOk = false;
+      final connected = await PrinterService.ensureConnectedFromSaved();
+      if (connected) {
+        final settings = PrinterSettingsService.getOrCreate();
+        final bytes = await EscPosReceiptBuilder.buildPaymentReceipt(
+          pay: rec,
+          property: widget.property,
+          paperMm: settings.paperMm,
         );
-        Navigator.pop(context, true);
-      } catch (e) {
-        if (!mounted) return;
-        messenger.showSnackBar(
-          SnackBar(content: Text('Failed: $e')),
-        );
+        printedOk = await PrinterService.printBytesBluetooth(bytes);
       }
+
+      if (!mounted) return;
+
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text(
+            printedOk
+                ? 'Payment + receipt ✅'
+                : (connected
+                      ? 'Payment saved (receipt failed) ⚠️'
+                      : 'Payment recorded ✅'),
+          ),
+        ),
+      );
+
+      Navigator.pop(context, true);
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _saving = false);
     }

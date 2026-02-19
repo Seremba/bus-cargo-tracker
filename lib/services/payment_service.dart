@@ -7,7 +7,7 @@ import 'session.dart';
 class PaymentService {
   static String _id() => DateTime.now().millisecondsSinceEpoch.toString();
 
-  static Future<void> recordPayment({
+  static Future<PaymentRecord> recordPayment({
     required Property property,
     required int amount, // can be negative for refund/adjustment
     String currency = 'UGX',
@@ -109,5 +109,6 @@ class PaymentService {
       message:
           '$prettyKind: $cleanCurrency ${appliedAmount.abs()} at $cleanStation via ${cleanMethod.isEmpty ? '—' : cleanMethod}.',
     );
+    return rec;
   }
 }

@@ -15,9 +15,18 @@ class PrinterSetupScreen extends StatefulWidget {
 
 class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
   bool _scanning = false;
-  final bool _isBle = false; // keep false for classic Bluetooth printers first
+  final bool _isBle = false; // classic BT first
   List<PrinterDevice> _devices = [];
   PrinterDevice? _connected;
+
+  int _paperMm = 58;
+
+  @override
+  void initState() {
+    super.initState();
+    final s = PrinterSettingsService.getOrCreate();
+    _paperMm = s.paperMm; // load saved preference
+  }
 
   Future<void> _scan() async {
     setState(() {
@@ -46,10 +55,11 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
 
     setState(() => _connected = d);
 
+    // ✅ Save printer + paper size preference
     PrinterSettingsService.saveBluetooth(
       address: d.address ?? '',
       name: d.name,
-      paperMm: 58,
+      paperMm: _paperMm,
     );
 
     final label = d.name.isNotEmpty ? d.name : (d.address ?? 'Printer');
@@ -59,14 +69,37 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
   Future<void> _testPrint() async {
     final messenger = ScaffoldMessenger.of(context);
 
-    // init only (ESC @)
-    final bytes = Uint8List.fromList([0x1B, 0x40]);
+    // Visible test (prints text)
+    final bytes = Uint8List.fromList([
+      0x1B, 0x40, // init
+      ...'BEBETO TEST\n\n'.codeUnits,
+    ]);
 
     final ok = await PrinterService.printBytesBluetooth(bytes);
     if (!mounted) return;
 
     messenger.showSnackBar(
-      SnackBar(content: Text(ok ? 'Test sent ✅' : 'Print failed ❌')),
+      SnackBar(content: Text(ok ? 'Test printed ✅' : 'Print failed ❌')),
+    );
+  }
+
+  Widget _paperToggle() {
+    return Row(
+      children: [
+        const Text('Paper:'),
+        const SizedBox(width: 8),
+        ChoiceChip(
+          label: const Text('58mm'),
+          selected: _paperMm == 58,
+          onSelected: (_) => setState(() => _paperMm = 58),
+        ),
+        const SizedBox(width: 8),
+        ChoiceChip(
+          label: const Text('80mm'),
+          selected: _paperMm == 80,
+          onSelected: (_) => setState(() => _paperMm = 80),
+        ),
+      ],
     );
   }
 
@@ -78,6 +111,10 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
         padding: const EdgeInsets.all(12),
         child: Column(
           children: [
+            // ✅ paper size selector
+            _paperToggle(),
+            const SizedBox(height: 8),
+
             Row(
               children: [
                 Expanded(
@@ -94,7 +131,9 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
                 ),
               ],
             ),
+
             const SizedBox(height: 12),
+
             Expanded(
               child: _devices.isEmpty
                   ? const Center(child: Text('No printers found yet.'))
@@ -103,19 +142,17 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
                       itemBuilder: (_, i) {
                         final d = _devices[i];
                         final isConnected = _connected?.address == d.address;
+
+                        final title =
+                            d.name.isNotEmpty ? d.name : (d.address ?? 'Printer');
+
                         return Card(
                           child: ListTile(
-                            title: Text(
-                              d.name.isNotEmpty
-                                  ? d.name
-                                  : (d.address ?? 'Printer'),
-                            ),
+                            title: Text(title),
                             subtitle: Text(d.address ?? '—'),
                             trailing: isConnected
-                                ? const Icon(
-                                    Icons.check_circle,
-                                    color: Colors.green,
-                                  )
+                                ? const Icon(Icons.check_circle,
+                                    color: Colors.green)
                                 : const Icon(Icons.bluetooth),
                             onTap: () => _connect(d),
                           ),

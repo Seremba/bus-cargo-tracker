@@ -7,6 +7,7 @@ import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';
 import '../../services/printing/printer_service.dart';
+import '../../services/printing/printer_settings_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
@@ -206,8 +207,12 @@ class DeskPropertyDetailsScreen extends StatelessWidget {
                       }
 
                       // ✅ 2. Build ESC/POS bytes from property
-                      final bytes =
-                          await EscPosLabelBuilder.buildPropertyLabel58(p);
+                      final settings =
+                          PrinterSettingsService.getOrCreate().paperMm;
+                      final bytes = await EscPosLabelBuilder.buildPropertyLabel(
+                        p: p,
+                        paperMm: settings,
+                      );
 
                       // ✅ 3. Send bytes to printer
                       final ok = await PrinterService.printBytesBluetooth(

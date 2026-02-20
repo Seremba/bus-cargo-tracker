@@ -58,11 +58,13 @@ class PickupQrService {
     final keyInt = _keyInt(fresh);
     if (keyInt == null) return;
 
+    // OTP session (longer lived)
     fresh.pickupOtp = otp;
     fresh.otpGeneratedAt = DateTime.now();
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
+    // QR session (short lived)
     fresh.qrIssuedAt = DateTime.now();
     fresh.qrNonce = _nonce(keyInt);
     fresh.qrConsumedAt = null;
@@ -70,13 +72,14 @@ class PickupQrService {
     await fresh.save();
   }
 
+  // QR expiry is based ONLY on qrIssuedAt + ttl.
+  // OTP expiry is handled elsewhere (manual OTP flow / OTP TTL).
   static bool _isExpired(Property p) {
     final issued = p.qrIssuedAt;
-    final otpAt = p.otpGeneratedAt;
-    if (issued == null || otpAt == null) return true;
+    if (issued == null) return true;
 
     final now = DateTime.now();
-    return now.isAfter(issued.add(ttl)) || now.isAfter(otpAt.add(ttl));
+    return now.isAfter(issued.add(ttl));
   }
 
   /// After scan, staff enters OTP → confirm pickup.
@@ -103,7 +106,7 @@ class PickupQrService {
       return 'OTP locked. Try again later.';
     }
 
-    if (_isExpired(p)) return 'Pickup QR / OTP expired. Ask staff to re-issue.';
+    if (_isExpired(p)) return 'Pickup QR expired. Please refresh QR and try again.';
 
     final otp = (p.pickupOtp ?? '').trim();
     if (otp.isEmpty) return 'OTP missing. Ask staff to re-issue.';

@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/staff_station_mode.dart';
 import '../../models/property.dart';
@@ -22,6 +24,73 @@ class StaffStationScreen extends StatelessWidget {
   final StaffStationMode mode;
   const StaffStationScreen({super.key, required this.mode});
 
+  bool _hasValidPhone(Property p) {
+    final phone = p.receiverPhone.trim();
+    return phone.length >= 9; // simple safety check
+  }
+
+  bool _hasOtp(Property p) => (p.pickupOtp ?? '').trim().isNotEmpty;
+
+  // ✅ QR expiry helper (5 min TTL from PickupQrService)
+  bool _isPickupQrExpired(Property p) {
+    final issued = p.qrIssuedAt;
+    if (issued == null) return true;
+    return DateTime.now().isAfter(issued.add(PickupQrService.ttl));
+  }
+
+  Future<void> _refreshQr(BuildContext context, Property p) async {
+    final messenger = ScaffoldMessenger.of(context);
+
+    final ok = await PickupQrService.refreshForDelivered(p);
+
+    if (!context.mounted) return;
+
+    messenger.showSnackBar(
+      SnackBar(
+        content: Text(ok ? 'Pickup QR refreshed ✅' : 'Cannot refresh QR ❌'),
+      ),
+    );
+  }
+
+  Future<void> _copyOtp(BuildContext context, Property p) async {
+    final otp = (p.pickupOtp ?? '').trim();
+    if (otp.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('OTP missing ❌')),
+      );
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: otp));
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('OTP copied ✅')),
+    );
+  }
+
+  Future<void> _callReceiver(BuildContext context, Property p) async {
+    final phone = p.receiverPhone.trim();
+    if (phone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Receiver phone missing ❌')),
+      );
+      return;
+    }
+
+    final uri = Uri.parse('tel:$phone');
+    final can = await canLaunchUrl(uri);
+
+    if (!context.mounted) return;
+
+    if (!can) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cannot start call on this device ❌')),
+      );
+      return;
+    }
+
+    await launchUrl(uri);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) {
@@ -29,11 +98,10 @@ class StaffStationScreen extends StatelessWidget {
     }
 
     final station = Session.currentStationName;
-
     if (station == null || station.trim().isEmpty) {
       return const Scaffold(
         body: Center(
-          child: Text('No station selected. Go back and select one.'),
+          child: Text('No station selected.\nGo back and select one.'),
         ),
       );
     }
@@ -44,19 +112,17 @@ class StaffStationScreen extends StatelessWidget {
       appBar: AppBar(centerTitle: true, title: Text('Station: $station')),
       body: ValueListenableBuilder(
         valueListenable: box.listenable(),
-        builder: (context, Box<Property> b, _) {
+        builder: (context, Box b, _) {
           final items = b.values.where((p) {
             return p.destination.trim().toLowerCase() ==
                 station.trim().toLowerCase();
-          }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          }).toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          final arriving = items
-              .where((p) => p.status == PropertyStatus.inTransit)
-              .toList();
-
-          final delivered = items
-              .where((p) => p.status == PropertyStatus.delivered)
-              .toList();
+          final arriving =
+              items.where((p) => p.status == PropertyStatus.inTransit).toList();
+          final delivered =
+              items.where((p) => p.status == PropertyStatus.delivered).toList();
 
           final showArriving = mode == StaffStationMode.arriving;
           final showPickup = mode == StaffStationMode.pickup;
@@ -73,12 +139,10 @@ class StaffStationScreen extends StatelessWidget {
               ],
               if (showPickup) ...[
                 _sectionTitle(
-                  'Delivered (Waiting OTP Pickup) — ${delivered.length}',
-                ),
+                    'Delivered (Waiting OTP Pickup) — ${delivered.length}'),
                 if (delivered.isEmpty)
                   emptyHint(
-                    'No delivered cargo waiting pickup at this station yet.',
-                  ),
+                      'No delivered cargo waiting pickup at this station yet.'),
                 for (final p in delivered) _deliveredTile(context, p),
               ],
             ],
@@ -96,16 +160,15 @@ class StaffStationScreen extends StatelessWidget {
   }
 
   Widget _sectionTitle(String text) => Padding(
-    padding: const EdgeInsets.only(bottom: 8),
-    child: Text(
-      text,
-      style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-    ),
-  );
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Text(
+          text,
+          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
+        ),
+      );
 
   Widget _arrivingTile(BuildContext context, Property p) {
-    final canMarkDelivered =
-        RoleGuard.hasAny({UserRole.staff, UserRole.admin}) &&
+    final canMarkDelivered = RoleGuard.hasAny({UserRole.staff, UserRole.admin}) &&
         p.status == PropertyStatus.inTransit;
 
     return Card(
@@ -116,7 +179,6 @@ class StaffStationScreen extends StatelessWidget {
           onPressed: !canMarkDelivered
               ? null
               : () async {
-                  // ✅ Mark delivered (this should issue OTP + pickup QR inside PropertyService.markDelivered)
                   await PropertyService.markDelivered(p);
 
                   final fresh = HiveService.propertyBox().get(p.key) ?? p;
@@ -144,13 +206,17 @@ class StaffStationScreen extends StatelessWidget {
     final expired = PropertyService.isOtpExpired(p);
     final lockMins = PropertyService.remainingLockMinutes(p);
 
+    final qrExpired = _isPickupQrExpired(p);
+
     String statusLine = 'OTP required • ${p.receiverPhone}';
-    if (locked) statusLine = '🔒 Locked ($lockMins min) • ${p.receiverPhone}';
+    if (locked) statusLine = 'Locked ($lockMins min) • ${p.receiverPhone}';
     if (!locked && expired) {
       statusLine = '⏱ OTP expired • Ask admin to reset • ${p.receiverPhone}';
     }
 
     final isAdmin = RoleGuard.hasRole(UserRole.admin);
+    final hasValidPhone = _hasValidPhone(p);
+    final hasOtp = _hasOtp(p);
 
     return Card(
       child: ListTile(
@@ -164,6 +230,30 @@ class StaffStationScreen extends StatelessWidget {
               'Attempts: ${p.otpAttempts} / 3',
               style: const TextStyle(fontSize: 12),
             ),
+            if (!hasValidPhone)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text(
+                  'Receiver phone missing/invalid — cannot send WhatsApp/call.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+            if (!hasOtp)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'OTP missing — ask admin to reset.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
+            if (qrExpired && !locked && !expired)
+              const Padding(
+                padding: EdgeInsets.only(top: 4),
+                child: Text(
+                  'Pickup QR expired — tap Refresh QR.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+              ),
           ],
         ),
         trailing: Row(
@@ -183,63 +273,53 @@ class StaffStationScreen extends StatelessWidget {
                       );
 
                       final st = Session.currentStationName ?? '—';
-
                       await AuditService.log(
                         action: ok
                             ? 'staff_confirm_pickup_ok'
                             : 'staff_confirm_pickup_failed',
                         propertyKey: p.key.toString(),
-                        details:
-                            'Station: $st | ${ok ? 'OTP ok' : 'OTP failed'}',
+                        details: 'Station: $st | ${ok ? 'OTP ok' : 'OTP failed'}',
                       );
 
                       if (!context.mounted) return;
 
                       final lockedNow = PropertyService.isOtpLocked(p);
                       final expiredNow = PropertyService.isOtpExpired(p);
-                      final lockMinsNow = PropertyService.remainingLockMinutes(
-                        p,
-                      );
+                      final lockMinsNow =
+                          PropertyService.remainingLockMinutes(p);
 
                       final msg = ok
                           ? 'Pickup confirmed ✅'
                           : lockedNow
-                          ? 'Too many attempts — locked for $lockMinsNow min 🔒'
-                          : expiredNow
-                          ? 'OTP expired ⏱ Ask admin to reset OTP.'
-                          : 'Wrong OTP ❌';
+                              ? 'Too many attempts — locked for $lockMinsNow min'
+                              : expiredNow
+                                  ? 'OTP expired ⏱ Ask admin to reset OTP.'
+                                  : 'Wrong OTP ❌';
 
-                      ScaffoldMessenger.of(
-                        context,
-                      ).showSnackBar(SnackBar(content: Text(msg)));
+                      ScaffoldMessenger.of(context)
+                          .showSnackBar(SnackBar(content: Text(msg)));
                     },
-              child: Text(
-                locked
-                    ? 'Locked'
-                    : expired
-                    ? 'Expired'
-                    : 'Confirm OTP',
-              ),
+              child: Text(locked ? 'Locked' : expired ? 'Expired' : 'Confirm OTP'),
             ),
 
             const SizedBox(width: 6),
 
-            // ✅ WhatsApp OTP
+            // ✅ WhatsApp OTP (improved)
             OutlinedButton(
-              onPressed: (locked || expired)
+              onPressed: (locked || expired || !hasValidPhone || !hasOtp)
                   ? null
                   : () async {
-                      final ok = await PropertyService.sendPickupOtpViaWhatsApp(
-                        p,
-                      );
+                      final messenger = ScaffoldMessenger.of(context);
+
+                      final err =
+                          await PropertyService.sendPickupOtpViaWhatsApp(p);
 
                       if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
+
+                      messenger.showSnackBar(
                         SnackBar(
                           content: Text(
-                            ok
-                                ? 'WhatsApp opened ✅ (tap send)'
-                                : 'Could not open WhatsApp ❌',
+                            err ?? 'WhatsApp opened ✅ (tap send)',
                           ),
                         ),
                       );
@@ -249,12 +329,38 @@ class StaffStationScreen extends StatelessWidget {
 
             const SizedBox(width: 6),
 
+            // ✅ Copy OTP fallback
+            IconButton(
+              tooltip: 'Copy OTP',
+              onPressed: (!hasOtp) ? null : () => _copyOtp(context, p),
+              icon: const Icon(Icons.copy),
+            ),
+
+            // ✅ Call receiver fallback
+            IconButton(
+              tooltip: 'Call receiver',
+              onPressed:
+                  (!hasValidPhone) ? null : () => _callReceiver(context, p),
+              icon: const Icon(Icons.call),
+            ),
+
+            const SizedBox(width: 6),
+
+            // ✅ Refresh QR (only if expired)
+            if (qrExpired) ...[
+              OutlinedButton(
+                onPressed: (locked || expired) ? null : () => _refreshQr(context, p),
+                child: const Text('Refresh QR'),
+              ),
+              const SizedBox(width: 6),
+            ],
+
             // ✅ QR Scan pickup (still requires OTP)
             OutlinedButton(
               onPressed: (locked || expired)
                   ? null
                   : () async {
-                      final raw = await Navigator.push<String?>(
+                      final raw = await Navigator.push(
                         context,
                         MaterialPageRoute(
                           builder: (_) => const PickupQrScannerScreen(),
@@ -264,7 +370,6 @@ class StaffStationScreen extends StatelessWidget {
                       if (raw == null || raw.trim().isEmpty) return;
                       if (!context.mounted) return;
 
-                      // 1️⃣ Parse QR
                       final parsed = PickupQrService.parsePayload(raw.trim());
                       if (parsed == null) {
                         ScaffoldMessenger.of(context).showSnackBar(
@@ -273,7 +378,6 @@ class StaffStationScreen extends StatelessWidget {
                         return;
                       }
 
-                      // 2️⃣ Safety: QR must match this property
                       final tileKey = (p.key is int)
                           ? (p.key as int)
                           : int.tryParse(p.key.toString());
@@ -281,20 +385,17 @@ class StaffStationScreen extends StatelessWidget {
                       if (tileKey == null || parsed.propertyKey != tileKey) {
                         ScaffoldMessenger.of(context).showSnackBar(
                           const SnackBar(
-                            content: Text(
-                              'This QR does not match this property ❌',
-                            ),
+                            content:
+                                Text('This QR does not match this property ❌'),
                           ),
                         );
                         return;
                       }
 
-                      // 3️⃣ Ask OTP (authorization)
                       final otp = await _askOtp(context);
                       if (otp == null || otp.trim().isEmpty) return;
                       if (!context.mounted) return;
 
-                      // 4️⃣ Confirm pickup
                       final err = await PickupQrService.confirmPickup(
                         propertyKey: parsed.propertyKey,
                         scannedNonce: parsed.nonce,
@@ -302,11 +403,9 @@ class StaffStationScreen extends StatelessWidget {
                       );
 
                       final ok = err == null;
-
                       await AuditService.log(
-                        action: ok
-                            ? 'staff_qr_pickup_ok'
-                            : 'staff_qr_pickup_failed',
+                        action:
+                            ok ? 'staff_qr_pickup_ok' : 'staff_qr_pickup_failed',
                         propertyKey: p.key.toString(),
                         details: ok ? 'Pickup via QR OK' : 'QR rejected: $err',
                       );
@@ -322,16 +421,18 @@ class StaffStationScreen extends StatelessWidget {
 
             if (isAdmin) ...[
               const SizedBox(width: 6),
-              PopupMenuButton<String>(
+              PopupMenuButton(
                 tooltip: 'Admin tools',
                 onSelected: (v) async {
                   if (v == 'unlock') {
                     await PropertyService.adminUnlockOtp(p);
+
                     await AuditService.log(
                       action: 'admin_unlock_otp',
                       propertyKey: p.key.toString(),
                       details: 'OTP unlocked by admin',
                     );
+
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('OTP unlocked ✅')),
@@ -340,11 +441,13 @@ class StaffStationScreen extends StatelessWidget {
 
                   if (v == 'reset') {
                     await PropertyService.adminResetOtp(p);
+
                     await AuditService.log(
                       action: 'admin_reset_otp',
                       propertyKey: p.key.toString(),
                       details: 'OTP reset by admin',
                     );
+
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('OTP reset ✅')),
@@ -367,10 +470,10 @@ class StaffStationScreen extends StatelessWidget {
     );
   }
 
-  Future<String?> _askOtp(BuildContext context) async {
+  Future _askOtp(BuildContext context) async {
     final c = TextEditingController();
     try {
-      return await showDialog<String?>(
+      return await showDialog(
         context: context,
         builder: (_) => AlertDialog(
           title: const Text('Enter OTP'),

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter_pos_printer_platform_image_3/flutter_pos_printer_platform_image_3.dart';
+
 import 'printer_settings_service.dart';
 
 class PrinterService {
@@ -28,7 +29,9 @@ class PrinterService {
       });
 
       await Future.delayed(timeout);
-      yield found;
+
+      // ✅ return a copy (safe)
+      yield List<PrinterDevice>.unmodifiable(found);
     } finally {
       await sub?.cancel();
     }
@@ -65,13 +68,15 @@ class PrinterService {
   static Future<bool> ensureConnectedFromSaved({bool isBle = false}) async {
     final s = PrinterSettingsService.getOrCreate();
     final addr = (s.bluetoothAddress ?? '').trim();
-
     if (addr.isEmpty) return false;
+
+    final name = (s.bluetoothName ?? '').trim();
+    final safeName = name.isEmpty ? null : name;
 
     return _pm.connect(
       type: PrinterType.bluetooth,
       model: BluetoothPrinterInput(
-        name: s.bluetoothName,
+        name: safeName,
         address: addr,
         isBle: isBle,
         autoConnect: true,

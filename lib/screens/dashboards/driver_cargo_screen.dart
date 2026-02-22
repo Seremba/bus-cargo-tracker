@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:geolocator/geolocator.dart';
 
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
@@ -20,7 +21,7 @@ class DriverCargoScreen extends StatefulWidget {
 }
 
 class _DriverCargoScreenState extends State<DriverCargoScreen> {
-  StreamSubscription? _sub;
+  StreamSubscription<Position>? _sub;
   Timer? _retryTimer;
   int _lastSnackCheckpointIndex = -1;
 
@@ -73,7 +74,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     if (mounted) setState(() => _gpsStatus = 'GPS: listening...');
 
     _sub = LocationService.positionStream().listen(
-      (pos) async {
+      (Position pos) async {
         if (!mounted) return;
 
         _lastGpsAt = DateTime.now();
@@ -84,20 +85,25 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           final coords =
               '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
 
+          final acc = pos.accuracy.isNaN ? '—' : '${pos.accuracy.toStringAsFixed(0)}m';
+
           _gpsStatus = activeTrip == null
-              ? 'GPS: $coords (no active trip)'
-              : 'GPS: $coords (tracking trip: ${activeTrip.routeName})';
+              ? 'GPS: $coords (±$acc) (no active trip)'
+              : 'GPS: $coords (±$acc) (tracking trip: ${activeTrip.routeName})';
         });
 
         if (activeTrip == null) return;
 
+        // Screen-side throttle (battery + UI stability)
         final now = DateTime.now();
-        if (now.difference(_lastCheckpointCheck).inSeconds < 15) return;
+        if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
         _lastCheckpointCheck = now;
 
+        // ✅ Pass accuracy into service for robust detection
         final reached = await TripService.updateCheckpointFromLocation(
           lat: pos.latitude,
           lng: pos.longitude,
+          accuracyMeters: pos.accuracy,
         );
 
         if (!mounted) return;
@@ -186,7 +192,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           const SizedBox(height: 4),
           Text(_lastGpsText(), style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 10),
-
           const Text(
             'Pending (Ready to Load)',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
@@ -197,14 +202,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
             style: TextStyle(fontSize: 12, color: Colors.black54),
           ),
           const SizedBox(height: 8),
-
           if (pending.isEmpty)
             _emptyHint(
               'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
             ),
-
-          for (final p in pending)
-            _pendingCard(context, p),
+          for (final p in pending) _pendingCard(context, p),
         ],
       ),
     );
@@ -213,7 +215,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   Widget _pendingCard(BuildContext context, dynamic p) {
     final loadedOk = p.loadedAt != null;
 
-    // Slight UI clarity
     final loadedText = loadedOk
         ? 'Loaded ✅ ${p.loadedAt.toLocal().toString().substring(0, 16)}'
         : 'Not loaded yet ❌ (Desk must mark LOADED)';
@@ -236,50 +237,44 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           '$loadedText',
         ),
         trailing: ElevatedButton(
-          // ✅ If you want HARD blocking at UI level, disable the button:
-          onPressed: () async {
-            // Pre-check (better UX)
-            final route = findRouteById(p.routeId);
-            if (route == null) {
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Route missing ❌ Ask admin/staff'),
-                ),
-              );
-              return;
-            }
+          // ✅ Hard UI-block when desk hasn't marked loaded
+          onPressed: loadedOk
+              ? () async {
+                  // Pre-check (UX)
+                  final route = findRouteById(p.routeId);
+                  if (route == null) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Route missing ❌ Ask admin/staff'),
+                      ),
+                    );
+                    return;
+                  }
 
-            final cps = validatedCheckpoints(route);
-            if (cps.isEmpty) {
-              if (!context.mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'Route "${route.name}" has invalid checkpoints ❌',
-                  ),
-                ),
-              );
-              return;
-            }
+                  final cps = validatedCheckpoints(route);
+                  if (cps.isEmpty) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          'Route "${route.name}" has invalid checkpoints ❌',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
 
-            // ✅ Service now returns outcome message
-            final err = await PropertyService.markInTransit(p);
+                  final err = await PropertyService.markInTransit(p);
 
-            if (!context.mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(err ?? 'Marked In Transit ✅'),
-              ),
-            );
-          },
-          style: loadedOk
-              ? null
-              : ElevatedButton.styleFrom(
-                  // visually show “blocked” even though service also blocks
-                  backgroundColor: Colors.grey.shade400,
-                  foregroundColor: Colors.black87,
-                ),
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(err ?? 'Marked In Transit ✅'),
+                    ),
+                  );
+                }
+              : null,
           child: Text(loadedOk ? 'Load' : 'Blocked'),
         ),
       ),

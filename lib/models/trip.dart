@@ -33,6 +33,28 @@ class Trip extends HiveObject {
   @HiveField(8)
   final String routeId;
 
+  // -----------------------------
+  // ✅ NEW fields (Hive-safe: appended)
+  // -----------------------------
+
+  /// Candidate checkpoint being "entered" (debounce/dwell).
+  @HiveField(9)
+  int? candidateCheckpointIndex;
+
+  /// When we first detected inside radius for the candidate checkpoint.
+  @HiveField(10)
+  DateTime? candidateSince;
+
+  /// Last accepted GPS sample (for outlier rejection).
+  @HiveField(11)
+  double? lastGpsLat;
+
+  @HiveField(12)
+  double? lastGpsLng;
+
+  @HiveField(13)
+  DateTime? lastGpsAt;
+
   Trip({
     required this.tripId,
     required this.routeName,
@@ -43,5 +65,10 @@ class Trip extends HiveObject {
     required this.routeId,
     this.endedAt,
     this.lastCheckpointIndex = -1,
+    this.candidateCheckpointIndex,
+    this.candidateSince,
+    this.lastGpsLat,
+    this.lastGpsLng,
+    this.lastGpsAt,
   });
 }

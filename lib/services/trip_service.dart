@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:math';
 import 'package:hive/hive.dart';
 
 import '../models/trip.dart';
@@ -10,10 +9,19 @@ import '../services/hive_service.dart';
 import 'notification_service.dart';
 import 'role_guard.dart';
 import '../models/user_role.dart';
+import 'geo_service.dart'; // use shared geo logic
 
 class TripService {
   static Box<Trip> tripBox() => HiveService.tripBox();
   static Completer<void>? _checkpointLock;
+
+  // -----------------------------
+  // Detection tuning knobs
+  // -----------------------------
+  static const double _maxAccuracyMeters = 60; // ignore worse samples
+  static const Duration _enterDwell = Duration(seconds: 25); // debounce
+  static const double _exitPaddingMeters = 200; // hysteresis buffer
+  static const int _minSecondsBetweenSamples = 2; // avoid spam writes
 
   static bool _canTrackTrips() =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
@@ -22,9 +30,7 @@ class TripService {
     while (_checkpointLock != null) {
       await _checkpointLock!.future;
     }
-
     _checkpointLock = Completer<void>();
-
     try {
       return await action();
     } finally {
@@ -35,7 +41,7 @@ class TripService {
 
   static String _newTripId() => DateTime.now().millisecondsSinceEpoch.toString();
 
-  /// ✅ Returns the active trip for THIS driver + THIS route, or creates one if none exists.
+  ///  Returns the active trip for THIS driver + THIS route, or creates one if none exists.
   static Future<Trip> ensureActiveTrip({
     required String routeId,
     required String routeName,
@@ -67,8 +73,6 @@ class TripService {
         message:
             'Driver $driverId tried to start "$routeName" while another trip is active (${otherActive.first.routeName}). Blocked to avoid mixing routes.',
       );
-
-      // ✅ BLOCK by returning existing active trip (do not create a new one)
       return otherActive.first;
     }
 
@@ -106,11 +110,23 @@ class TripService {
     }
   }
 
+  /// ✅ Robust checkpoint detection:
+  /// - accuracy gate
+  /// - debounce (dwell time)
+  /// - hysteresis (enter vs exit boundary)
+  /// - outlier rejection
   static Future<bool> updateCheckpointFromLocation({
     required double lat,
     required double lng,
+    double? accuracyMeters,
   }) async {
     if (!_canTrackTrips()) return false;
+
+    // Accuracy gate (if provided)
+    if (accuracyMeters != null &&
+        (accuracyMeters.isNaN || accuracyMeters > _maxAccuracyMeters)) {
+      return false;
+    }
 
     return _runWithCheckpointLock(() async {
       final driverId = Session.currentUserId!;
@@ -119,32 +135,91 @@ class TripService {
       final activeTrips = box.values.where(
         (t) => t.driverUserId == driverId && t.status == TripStatus.active,
       );
-
       if (activeTrips.isEmpty) return false;
 
       final trips = activeTrips.toList()
         ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
       final currentTrip = trips.first;
 
+      // Throttle very frequent calls (reduces Hive writes + jitter)
+      if (currentTrip.lastGpsAt != null) {
+        final dt = DateTime.now().difference(currentTrip.lastGpsAt!).inSeconds;
+        if (dt >= 0 && dt < _minSecondsBetweenSamples) {
+          return false;
+        }
+      }
+
+      // Outlier rejection + store last GPS
+      if (!_acceptSample(currentTrip, lat: lat, lng: lng)) {
+        await currentTrip.save(); // save lastGpsAt updates
+        return false;
+      }
+
       final nextIndex = currentTrip.lastCheckpointIndex + 1;
       if (nextIndex < 0 || nextIndex >= currentTrip.checkpoints.length) {
+        _clearCandidate(currentTrip);
+        await currentTrip.save();
         return false;
       }
 
       final nextCp = currentTrip.checkpoints[nextIndex];
-      if (nextCp.reachedAt != null) return false;
+      if (nextCp.reachedAt != null) {
+        _clearCandidate(currentTrip);
+        await currentTrip.save();
+        return false;
+      }
 
-      final dist = _distanceMeters(
-        lat1: lat,
-        lng1: lng,
-        lat2: nextCp.lat,
-        lng2: nextCp.lng,
-      );
+      final dist = GeoService.distanceMeters(lat, lng, nextCp.lat, nextCp.lng);
+      final acc = (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
 
-      if (dist > nextCp.radiusMeters) return false;
+      // Accuracy-aware boundaries
+      final enterRadius = nextCp.radiusMeters + acc;
+      final exitRadius = nextCp.radiusMeters + _exitPaddingMeters + acc;
 
-      nextCp.reachedAt ??= DateTime.now();
+      final insideNow = dist <= enterRadius;
+      final outsideNow = dist >= exitRadius;
+
+      final isCandidateForThis =
+          currentTrip.candidateCheckpointIndex == nextIndex;
+
+      // Not inside: clear candidate to avoid false triggers
+      if (!insideNow) {
+        // If clearly outside, always clear
+        if (outsideNow) {
+          _clearCandidate(currentTrip);
+        } else {
+          // borderline zone: also clear (simpler + safer)
+          _clearCandidate(currentTrip);
+        }
+        await currentTrip.save();
+        return false;
+      }
+
+      // Inside now: start or continue dwell timer
+      if (!isCandidateForThis) {
+        currentTrip.candidateCheckpointIndex = nextIndex;
+        currentTrip.candidateSince = DateTime.now();
+        await currentTrip.save();
+        return false;
+      }
+
+      final since = currentTrip.candidateSince;
+      if (since == null) {
+        currentTrip.candidateSince = DateTime.now();
+        await currentTrip.save();
+        return false;
+      }
+
+      if (DateTime.now().difference(since) < _enterDwell) {
+        // Still dwelling inside radius; do not confirm yet.
+        await currentTrip.save(); // persist lastGpsAt etc.
+        return false;
+      }
+
+      // ✅ Confirm reached checkpoint
+      nextCp.reachedAt = DateTime.now();
       currentTrip.lastCheckpointIndex = nextIndex;
+      _clearCandidate(currentTrip);
 
       await currentTrip.save();
 
@@ -158,6 +233,41 @@ class TripService {
 
       return true;
     });
+  }
+
+  static void _clearCandidate(Trip trip) {
+    trip.candidateCheckpointIndex = null;
+    trip.candidateSince = null;
+  }
+
+  /// Reject impossible jumps and persist last sample fields.
+  /// Conservative rules: if it jumps >1000m in <5 seconds, ignore it.
+  static bool _acceptSample(Trip trip,
+      {required double lat, required double lng}) {
+    final prevLat = trip.lastGpsLat;
+    final prevLng = trip.lastGpsLng;
+    final prevAt = trip.lastGpsAt;
+
+    final now = DateTime.now();
+
+    // Update stored fields
+    trip.lastGpsLat = lat;
+    trip.lastGpsLng = lng;
+    trip.lastGpsAt = now;
+
+    if (prevLat == null || prevLng == null || prevAt == null) return true;
+
+    final dt = now.difference(prevAt).inSeconds;
+    if (dt <= 0) return true;
+
+    final d = GeoService.distanceMeters(prevLat, prevLng, lat, lng);
+
+    if (dt < 5 && d > 1000) {
+      // Likely a bad GPS spike; ignore this sample.
+      return false;
+    }
+
+    return true;
   }
 
   static Future<void> _notifyCheckpointReached({
@@ -184,28 +294,6 @@ class TripService {
       );
     }
   }
-
-  static double _distanceMeters({
-    required double lat1,
-    required double lng1,
-    required double lat2,
-    required double lng2,
-  }) {
-    const R = 6371000.0;
-    final dLat = _degToRad(lat2 - lat1);
-    final dLng = _degToRad(lng2 - lng1);
-
-    final a = sin(dLat / 2) * sin(dLat / 2) +
-        cos(_degToRad(lat1)) *
-            cos(_degToRad(lat2)) *
-            sin(dLng / 2) *
-            sin(dLng / 2);
-
-    final c = 2 * atan2(sqrt(a), sqrt(1 - a));
-    return R * c;
-  }
-
-  static double _degToRad(double deg) => deg * (pi / 180.0);
 
   static Future<void> _autoEndTrip(Trip trip) async {
     if (trip.status != TripStatus.active) return;

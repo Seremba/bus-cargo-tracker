@@ -110,14 +110,14 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
           final cpName =
               (updatedTrip != null &&
-                  currentIndex >= 0 &&
-                  currentIndex < updatedTrip.checkpoints.length)
-              ? updatedTrip.checkpoints[currentIndex].name
-              : 'Checkpoint';
+                      currentIndex >= 0 &&
+                      currentIndex < updatedTrip.checkpoints.length)
+                  ? updatedTrip.checkpoints[currentIndex].name
+                  : 'Checkpoint';
 
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('$cpName reached ✅')),
+          );
         }
       },
       onError: (e) {
@@ -165,7 +165,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
     final pending = box.values
         .where((p) => p.status == PropertyStatus.pending)
-        .toList();
+        .toList()
+      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     return Scaffold(
       appBar: AppBar(
@@ -185,62 +186,102 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           const SizedBox(height: 4),
           Text(_lastGpsText(), style: const TextStyle(fontSize: 12)),
           const SizedBox(height: 10),
+
           const Text(
             'Pending (Ready to Load)',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
+          const SizedBox(height: 4),
+          const Text(
+            'Rule: Desk must mark LOADED first before you can start a trip.',
+            style: TextStyle(fontSize: 12, color: Colors.black54),
+          ),
           const SizedBox(height: 8),
+
           if (pending.isEmpty)
             _emptyHint(
               'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
             ),
+
           for (final p in pending)
-            Card(
-              child: ListTile(
-                title: Text(_s(p.receiverName)),
-                subtitle: Text(
-                  '${_s(p.destination)} • ${_s(p.receiverPhone)}\n'
-                  'Items: ${p.itemCount} • Route: ${_dashIfEmpty(p.routeName)}',
-                ),
-                trailing: ElevatedButton(
-                  onPressed: () async {
-                    // ✅ UI pre-check (better UX)
-                    final route = findRouteById(p.routeId);
-                    if (route == null) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Route missing ❌ Ask admin/staff'),
-                        ),
-                      );
-                      return;
-                    }
-
-                    final cps = validatedCheckpoints(route);
-                    if (cps.isEmpty) {
-                      if (!context.mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            'Route "${route.name}" has invalid checkpoints ❌',
-                          ),
-                        ),
-                      );
-                      return;
-                    }
-
-                    await PropertyService.markInTransit(p);
-
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Marked In Transit ✅')),
-                    );
-                  },
-                  child: const Text('Load'),
-                ),
-              ),
-            ),
+            _pendingCard(context, p),
         ],
+      ),
+    );
+  }
+
+  Widget _pendingCard(BuildContext context, dynamic p) {
+    final loadedOk = p.loadedAt != null;
+
+    // Slight UI clarity
+    final loadedText = loadedOk
+        ? 'Loaded ✅ ${p.loadedAt.toLocal().toString().substring(0, 16)}'
+        : 'Not loaded yet ❌ (Desk must mark LOADED)';
+
+    return Card(
+      child: ListTile(
+        title: Row(
+          children: [
+            Expanded(child: Text(_s(p.receiverName))),
+            if (!loadedOk)
+              const Padding(
+                padding: EdgeInsets.only(left: 8),
+                child: Icon(Icons.warning_amber_rounded, size: 18),
+              ),
+          ],
+        ),
+        subtitle: Text(
+          '${_s(p.destination)} • ${_s(p.receiverPhone)}\n'
+          'Items: ${p.itemCount} • Route: ${_dashIfEmpty(p.routeName)}\n'
+          '$loadedText',
+        ),
+        trailing: ElevatedButton(
+          // ✅ If you want HARD blocking at UI level, disable the button:
+          onPressed: () async {
+            // Pre-check (better UX)
+            final route = findRouteById(p.routeId);
+            if (route == null) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Route missing ❌ Ask admin/staff'),
+                ),
+              );
+              return;
+            }
+
+            final cps = validatedCheckpoints(route);
+            if (cps.isEmpty) {
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(
+                    'Route "${route.name}" has invalid checkpoints ❌',
+                  ),
+                ),
+              );
+              return;
+            }
+
+            // ✅ Service now returns outcome message
+            final err = await PropertyService.markInTransit(p);
+
+            if (!context.mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(err ?? 'Marked In Transit ✅'),
+              ),
+            );
+          },
+          style: loadedOk
+              ? null
+              : ElevatedButton.styleFrom(
+                  // visually show “blocked” even though service also blocks
+                  backgroundColor: Colors.grey.shade400,
+                  foregroundColor: Colors.black87,
+                ),
+          child: Text(loadedOk ? 'Load' : 'Blocked'),
+        ),
       ),
     );
   }

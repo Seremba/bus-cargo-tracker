@@ -48,6 +48,50 @@ class PropertyService {
     return diff.inMinutes < 0 ? 0 : diff.inMinutes;
   }
 
+  // ============================================================
+  // Auto-repair: fix already-broken records (status implies loaded)
+  // ============================================================
+  /// Repairs legacy invalid state where status is inTransit/delivered/pickedUp
+  /// but loadedAt is null. Writes an audit entry.
+  /// Returns true if a repair was applied.
+  static Future<bool> repairMissingLoadedMilestone(Property p) async {
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    final impliesLoaded = fresh.status == PropertyStatus.inTransit ||
+        fresh.status == PropertyStatus.delivered ||
+        fresh.status == PropertyStatus.pickedUp;
+
+    if (!impliesLoaded) return false;
+    if (fresh.loadedAt != null) return false;
+
+    // Pick the safest timestamp we already have
+    final best = fresh.inTransitAt ??
+        fresh.deliveredAt ??
+        fresh.pickedUpAt ??
+        DateTime.now();
+
+    fresh.loadedAt = best;
+
+    // Do not guess station (no origin field). Keep empty if unknown.
+    if (fresh.loadedAtStation.trim().isEmpty) {
+      fresh.loadedAtStation = '';
+    }
+    if (fresh.loadedByUserId.trim().isEmpty) {
+      fresh.loadedByUserId = 'system_repair';
+    }
+
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'auto_repair_missing_loadedAt',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Repaired loadedAt because status implied loaded. loadedAt set to $best',
+    );
+
+    return true;
+  }
+
   // =========================
   // Delivered + OTP + Pickup QR
   // =========================
@@ -57,7 +101,16 @@ class PropertyService {
     final box = HiveService.propertyBox();
     final fresh = box.get(p.key) ?? p;
 
+    // Optional safety: repair legacy inconsistency
+    await repairMissingLoadedMilestone(fresh);
+
     if (fresh.status != PropertyStatus.inTransit) return;
+
+    // Consistency: if inTransit then loaded must exist (guard anyway)
+    fresh.loadedAt ??= fresh.inTransitAt ?? DateTime.now();
+    if (fresh.loadedByUserId.trim().isEmpty) {
+      fresh.loadedByUserId = (Session.currentUserId ?? 'system').trim();
+    }
 
     final now = DateTime.now();
 
@@ -96,6 +149,9 @@ class PropertyService {
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
+    // Optional safety: repair legacy inconsistency
+    await repairMissingLoadedMilestone(fresh);
+
     if (fresh.status != PropertyStatus.delivered) return false;
     if (fresh.pickupOtp == null) return false;
     if (_isOtpLocked(fresh)) return false;
@@ -110,6 +166,11 @@ class PropertyService {
       await fresh.save();
       return false;
     }
+
+    // ✅ Ensure milestone chain exists (consistency)
+    fresh.deliveredAt ??= DateTime.now();
+    fresh.inTransitAt ??= fresh.deliveredAt;
+    fresh.loadedAt ??= fresh.inTransitAt;
 
     fresh.status = PropertyStatus.pickedUp;
     fresh.pickedUpAt = DateTime.now();
@@ -191,14 +252,40 @@ class PropertyService {
     );
   }
 
-  // =========================
-  // In Transit + Route Trip
-  // =========================
-  static Future markInTransit(Property p) async {
-    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return;
+  
+  /// STRICT FLOW:
+  /// pending → (desk marks Loaded → loadedAt) → driver starts trip → inTransit
+  ///
+  /// Returns null on success, or a human-friendly error string (for UI).
+  static Future<String?> markInTransit(Property p) async {
+    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) {
+      return 'Not authorized.';
+    }
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    if (fresh.status != PropertyStatus.pending) return;
+    if (fresh.status != PropertyStatus.pending) {
+      return 'Only Pending cargo can be loaded.';
+    }
+
+    // ✅ STRICT FLOW: cannot go inTransit unless Desk marked LOADED (timestamp-based)
+    if (fresh.loadedAt == null) {
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Load blocked (missing LOADED milestone)',
+        message:
+            'Driver tried to start trip but LOADED milestone is missing.\n'
+            'Property: ${fresh.receiverName} (${fresh.receiverPhone}).\n'
+            'Desk must mark LOADED first.',
+      );
+
+      await AuditService.log(
+        action: 'driver_load_blocked_missing_loadedAt',
+        propertyKey: fresh.key.toString(),
+        details: 'Blocked pending→inTransit because loadedAt == null',
+      );
+
+      return 'Not loaded yet ❌ Desk must mark LOADED first.';
+    }
 
     final route = findRouteById(fresh.routeId);
     if (route == null) {
@@ -208,7 +295,7 @@ class PropertyService {
         message:
             'Cannot start trip: property for ${fresh.receiverName} has no valid routeId.',
       );
-      return;
+      return 'Route missing ❌ Ask admin/staff.';
     }
 
     final cps = validatedCheckpoints(route);
@@ -220,7 +307,7 @@ class PropertyService {
             'Route "${route.name}" has invalid checkpoints.\n'
             'Fix coordinates before tracking.',
       );
-      return;
+      return 'Route "${route.name}" invalid ❌ Ask admin to fix checkpoints.';
     }
 
     final active = TripService.getActiveTripForCurrentDriver();
@@ -232,7 +319,7 @@ class PropertyService {
             'Driver has an active trip (${active.routeName}) but tried to load cargo for route (${route.name}).\n'
             'Blocked to avoid mixing routes.',
       );
-      return;
+      return 'Route mismatch ❌ Finish current trip first.';
     }
 
     fresh.routeId = route.id;
@@ -250,25 +337,31 @@ class PropertyService {
 
     await fresh.save();
 
+    await AuditService.log(
+      action: 'driver_mark_in_transit',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Started trip: ${route.name} | tripId=${fresh.tripId} | loadedAt=${fresh.loadedAt}',
+    );
+
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
       title: 'Property in transit',
-      message:
-          'Your property is now in transit.\n'
-          'Route: ${route.name}',
+      message: 'Your property is now in transit.\nRoute: ${route.name}',
     );
 
     await NotificationService.notify(
       targetUserId: NotificationService.adminInbox,
       title: 'Driver update: In transit',
       message:
-          'Property for ${fresh.receiverName} is in transit.\n'
-          'Route: ${route.name}',
+          'Property for ${fresh.receiverName} is in transit.\nRoute: ${route.name}',
     );
+
+    return null; // ✅ success
   }
 
   // =========================
-  // Admin override
+  // Admin override (CONSISTENT)
   // =========================
   static Future adminSetStatus(Property p, PropertyStatus newStatus) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
@@ -276,9 +369,13 @@ class PropertyService {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
     if (fresh.status == newStatus) return;
 
+    // Safety: repair legacy inconsistency before admin action
+    await repairMissingLoadedMilestone(fresh);
+
+    // ✅ Preserve “normal path” flows when possible
     if (newStatus == PropertyStatus.inTransit &&
         fresh.status == PropertyStatus.pending) {
-      await markInTransit(fresh);
+      await markInTransit(fresh); // enforces loadedAt
       return;
     }
 
@@ -315,9 +412,16 @@ class PropertyService {
       fresh.loadedByUserId = '';
 
       await fresh.save();
+
+      await AuditService.log(
+        action: 'admin_set_status',
+        propertyKey: fresh.key.toString(),
+        details: 'Admin set status to pending (full reset)',
+      );
       return;
     }
 
+    // If admin pushes to inTransit, try to ensure trip context exists
     if (newStatus == PropertyStatus.inTransit) {
       final route = findRouteById(fresh.routeId);
       if (route != null) {
@@ -335,12 +439,34 @@ class PropertyService {
       }
     }
 
+    // ✅ timestamps + milestone consistency
     if (newStatus == PropertyStatus.inTransit) {
       fresh.inTransitAt ??= DateTime.now();
+
+      // ✅ inTransit implies LOADED exists
+      fresh.loadedAt ??= fresh.inTransitAt;
+
+      if (fresh.loadedByUserId.trim().isEmpty) {
+        fresh.loadedByUserId = (Session.currentUserId ?? 'admin').trim();
+      }
+
+      await AuditService.log(
+        action: 'admin_ensure_loaded_for_inTransit',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Ensured loadedAt for inTransit. loadedAt=${fresh.loadedAt} inTransitAt=${fresh.inTransitAt}',
+      );
     }
 
     if (newStatus == PropertyStatus.delivered) {
       fresh.deliveredAt ??= DateTime.now();
+
+      // ✅ Delivered implies it must have been inTransit; ensure inTransitAt exists
+      fresh.inTransitAt ??= fresh.deliveredAt;
+
+      // ✅ Delivered implies LOADED exists as well
+      fresh.loadedAt ??= fresh.inTransitAt;
+
       fresh.pickupOtp ??= _generateOtp();
       fresh.otpGeneratedAt ??= DateTime.now();
       fresh.otpAttempts = 0;
@@ -350,10 +476,23 @@ class PropertyService {
       fresh.qrIssuedAt ??= DateTime.now();
       if (fresh.qrNonce.trim().isEmpty) fresh.qrNonce = _newNonce();
       fresh.qrConsumedAt = null;
+
+      await AuditService.log(
+        action: 'admin_prepare_delivered',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Prepared delivered: deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
+      );
     }
 
     if (newStatus == PropertyStatus.pickedUp) {
       fresh.pickedUpAt ??= DateTime.now();
+
+      // ✅ PickedUp implies delivered/inTransit/loaded exist
+      fresh.deliveredAt ??= fresh.pickedUpAt;
+      fresh.inTransitAt ??= fresh.deliveredAt;
+      fresh.loadedAt ??= fresh.inTransitAt;
+
       fresh.staffPickupConfirmed = true;
       fresh.receiverPickupConfirmed = true;
 
@@ -364,10 +503,23 @@ class PropertyService {
 
       // ✅ consume QR
       fresh.qrConsumedAt ??= DateTime.now();
+
+      await AuditService.log(
+        action: 'admin_prepare_pickedUp',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Prepared pickedUp: pickedUpAt=${fresh.pickedUpAt}, deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
+      );
     }
 
     fresh.status = newStatus;
     await fresh.save();
+
+    await AuditService.log(
+      action: 'admin_set_status',
+      propertyKey: fresh.key.toString(),
+      details: 'Admin set status to ${newStatus.name}',
+    );
 
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
@@ -421,6 +573,9 @@ class PropertyService {
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
+    // Optional safety: repair legacy inconsistency
+    await repairMissingLoadedMilestone(fresh);
+
     if (fresh.status != PropertyStatus.delivered) {
       return 'Property is not in Delivered state.';
     }
@@ -472,6 +627,9 @@ class PropertyService {
   static Future refreshPickupQr(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
+    // Optional safety: repair legacy inconsistency
+    await repairMissingLoadedMilestone(fresh);
+
     if (fresh.status != PropertyStatus.delivered) return;
     if (fresh.pickupOtp == null || fresh.otpGeneratedAt == null) return;
     if (_isOtpLocked(fresh) || _isOtpExpired(fresh)) return;
@@ -482,6 +640,9 @@ class PropertyService {
     await fresh.save();
   }
 
+  // =========================
+  // Desk "Loaded" milestone
+  // =========================
   static Future markLoaded(Property p, {required String station}) async {
     if (!RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin})) {
       return false;
@@ -489,10 +650,10 @@ class PropertyService {
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
-    // Recommended: only allow when still pending
+    // only allow when still pending
     if (fresh.status != PropertyStatus.pending) return false;
 
-    // Idempotent (don’t rewrite if already loaded)
+    // idempotent
     if (fresh.loadedAt != null) return true;
 
     fresh.loadedAt = DateTime.now();

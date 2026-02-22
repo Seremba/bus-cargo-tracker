@@ -59,9 +59,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
   Future<void> _copy(BuildContext context, String label, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('$label copied ✅')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label copied ✅')));
   }
 
   @override
@@ -123,12 +123,13 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
         // Payment history
         final propKeyStr = p.key.toString();
-        final payments = payBox.values
-            .where((PaymentRecord x) => x.propertyKey == propKeyStr)
-            .toList()
-          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        final payments =
+            payBox.values
+                .where((PaymentRecord x) => x.propertyKey == propKeyStr)
+                .toList()
+              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        // ✅ Pickup QR payload
+        //  Pickup QR payload
         final int? propertyKeyInt = (p.key is int)
             ? (p.key as int)
             : int.tryParse(p.key.toString());
@@ -142,14 +143,17 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
         // QR expiry info
         final issuedAt = p.qrIssuedAt;
-        final expiresAt =
-            (issuedAt == null) ? null : issuedAt.add(PickupQrService.ttl);
+        final expiresAt = (issuedAt == null)
+            ? null
+            : issuedAt.add(PickupQrService.ttl);
 
-        // ✅ Use the variable (no lint)
-        final bool isQrExpired = (expiresAt != null) ? now.isAfter(expiresAt) : false;
+        final bool isQrExpired = (expiresAt != null)
+            ? now.isAfter(expiresAt)
+            : false;
 
         // QR "ready" means: delivered + has nonce + issued + not consumed + payload
-        final bool qrReadyForDisplay = p.status == PropertyStatus.delivered &&
+        final bool qrReadyForDisplay =
+            p.status == PropertyStatus.delivered &&
             p.qrIssuedAt != null &&
             p.qrNonce.trim().isNotEmpty &&
             p.qrConsumedAt == null &&
@@ -157,6 +161,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
         final loadedStation = (p.loadedAtStation).trim();
         final loadedBy = (p.loadedByUserId).trim();
+
+        final bool loadedDone =
+            p.loadedAt != null ||
+            p.status == PropertyStatus.inTransit ||
+            p.status == PropertyStatus.delivered ||
+            p.status == PropertyStatus.pickedUp;
 
         return Scaffold(
           appBar: AppBar(
@@ -167,9 +177,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(12),
             children: [
-              // =========================
-              // Header
-              // =========================
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -215,11 +222,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           IconButton(
                             tooltip: 'Copy phone',
                             icon: const Icon(Icons.copy, size: 18),
-                            onPressed: () => _copy(
-                              context,
-                              'Phone',
-                              p.receiverPhone,
-                            ),
+                            onPressed: () =>
+                                _copy(context, 'Phone', p.receiverPhone),
                           ),
                         ],
                       ),
@@ -272,9 +276,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================
-              // Trip Progress
-              // =========================
               const Text(
                 'Trip Progress',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -319,9 +320,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================
-              // Pickup OTP
-              // =========================
               if (p.status == PropertyStatus.delivered &&
                   otp != null &&
                   otp.trim().isNotEmpty) ...[
@@ -354,10 +352,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
 
-              // =========================
-              // ✅ Pickup QR (IMAGE + state)
-              // =========================
-              if (p.status == PropertyStatus.pickedUp || p.pickedUpAt != null) ...[
+              if (p.status == PropertyStatus.pickedUp ||
+                  p.pickedUpAt != null) ...[
                 const Text(
                   'Pickup QR',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -401,7 +397,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   )
-                // CASE C: QR expired (uses isQrExpired ✅)
+                // CASE C: QR expired
                 else if (isQrExpired)
                   Card(
                     child: Padding(
@@ -437,10 +433,11 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                             child: ElevatedButton.icon(
                               icon: const Icon(Icons.refresh),
                               label: const Text('Refresh Pickup QR'),
-                              // ✅ Fix async-gap lint: don't capture messenger from context before await
                               onPressed: () async {
                                 final ok =
-                                    await PickupQrService.refreshForDelivered(p);
+                                    await PickupQrService.refreshForDelivered(
+                                      p,
+                                    );
 
                                 if (!context.mounted) return;
 
@@ -472,7 +469,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 10),
                           Center(
                             child: QrImageView(
-                              data: pickupQrPayload, // safe here (qrReadyForDisplay true)
+                              data: pickupQrPayload, // force non-null
                               version: QrVersions.auto,
                               size: 220,
                               gapless: false,
@@ -500,7 +497,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           SelectableText(
-                            pickupQrPayload,
+                            pickupQrPayload, // ✅ force non-null
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 10),
@@ -510,7 +507,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                               onPressed: () => _copy(
                                 context,
                                 'Pickup QR',
-                                pickupQrPayload,
+                                pickupQrPayload, // force non-null
                               ),
                               icon: const Icon(Icons.copy, size: 18),
                               label: const Text('Copy payload'),
@@ -599,7 +596,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
               const SizedBox(height: 12),
 
               // =========================
-              // Timeline
+              // Timeline (PATCHED)
               // =========================
               const Text(
                 'Timeline',
@@ -610,10 +607,25 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     _timelineRow('Pending', p.createdAt, true),
-                    _timelineRow('Loaded', p.loadedAt, p.loadedAt != null),
-                    _timelineRow('In Transit', p.inTransitAt, p.inTransitAt != null),
-                    _timelineRow('Delivered', p.deliveredAt, p.deliveredAt != null),
-                    _timelineRow('Picked Up', p.pickedUpAt, p.pickedUpAt != null),
+
+                    // ✅ Loaded is implied by later statuses
+                    _timelineRow('Loaded', p.loadedAt, loadedDone),
+
+                    _timelineRow(
+                      'In Transit',
+                      p.inTransitAt,
+                      p.inTransitAt != null,
+                    ),
+                    _timelineRow(
+                      'Delivered',
+                      p.deliveredAt,
+                      p.deliveredAt != null,
+                    ),
+                    _timelineRow(
+                      'Picked Up',
+                      p.pickedUpAt,
+                      p.pickedUpAt != null,
+                    ),
                   ],
                 ),
               ),

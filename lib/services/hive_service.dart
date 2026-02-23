@@ -7,6 +7,7 @@ import '../models/notification_item.dart';
 import '../models/trip.dart';
 import '../models/user.dart';
 import '../models/payment_record.dart';
+import '../models/outbound_message.dart';
 
 class HiveService {
   static const String _propertyBoxName = 'properties';
@@ -17,6 +18,7 @@ class HiveService {
 
   static const String _paymentBoxName = 'payments';
   static const String _printerSettingsBoxName = 'printer_settings';
+    static const String _outboundMsgBoxName = 'outbound_messages';
 
   static void setUser(String userId) {
     Session.currentUserId = userId;
@@ -30,6 +32,7 @@ class HiveService {
     await openUserBox();
     await openPaymentBox();
     await openPrinterSettingsBox();
+    await openOutboundMessageBox();
   }
 
   static Future<void> openPropertyBox() async {
@@ -100,9 +103,7 @@ class HiveService {
     return Hive.box<User>(_userBoxName);
   }
 
-  // =========================
-  // ✅ Payments
-  // =========================
+ 
   static Future<void> openPaymentBox() async {
     if (!Hive.isBoxOpen(_paymentBoxName)) {
       await Hive.openBox<PaymentRecord>(_paymentBoxName);
@@ -131,6 +132,20 @@ class HiveService {
       );
     }
     return Hive.box(_printerSettingsBoxName);
+  }
+    static Future<void> openOutboundMessageBox() async {
+    if (!Hive.isBoxOpen(_outboundMsgBoxName)) {
+      await Hive.openBox<OutboundMessage>(_outboundMsgBoxName);
+    }
+  }
+
+  static Box<OutboundMessage> outboundMessageBox() {
+    if (!Hive.isBoxOpen(_outboundMsgBoxName)) {
+      throw HiveError(
+        'OutboundMessage box is not open. Call HiveService.openOutboundMessageBox() first.',
+      );
+    }
+    return Hive.box<OutboundMessage>(_outboundMsgBoxName);
   }
 
   static Future<void> closeAll() async {

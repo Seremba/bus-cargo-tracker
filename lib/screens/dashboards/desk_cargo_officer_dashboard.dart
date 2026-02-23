@@ -12,6 +12,7 @@ import '../../services/file_share_service.dart';
 import '../desk/desk_scan_and_pay_screen.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
 import '../desk/desk_property_details_screen.dart';
+import '../common/outbound_messages_screen.dart';
 
 class DeskCargoOfficerDashboard extends StatelessWidget {
   const DeskCargoOfficerDashboard({super.key});
@@ -28,6 +29,9 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
     final propBox = HiveService.propertyBox();
     final name = (Session.currentUserFullName ?? '—').trim();
     final station = (Session.currentStationName ?? '').trim();
+
+    // ✅ Prevent double taps (stateless-safe): re-entrancy guard
+    var openingOutbound = false;
 
     return DefaultTabController(
       length: 2,
@@ -47,7 +51,6 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
               ),
             ],
           ),
-
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Scan'),
@@ -55,6 +58,27 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
             ],
           ),
           actions: [
+            IconButton(
+              tooltip: 'Outbound Messages',
+              // ✅ More obvious icon
+              icon: const Icon(Icons.send_outlined),
+              onPressed: () async {
+                // ✅ Prevent double taps / double push
+                if (openingOutbound) return;
+                openingOutbound = true;
+
+                try {
+                  await Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const OutboundMessagesScreen(),
+                    ),
+                  );
+                } finally {
+                  openingOutbound = false;
+                }
+              },
+            ),
             PopupMenuButton<String>(
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),
@@ -311,7 +335,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                                 : '—';
 
                             return Text(
-                              'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',
+                              'Property: $code\nTxnRef: ${x.txnRef.trim().isNotEmpty ? x.txnRef.trim() : '—'}',
                               style: const TextStyle(fontSize: 12),
                             );
                           }(),

@@ -9,7 +9,8 @@ import 'trip_service.dart';
 import 'whatsapp_service.dart';
 import 'audit_service.dart';
 import 'pickup_qr_service.dart';
-import '../../services/session.dart';
+import 'session.dart';
+import 'receiver_tracking_service.dart';
 
 class PropertyService {
   static String _generateOtp() {
@@ -48,16 +49,38 @@ class PropertyService {
     return diff.inMinutes < 0 ? 0 : diff.inMinutes;
   }
 
-  // ============================================================
+  // Receiver tracking (safe hook)
+
+  static Future<void> _safeNotifyReceiver({
+    required Property fresh,
+    required String eventLabel,
+  }) async {
+    try {
+      await ReceiverTrackingService.notifyReceiverOnStatusChange(
+        property: fresh,
+        eventLabel: eventLabel,
+      );
+    } catch (e) {
+      // Never block business flow (even audit must not crash)
+      try {
+        await AuditService.log(
+          action: 'receiver_notify_failed',
+          propertyKey: fresh.key.toString(),
+          details: 'Failed to queue receiver update ($eventLabel): $e',
+        );
+      } catch (_) {}
+    }
+  }
   // Auto-repair: fix already-broken records (status implies loaded)
-  // ============================================================
+
   /// Repairs legacy invalid state where status is inTransit/delivered/pickedUp
   /// but loadedAt is null. Writes an audit entry.
   /// Returns true if a repair was applied.
   static Future<bool> repairMissingLoadedMilestone(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
-    final impliesLoaded = fresh.status == PropertyStatus.inTransit ||
+    final impliesLoaded =
+        fresh.status == PropertyStatus.inTransit ||
         fresh.status == PropertyStatus.delivered ||
         fresh.status == PropertyStatus.pickedUp;
 
@@ -65,7 +88,8 @@ class PropertyService {
     if (fresh.loadedAt != null) return false;
 
     // Pick the safest timestamp we already have
-    final best = fresh.inTransitAt ??
+    final best =
+        fresh.inTransitAt ??
         fresh.deliveredAt ??
         fresh.pickedUpAt ??
         DateTime.now();
@@ -92,9 +116,8 @@ class PropertyService {
     return true;
   }
 
-  // =========================
   // Delivered + OTP + Pickup QR
-  // =========================
+
   static Future markDelivered(Property p) async {
     if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return;
 
@@ -114,19 +137,22 @@ class PropertyService {
 
     final now = DateTime.now();
 
-    // ✅ Step 1: mark delivered FIRST (persist)
+    // Step 1: mark delivered FIRST (persist)
     fresh.status = PropertyStatus.delivered;
     fresh.deliveredAt = now;
     await fresh.save();
 
-    // ✅ Step 2: issue OTP + QR using PickupQrService (single source of truth)
+    // Step 2: issue OTP + QR using PickupQrService (single source of truth)
     final otp = (fresh.pickupOtp ?? '').trim().isEmpty
         ? _generateOtp()
         : fresh.pickupOtp!.trim();
 
     await PickupQrService.issueForDelivered(fresh, otp: otp);
 
-    // ✅ Notifications
+    // Receiver update (non-blocking) AFTER QR/OTP exists
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'DELIVERED');
+
+    // Notifications
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
       title: 'Property delivered to station',
@@ -167,7 +193,7 @@ class PropertyService {
       return false;
     }
 
-    // ✅ Ensure milestone chain exists (consistency)
+    // Ensure milestone chain exists (consistency)
     fresh.deliveredAt ??= DateTime.now();
     fresh.inTransitAt ??= fresh.deliveredAt;
     fresh.loadedAt ??= fresh.inTransitAt;
@@ -181,10 +207,13 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // ✅ one-time QR: consumed after successful pickup
+    // one-time QR: consumed after successful pickup
     fresh.qrConsumedAt = DateTime.now();
 
     await fresh.save();
+
+    // Receiver update (non-blocking)
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PICKED UP');
 
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
@@ -229,7 +258,7 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // ✅ reset QR session on OTP reset
+    // reset QR session on OTP reset
     fresh.qrIssuedAt = DateTime.now();
     fresh.qrNonce = _newNonce();
     fresh.qrConsumedAt = null;
@@ -252,7 +281,6 @@ class PropertyService {
     );
   }
 
-  
   /// STRICT FLOW:
   /// pending → (desk marks Loaded → loadedAt) → driver starts trip → inTransit
   ///
@@ -267,7 +295,7 @@ class PropertyService {
       return 'Only Pending cargo can be loaded.';
     }
 
-    // ✅ STRICT FLOW: cannot go inTransit unless Desk marked LOADED (timestamp-based)
+    // STRICT FLOW: cannot go inTransit unless Desk marked LOADED (timestamp-based)
     if (fresh.loadedAt == null) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
@@ -337,6 +365,9 @@ class PropertyService {
 
     await fresh.save();
 
+    // Receiver update (non-blocking)
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
+
     await AuditService.log(
       action: 'driver_mark_in_transit',
       propertyKey: fresh.key.toString(),
@@ -357,12 +388,11 @@ class PropertyService {
           'Property for ${fresh.receiverName} is in transit.\nRoute: ${route.name}',
     );
 
-    return null; // ✅ success
+    return null; // success
   }
 
-  // =========================
   // Admin override (CONSISTENT)
-  // =========================
+
   static Future adminSetStatus(Property p, PropertyStatus newStatus) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
@@ -372,7 +402,7 @@ class PropertyService {
     // Safety: repair legacy inconsistency before admin action
     await repairMissingLoadedMilestone(fresh);
 
-    // ✅ Preserve “normal path” flows when possible
+    // Preserve “normal path” flows when possible
     if (newStatus == PropertyStatus.inTransit &&
         fresh.status == PropertyStatus.pending) {
       await markInTransit(fresh); // enforces loadedAt
@@ -401,17 +431,20 @@ class PropertyService {
 
       fresh.tripId = null;
 
-      // ✅ reset QR state
+      // reset QR state
       fresh.qrIssuedAt = null;
       fresh.qrNonce = '';
       fresh.qrConsumedAt = null;
 
-      // ✅ reset loaded milestone
+      // reset loaded milestone
       fresh.loadedAt = null;
       fresh.loadedAtStation = '';
       fresh.loadedByUserId = '';
 
       await fresh.save();
+
+      // Receiver update on admin reset
+      await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PENDING');
 
       await AuditService.log(
         action: 'admin_set_status',
@@ -439,11 +472,11 @@ class PropertyService {
       }
     }
 
-    // ✅ timestamps + milestone consistency
+    // timestamps + milestone consistency
     if (newStatus == PropertyStatus.inTransit) {
       fresh.inTransitAt ??= DateTime.now();
 
-      // ✅ inTransit implies LOADED exists
+      // inTransit implies LOADED exists
       fresh.loadedAt ??= fresh.inTransitAt;
 
       if (fresh.loadedByUserId.trim().isEmpty) {
@@ -461,10 +494,10 @@ class PropertyService {
     if (newStatus == PropertyStatus.delivered) {
       fresh.deliveredAt ??= DateTime.now();
 
-      // ✅ Delivered implies it must have been inTransit; ensure inTransitAt exists
+      // Delivered implies it must have been inTransit; ensure inTransitAt exists
       fresh.inTransitAt ??= fresh.deliveredAt;
 
-      // ✅ Delivered implies LOADED exists as well
+      // Delivered implies LOADED exists as well
       fresh.loadedAt ??= fresh.inTransitAt;
 
       fresh.pickupOtp ??= _generateOtp();
@@ -472,7 +505,7 @@ class PropertyService {
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
 
-      // ✅ ensure QR session exists for delivered
+      // ensure QR session exists for delivered
       fresh.qrIssuedAt ??= DateTime.now();
       if (fresh.qrNonce.trim().isEmpty) fresh.qrNonce = _newNonce();
       fresh.qrConsumedAt = null;
@@ -488,7 +521,7 @@ class PropertyService {
     if (newStatus == PropertyStatus.pickedUp) {
       fresh.pickedUpAt ??= DateTime.now();
 
-      // ✅ PickedUp implies delivered/inTransit/loaded exist
+      // PickedUp implies delivered/inTransit/loaded exist
       fresh.deliveredAt ??= fresh.pickedUpAt;
       fresh.inTransitAt ??= fresh.deliveredAt;
       fresh.loadedAt ??= fresh.inTransitAt;
@@ -501,7 +534,7 @@ class PropertyService {
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
 
-      // ✅ consume QR
+      // consume QR
       fresh.qrConsumedAt ??= DateTime.now();
 
       await AuditService.log(
@@ -514,6 +547,16 @@ class PropertyService {
 
     fresh.status = newStatus;
     await fresh.save();
+
+    // Receiver update on admin override too (only if opted-in)
+    final label = (newStatus == PropertyStatus.inTransit)
+        ? 'IN TRANSIT'
+        : (newStatus == PropertyStatus.delivered)
+        ? 'DELIVERED'
+        : (newStatus == PropertyStatus.pickedUp)
+        ? 'PICKED UP'
+        : 'PENDING';
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: label);
 
     await AuditService.log(
       action: 'admin_set_status',
@@ -536,9 +579,7 @@ class PropertyService {
     );
   }
 
-  // =========================
   // WhatsApp OTP (Improved)
-  // =========================
 
   static String _propertyCodeLabel(Property p) {
     final c = p.propertyCode.trim();
@@ -616,12 +657,8 @@ class PropertyService {
           : 'WhatsApp failed: $err | to ${fresh.receiverPhone}',
     );
 
-    return err; // null = success
+    return err;
   }
-
-  // =========================
-  // QR helpers (signed QR flow you already have)
-  // =========================
 
   /// Call this from UI to force-refresh QR (optional).
   static Future refreshPickupQr(Property p) async {
@@ -640,9 +677,8 @@ class PropertyService {
     await fresh.save();
   }
 
-  // =========================
   // Desk "Loaded" milestone
-  // =========================
+
   static Future markLoaded(Property p, {required String station}) async {
     if (!RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin})) {
       return false;
@@ -667,6 +703,8 @@ class PropertyService {
       propertyKey: fresh.key.toString(),
       details: 'Marked loaded at station: ${fresh.loadedAtStation}',
     );
+
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'LOADED');
 
     return true;
   }

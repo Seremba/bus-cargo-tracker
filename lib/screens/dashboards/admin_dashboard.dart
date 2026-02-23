@@ -19,6 +19,7 @@ import '../admin/admin_properties_screen.dart';
 import '../admin/admin_reports_screen.dart';
 import '../admin/admin_trips_screen.dart';
 import '../admin/admin_users_screen.dart';
+import '../admin/admin_outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
@@ -79,11 +80,11 @@ class AdminDashboard extends StatelessWidget {
               builder: (context, Box box, _) {
                 final userId = Session.currentUserId!;
                 final unreadCount = box.values.where((n) {
+                  final ni = n as NotificationItem;
                   final isForAdminInbox =
-                      (n as NotificationItem).targetUserId ==
-                      NotificationService.adminInbox;
-                  final isForThisAdmin = n.targetUserId == userId;
-                  return (isForAdminInbox || isForThisAdmin) && !n.isRead;
+                      ni.targetUserId == NotificationService.adminInbox;
+                  final isForThisAdmin = ni.targetUserId == userId;
+                  return (isForAdminInbox || isForThisAdmin) && !ni.isRead;
                 }).length;
 
                 return Stack(
@@ -208,7 +209,6 @@ class AdminDashboard extends StatelessWidget {
                   ),
                 );
 
-                // Optional feedback (stay on dashboard)
                 if (createdUser != null && context.mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('User created ✅')),
@@ -261,6 +261,19 @@ class AdminDashboard extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (_) => const AdminExceptionsScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.outbox_outlined,
+              label: 'Outbound Messages',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const AdminOutboundMessagesScreen(),
                   ),
                 );
               },

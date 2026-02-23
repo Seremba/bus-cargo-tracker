@@ -1,5 +1,6 @@
 import '../models/payment_record.dart';
 import '../models/property.dart';
+import 'audit_service.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
 import 'session.dart';
@@ -29,11 +30,9 @@ class PaymentService {
     final cleanStation = station.trim();
     final cleanNote = note.trim();
 
-    
     if (amount == 0) {
       throw ArgumentError('Amount cannot be 0');
     }
-
     if (cleanStation.isEmpty) {
       throw ArgumentError('Station is required');
     }
@@ -41,36 +40,28 @@ class PaymentService {
     if (cleanKind == 'payment' && amount < 0) {
       throw ArgumentError('Payment must be a positive amount');
     }
-
     if (cleanKind == 'refund' && amount > 0) {
       throw ArgumentError('Refund must be a negative amount');
     }
-
     if (cleanKind != 'payment' &&
         cleanKind != 'refund' &&
         cleanKind != 'adjustment') {
       throw ArgumentError('Invalid kind: $cleanKind');
     }
 
-    
-    // Prevent total from going below 0.
-    // If refund/negative adjustment is bigger than total, clamp it.
+    // Prevent total from going below 0 (clamp negative ops)
     final currentTotal = fresh.amountPaidTotal;
     int appliedAmount = amount;
 
     if (currentTotal + appliedAmount < 0) {
-      // Clamp to bring total to exactly 0
-      appliedAmount = -currentTotal;
+      appliedAmount = -currentTotal; // clamp to zero
     }
-
-    // If clamping makes it zero, avoid storing meaningless record.
     if (appliedAmount == 0) {
       throw StateError(
         'This operation would reduce total below 0. Nothing was applied.',
       );
     }
 
-  
     final rec = PaymentRecord(
       paymentId: _id(),
       propertyKey: fresh.key.toString(),
@@ -86,7 +77,7 @@ class PaymentService {
     );
     await payBox.add(rec);
 
-   
+    // Update property totals
     fresh.amountPaidTotal = currentTotal + appliedAmount;
     fresh.currency = cleanCurrency;
     fresh.lastPaidAt = rec.createdAt;
@@ -97,18 +88,24 @@ class PaymentService {
 
     await fresh.save();
 
-   
+    await AuditService.log(
+      action: 'PAYMENT_RECORDED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Kind=$cleanKind Amount=$cleanCurrency ${appliedAmount.abs()} Method=$cleanMethod Station=$cleanStation TxnRef=$cleanTxnRef Note=$cleanNote',
+    );
+
     final prettyKind = cleanKind == 'refund'
         ? 'Refund'
         : (cleanKind == 'adjustment' ? 'Adjustment' : 'Payment');
 
-    // Message shows absolute value, but meaning comes from kind.
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
       title: '$prettyKind recorded',
       message:
           '$prettyKind: $cleanCurrency ${appliedAmount.abs()} at $cleanStation via ${cleanMethod.isEmpty ? '—' : cleanMethod}.',
     );
+
     return rec;
   }
 }

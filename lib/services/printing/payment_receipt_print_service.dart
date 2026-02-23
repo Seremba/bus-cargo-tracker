@@ -11,15 +11,21 @@ class PaymentReceiptPrintService {
     required PaymentRecord record,
     required Property property,
   }) async {
-    final connected = await PrinterService.ensureConnectedFromSaved();
-    if (!connected) return null; // printer not set / not connectable
-
     final settings = PrinterSettingsService.getOrCreate();
+    final savedAddr = (settings.bluetoothAddress ?? '').trim();
+    if (savedAddr.isEmpty) return null;
+
     final bytes = await EscPosReceiptBuilder.buildPaymentReceipt(
       pay: record,
       property: property,
       paperMm: settings.paperMm,
     );
-    return PrinterService.printBytesBluetooth(bytes); // true/false
+
+    final ok = await PrinterService.printBytesBluetoothSafe(
+      bytes,
+      tryReconnect: true,
+    );
+
+    return ok; // true/false
   }
 }

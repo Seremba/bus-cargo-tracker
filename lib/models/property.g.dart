@@ -51,13 +51,19 @@ class PropertyAdapter extends TypeAdapter<Property> {
       loadedAt: fields[31] as DateTime?,
       loadedAtStation: fields[32] == null ? '' : fields[32] as String?,
       loadedByUserId: fields[33] == null ? '' : fields[33] as String?,
+      trackingCode: fields[34] == null ? '' : fields[34] as String?,
+      notifyReceiver: fields[35] == null ? false : fields[35] as bool,
+      receiverNotifyEnabledAt: fields[36] as DateTime?,
+      receiverNotifyEnabledByUserId:
+          fields[37] == null ? '' : fields[37] as String?,
+      lastReceiverNotifiedAt: fields[38] as DateTime?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Property obj) {
     writer
-      ..writeByte(34)
+      ..writeByte(39)
       ..writeByte(0)
       ..write(obj.receiverName)
       ..writeByte(1)
@@ -125,7 +131,17 @@ class PropertyAdapter extends TypeAdapter<Property> {
       ..writeByte(32)
       ..write(obj.loadedAtStation)
       ..writeByte(33)
-      ..write(obj.loadedByUserId);
+      ..write(obj.loadedByUserId)
+      ..writeByte(34)
+      ..write(obj.trackingCode)
+      ..writeByte(35)
+      ..write(obj.notifyReceiver)
+      ..writeByte(36)
+      ..write(obj.receiverNotifyEnabledAt)
+      ..writeByte(37)
+      ..write(obj.receiverNotifyEnabledByUserId)
+      ..writeByte(38)
+      ..write(obj.lastReceiverNotifiedAt);
   }
 
   @override

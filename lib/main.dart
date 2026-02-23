@@ -12,11 +12,12 @@ import 'models/trip.dart';
 import 'models/trip_status.dart';
 import 'models/user.dart';
 import 'models/user_role.dart';
-import 'models/payment_record.dart'; 
+import 'models/payment_record.dart';
 
 import 'screens/login_screen.dart';
 import 'services/auth_service.dart';
 import 'services/hive_service.dart';
+import 'services/outbound_message_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,12 +32,11 @@ void main() async {
   Hive.registerAdapter(AuditEventAdapter());
   Hive.registerAdapter(UserAdapter());
   Hive.registerAdapter(UserRoleAdapter());
-  Hive.registerAdapter(PaymentRecordAdapter()); 
+  Hive.registerAdapter(PaymentRecordAdapter());
   Hive.registerAdapter(PrinterSettingsAdapter());
 
-
   await HiveService.openAllBoxes();
-
+  await OutboundMessageService.requeueOpenedMessages();
   // Prototype-friendly seeding; later keep only in debug/dev
   if (kDebugMode) {
     await AuthService.seedAdminIfMissing(

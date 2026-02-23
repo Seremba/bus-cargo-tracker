@@ -109,6 +109,22 @@ class Property extends HiveObject {
   @HiveField(33, defaultValue: '')
   String loadedByUserId;
 
+  /// Example: BC-482193-XK
+  @HiveField(34, defaultValue: '')
+  String trackingCode;
+
+  @HiveField(35, defaultValue: false)
+  bool notifyReceiver;
+
+  @HiveField(36)
+  DateTime? receiverNotifyEnabledAt;
+
+  @HiveField(37, defaultValue: '')
+  String receiverNotifyEnabledByUserId;
+
+  @HiveField(38)
+  DateTime? lastReceiverNotifiedAt;
+
   Property({
     required this.receiverName,
     required this.receiverPhone,
@@ -146,11 +162,19 @@ class Property extends HiveObject {
     this.loadedAt,
     String? loadedAtStation,
     String? loadedByUserId,
+    String? trackingCode,
+    this.notifyReceiver = false,
+    this.receiverNotifyEnabledAt,
+    String? receiverNotifyEnabledByUserId,
+    this.lastReceiverNotifiedAt,
   }) : loadedAtStation = (loadedAtStation ?? '').trim(),
        loadedByUserId = (loadedByUserId ?? '').trim(),
        routeId = routeId ?? '',
        routeName = routeName ?? '',
        propertyCode = (propertyCode ?? '').trim(),
+       trackingCode = (trackingCode ?? '').trim(),
+       receiverNotifyEnabledByUserId = (receiverNotifyEnabledByUserId ?? '')
+           .trim(),
        currency = (currency == null || currency.trim().isEmpty)
            ? 'UGX'
            : currency.trim(),

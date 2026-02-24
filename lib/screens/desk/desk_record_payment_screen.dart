@@ -29,7 +29,7 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
   bool _saving = false;
 
-  // ✅ Receiver tracking (opt-in)
+  // Receiver tracking (opt-in)
   bool _notifyReceiver = false;
   String _notifyChannel = 'whatsapp';
 

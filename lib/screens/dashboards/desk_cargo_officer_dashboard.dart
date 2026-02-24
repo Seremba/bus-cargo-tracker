@@ -14,10 +14,34 @@ import '../desk/desk_property_qr_scanner_screen.dart';
 import '../desk/desk_property_details_screen.dart';
 import '../common/outbound_messages_screen.dart';
 
-class DeskCargoOfficerDashboard extends StatelessWidget {
+class DeskCargoOfficerDashboard extends StatefulWidget {
   const DeskCargoOfficerDashboard({super.key});
 
+  @override
+  State<DeskCargoOfficerDashboard> createState() =>
+      _DeskCargoOfficerDashboardState();
+}
+
+class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
+  bool _openingOutbound = false;
+
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
+
+  Future<void> _openOutboundMessages() async {
+    if (_openingOutbound) return;
+    setState(() => _openingOutbound = true);
+
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const OutboundMessagesScreen(),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingOutbound = false);
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -29,9 +53,6 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
     final propBox = HiveService.propertyBox();
     final name = (Session.currentUserFullName ?? '—').trim();
     final station = (Session.currentStationName ?? '').trim();
-
-    // ✅ Prevent double taps (stateless-safe): re-entrancy guard
-    var openingOutbound = false;
 
     return DefaultTabController(
       length: 2,
@@ -59,25 +80,11 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
           ),
           actions: [
             IconButton(
-              tooltip: 'Outbound Messages',
-              // ✅ More obvious icon
-              icon: const Icon(Icons.send_outlined),
-              onPressed: () async {
-                // ✅ Prevent double taps / double push
-                if (openingOutbound) return;
-                openingOutbound = true;
-
-                try {
-                  await Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const OutboundMessagesScreen(),
-                    ),
-                  );
-                } finally {
-                  openingOutbound = false;
-                }
-              },
+              tooltip: _openingOutbound
+                  ? 'Opening Outbound Messages...'
+                  : 'Outbound Messages',
+              icon: Icon(_openingOutbound ? Icons.hourglass_top : Icons.send_outlined),
+              onPressed: _openingOutbound ? null : _openOutboundMessages,
             ),
             PopupMenuButton<String>(
               tooltip: 'Export',
@@ -95,12 +102,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -119,7 +126,6 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final d = now.day.toString().padLeft(2, '0');
                 final slug = '$y$m$d';
 
-                // ✅ NEW (service-based) export logic
                 if (v == 'csv_today') {
                   final csv = PaymentExportService.buildTodayCsv(
                     stationLabel: stationLabel,
@@ -201,7 +207,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
         ),
         body: TabBarView(
           children: [
-            // ✅ TAB 1: Scan (button + existing scan/pay UI)
+            // TAB 1: Scan
             ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -236,7 +242,7 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
               ],
             ),
 
-            // ✅ TAB 2: Recent
+            // TAB 2: Recent
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),
@@ -251,12 +257,12 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -331,11 +337,11 @@ class DeskCargoOfficerDashboard extends StatelessWidget {
                             );
                             final code =
                                 (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                ? prop!.propertyCode.trim()
-                                : '—';
+                                    ? prop!.propertyCode.trim()
+                                    : '—';
 
                             return Text(
-                              'Property: $code\nTxnRef: ${x.txnRef.trim().isNotEmpty ? x.txnRef.trim() : '—'}',
+                              'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',
                               style: const TextStyle(fontSize: 12),
                             );
                           }(),

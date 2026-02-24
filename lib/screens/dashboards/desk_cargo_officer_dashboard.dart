@@ -27,10 +27,13 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
 
+  bool get _canUse =>
+      RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
+
   Future<void> _openOutboundMessages() async {
     if (_openingOutbound) return;
-    setState(() => _openingOutbound = true);
 
+    setState(() => _openingOutbound = true);
     try {
       await Navigator.push(
         context,
@@ -45,7 +48,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    if (!RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin})) {
+    if (!_canUse) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
@@ -80,11 +83,9 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
           ),
           actions: [
             IconButton(
-              tooltip: _openingOutbound
-                  ? 'Opening Outbound Messages...'
-                  : 'Outbound Messages',
-              icon: Icon(_openingOutbound ? Icons.hourglass_top : Icons.send_outlined),
-              onPressed: _openingOutbound ? null : _openOutboundMessages,
+              tooltip: _openingOutbound ? 'Opening...' : 'Outbound Messages',
+              icon: const Icon(Icons.send_outlined), // ✅ clearer icon
+              onPressed: _openingOutbound ? null : _openOutboundMessages, // ✅ debounce
             ),
             PopupMenuButton<String>(
               tooltip: 'Export',
@@ -207,7 +208,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
         ),
         body: TabBarView(
           children: [
-            // TAB 1: Scan
+            // ✅ TAB 1: Scan
             ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -242,7 +243,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               ],
             ),
 
-            // TAB 2: Recent
+            // ✅ TAB 2: Recent
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),

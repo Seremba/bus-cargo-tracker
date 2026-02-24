@@ -21,6 +21,7 @@ import '../admin/admin_trips_screen.dart';
 import '../admin/admin_users_screen.dart';
 import '../admin/admin_outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
+import '../common/tracking_lookup_screen.dart';
 
 class AdminDashboard extends StatelessWidget {
   const AdminDashboard({super.key});
@@ -274,6 +275,19 @@ class AdminDashboard extends StatelessWidget {
                   context,
                   MaterialPageRoute(
                     builder: (_) => const AdminOutboundMessagesScreen(),
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+            actionButton(
+              icon: Icons.search,
+              label: 'Tracking Lookup',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const TrackingLookupScreen(),
                   ),
                 );
               },

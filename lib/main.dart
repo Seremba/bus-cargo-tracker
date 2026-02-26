@@ -7,6 +7,8 @@ import 'models/checkpoint.dart';
 import 'models/notification_item.dart';
 import 'models/printer_settings.dart';
 import 'models/property.dart';
+import 'models/property_item.dart';
+import 'models/property_item_status.dart';
 import 'models/property_status.dart';
 import 'models/trip.dart';
 import 'models/trip_status.dart';
@@ -25,6 +27,8 @@ void main() async {
 
   Hive.registerAdapter(PropertyAdapter());
   Hive.registerAdapter(PropertyStatusAdapter());
+  Hive.registerAdapter(PropertyItemStatusAdapter());
+  Hive.registerAdapter(PropertyItemAdapter());
   Hive.registerAdapter(NotificationItemAdapter());
   Hive.registerAdapter(TripAdapter());
   Hive.registerAdapter(TripStatusAdapter());

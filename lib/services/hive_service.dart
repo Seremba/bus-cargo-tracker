@@ -8,6 +8,7 @@ import '../models/trip.dart';
 import '../models/user.dart';
 import '../models/payment_record.dart';
 import '../models/outbound_message.dart';
+import '../models/property_item.dart';
 
 class HiveService {
   static const String _propertyBoxName = 'properties';
@@ -18,7 +19,8 @@ class HiveService {
 
   static const String _paymentBoxName = 'payments';
   static const String _printerSettingsBoxName = 'printer_settings';
-    static const String _outboundMsgBoxName = 'outbound_messages';
+  static const String _outboundMsgBoxName = 'outbound_messages';
+  static const String _propertyItemBoxName = 'property_items';
 
   static void setUser(String userId) {
     Session.currentUserId = userId;
@@ -26,6 +28,7 @@ class HiveService {
 
   static Future<void> openAllBoxes() async {
     await openPropertyBox();
+    await openPropertyItemBox();
     await openNotificationBox();
     await openTripBox();
     await openAuditBox();
@@ -48,6 +51,21 @@ class HiveService {
       );
     }
     return Hive.box<Property>(_propertyBoxName);
+  }
+
+  static Future<void> openPropertyItemBox() async {
+    if (!Hive.isBoxOpen(_propertyItemBoxName)) {
+      await Hive.openBox<PropertyItem>(_propertyItemBoxName);
+    }
+  }
+
+  static Box<PropertyItem> propertyItemBox() {
+    if (!Hive.isBoxOpen(_propertyItemBoxName)) {
+      throw HiveError(
+        'PropertyItem box is not open. Call HiveService.openPropertyItemBox() first.',
+      );
+    }
+    return Hive.box<PropertyItem>(_propertyItemBoxName);
   }
 
   static Future<void> openNotificationBox() async {
@@ -103,7 +121,6 @@ class HiveService {
     return Hive.box<User>(_userBoxName);
   }
 
- 
   static Future<void> openPaymentBox() async {
     if (!Hive.isBoxOpen(_paymentBoxName)) {
       await Hive.openBox<PaymentRecord>(_paymentBoxName);
@@ -133,7 +150,8 @@ class HiveService {
     }
     return Hive.box(_printerSettingsBoxName);
   }
-    static Future<void> openOutboundMessageBox() async {
+
+  static Future<void> openOutboundMessageBox() async {
     if (!Hive.isBoxOpen(_outboundMsgBoxName)) {
       await Hive.openBox<OutboundMessage>(_outboundMsgBoxName);
     }

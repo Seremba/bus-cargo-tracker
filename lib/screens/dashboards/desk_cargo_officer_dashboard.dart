@@ -91,7 +91,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),
               onSelected: (v) async {
-                // ✅ capture messenger BEFORE any await
+                //  capture messenger BEFORE any await
                 final messenger = ScaffoldMessenger.of(context);
 
                 final station = (Session.currentStationName ?? '').trim();
@@ -208,7 +208,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
         ),
         body: TabBarView(
           children: [
-            // ✅ TAB 1: Scan
+            //  TAB 1: Scan
             ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -243,7 +243,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               ],
             ),
 
-            // ✅ TAB 2: Recent
+            //  TAB 2: Recent
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),

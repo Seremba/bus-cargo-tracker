@@ -6,13 +6,14 @@ part 'property_status.g.dart';
 enum PropertyStatus {
   @HiveField(0)
   pending,
+  @HiveField(1)
 
   @HiveField(1)
   inTransit,
 
   @HiveField(2)
   delivered,
-  
+
   @HiveField(3)
   pickedUp,
 }

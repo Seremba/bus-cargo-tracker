@@ -29,12 +29,10 @@ class ReceiverTrackingService {
   }
 
   static String _friendlyStatus(Property p) {
-    // loaded is timestamp-based in your system
-    if (p.loadedAt != null) return 'LOADED';
-
+    // Repo semantics: LOADED is a milestone while still pending.
     switch (p.status) {
       case PropertyStatus.pending:
-        return 'PENDING';
+        return (p.loadedAt != null) ? 'LOADED' : 'PENDING';
       case PropertyStatus.inTransit:
         return 'IN TRANSIT';
       case PropertyStatus.delivered:
@@ -109,7 +107,6 @@ class ReceiverTrackingService {
           'Enabled receiver updates. TrackingCode=${fresh.trackingCode}. Channel=$cleanChannel',
     );
 
-    //  FIX: static builder call
     final body = buildPaymentConfirmedMessage(fresh);
 
     await OutboundMessageService.queue(
@@ -129,10 +126,10 @@ class ReceiverTrackingService {
     );
   }
 
-  /// Call this from PropertyService when status changes (loaded/inTransit/delivered/pickedUp).
+  /// Call this from PropertyService when status changes (inTransit/delivered/pickedUp).
   static Future<void> notifyReceiverOnStatusChange({
     required Property property,
-    required String eventLabel, // e.g. 'LOADED', 'IN TRANSIT', 'DELIVERED'
+    required String eventLabel, // e.g. 'IN TRANSIT', 'DELIVERED'
     String channel = 'whatsapp',
   }) async {
     final pBox = HiveService.propertyBox();
@@ -159,7 +156,6 @@ class ReceiverTrackingService {
       await fresh.save();
     }
 
-    //  FIX: static builder call
     final body = buildStatusUpdateMessage(fresh, eventLabel: eventLabel);
 
     await OutboundMessageService.queue(
@@ -179,7 +175,6 @@ class ReceiverTrackingService {
     );
   }
 
-  // FIX: make these static
   static String buildPaymentConfirmedMessage(Property p) {
     final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
     final cur = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
@@ -222,5 +217,76 @@ class ReceiverTrackingService {
         'Time: $when'
         '$pickupHint\n'
         'Help: $_supportPhones';
+  }
+
+  /// ✅ NEW: partial-load message after trip starts.
+  static Future<void> notifyReceiverPartialLoadOnTripStart({
+    required Property property,
+    required int loadedForTrip,
+    required int total,
+    required int remainingAtStation,
+    required String routeName,
+    String channel = 'whatsapp',
+  }) async {
+    final pBox = HiveService.propertyBox();
+    final fresh = pBox.get(property.key) ?? property;
+
+    if (!fresh.notifyReceiver) return;
+
+    final phone = _cleanPhone(fresh.receiverPhone);
+    if (!_looksLikePhone(phone)) return;
+
+    final cleanChannel = _cleanChannel(channel);
+
+    // Rate limit like normal updates (not critical)
+    if (fresh.lastReceiverNotifiedAt != null) {
+      final dt = DateTime.now()
+          .difference(fresh.lastReceiverNotifiedAt!)
+          .inSeconds;
+      if (dt < 180) return;
+    }
+
+    if (fresh.trackingCode.trim().isEmpty) {
+      fresh.trackingCode = TrackingCodeService.ensureUnique(fresh);
+      await fresh.save();
+    }
+
+    final code = fresh.trackingCode.trim();
+    final when = DateTime.now().toLocal().toString().substring(0, 16);
+    final desc = fresh.description.trim().isEmpty
+        ? 'Cargo'
+        : fresh.description.trim();
+
+    final route = routeName.trim().isEmpty
+        ? (fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim())
+        : routeName.trim();
+
+    final body = [
+      'Bebeto Cargo update 📦',
+      'Tracking: $code',
+      'Item: $desc (x${fresh.itemCount})',
+      'In transit now: $loadedForTrip/$total item(s)',
+      'Remaining at station: $remainingAtStation/$total',
+      'Route: $route | Dest: ${fresh.destination}',
+      'Time: $when',
+      'Help: $_supportPhones',
+    ].join('\n');
+
+    await OutboundMessageService.queue(
+      toPhone: phone,
+      channel: cleanChannel,
+      body: body,
+      propertyKey: fresh.key.toString(),
+    );
+
+    fresh.lastReceiverNotifiedAt = DateTime.now();
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'RECEIVER_NOTIFY_QUEUED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Queued partial-load trip-start update to $phone. inTransit=$loadedForTrip/$total remaining=$remainingAtStation/$total',
+    );
   }
 }

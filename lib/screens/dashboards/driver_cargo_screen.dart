@@ -12,6 +12,7 @@ import '../../services/trip_service.dart';
 import '../../services/role_guard.dart';
 
 import '../../data/routes_helpers.dart';
+import '../admin/driver_load_overview_screen.dart';
 
 class DriverCargoScreen extends StatefulWidget {
   const DriverCargoScreen({super.key});
@@ -85,7 +86,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           final coords =
               '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
 
-          final acc = pos.accuracy.isNaN ? '—' : '${pos.accuracy.toStringAsFixed(0)}m';
+          final acc = pos.accuracy.isNaN
+              ? '—'
+              : '${pos.accuracy.toStringAsFixed(0)}m';
 
           _gpsStatus = activeTrip == null
               ? 'GPS: $coords (±$acc) (no active trip)'
@@ -116,14 +119,14 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
           final cpName =
               (updatedTrip != null &&
-                      currentIndex >= 0 &&
-                      currentIndex < updatedTrip.checkpoints.length)
-                  ? updatedTrip.checkpoints[currentIndex].name
-                  : 'Checkpoint';
+                  currentIndex >= 0 &&
+                  currentIndex < updatedTrip.checkpoints.length)
+              ? updatedTrip.checkpoints[currentIndex].name
+              : 'Checkpoint';
 
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('$cpName reached ✅')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
         }
       },
       onError: (e) {
@@ -169,10 +172,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
     final box = HiveService.propertyBox();
 
-    final pending = box.values
-        .where((p) => p.status == PropertyStatus.pending)
-        .toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final pending =
+        box.values.where((p) => p.status == PropertyStatus.pending).toList()
+          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
     return Scaffold(
       appBar: AppBar(
@@ -184,6 +186,23 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         padding: const EdgeInsets.all(12),
         children: [
           _activeTripPanel(),
+          const SizedBox(height: 8),
+
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              icon: const Icon(Icons.inventory_2),
+              label: const Text('View Load Overview'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const DriverLoadOverviewScreen(),
+                  ),
+                );
+              },
+            ),
+          ),
           const SizedBox(height: 12),
           Text(
             _gpsStatus,
@@ -269,9 +288,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
                   if (!context.mounted) return;
                   ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(
-                      content: Text(err ?? 'Marked In Transit ✅'),
-                    ),
+                    SnackBar(content: Text(err ?? 'Marked In Transit ✅')),
                   );
                 }
               : null,

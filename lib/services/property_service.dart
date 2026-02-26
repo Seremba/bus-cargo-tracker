@@ -1,5 +1,6 @@
 import '../models/property.dart';
 import '../models/property_status.dart';
+import '../models/trip.dart';
 import '../models/user_role.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
@@ -11,6 +12,8 @@ import 'audit_service.dart';
 import 'pickup_qr_service.dart';
 import 'session.dart';
 import 'receiver_tracking_service.dart';
+import '../models/property_item_status.dart';
+import 'property_item_service.dart';
 
 class PropertyService {
   static String _generateOtp() {
@@ -50,7 +53,6 @@ class PropertyService {
   }
 
   // Receiver tracking (safe hook)
-
   static Future<void> _safeNotifyReceiver({
     required Property fresh,
     required String eventLabel,
@@ -71,11 +73,33 @@ class PropertyService {
       } catch (_) {}
     }
   }
-  // Auto-repair: fix already-broken records (status implies loaded)
 
-  /// Repairs legacy invalid state where status is inTransit/delivered/pickedUp
-  /// but loadedAt is null. Writes an audit entry.
-  /// Returns true if a repair was applied.
+  // ✅ Partial-load receiver message after trip starts
+  static Future<void> _safeNotifyReceiverPartialLoad({
+    required Property fresh,
+    required PropertyItemTripCounts counts,
+    required String routeName,
+  }) async {
+    try {
+      await ReceiverTrackingService.notifyReceiverPartialLoadOnTripStart(
+        property: fresh,
+        loadedForTrip: counts.loadedForTrip,
+        total: counts.total,
+        remainingAtStation: counts.remainingAtStation,
+        routeName: routeName,
+      );
+    } catch (e) {
+      try {
+        await AuditService.log(
+          action: 'receiver_partial_notify_failed',
+          propertyKey: fresh.key.toString(),
+          details: 'Failed to queue receiver partial-load update: $e',
+        );
+      } catch (_) {}
+    }
+  }
+
+  // Auto-repair: fix already-broken records (status implies loaded)
   static Future<bool> repairMissingLoadedMilestone(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
@@ -87,7 +111,6 @@ class PropertyService {
     if (!impliesLoaded) return false;
     if (fresh.loadedAt != null) return false;
 
-    // Pick the safest timestamp we already have
     final best =
         fresh.inTransitAt ??
         fresh.deliveredAt ??
@@ -96,7 +119,6 @@ class PropertyService {
 
     fresh.loadedAt = best;
 
-    // Do not guess station (no origin field). Keep empty if unknown.
     if (fresh.loadedAtStation.trim().isEmpty) {
       fresh.loadedAtStation = '';
     }
@@ -124,12 +146,10 @@ class PropertyService {
     final box = HiveService.propertyBox();
     final fresh = box.get(p.key) ?? p;
 
-    // Optional safety: repair legacy inconsistency
     await repairMissingLoadedMilestone(fresh);
 
     if (fresh.status != PropertyStatus.inTransit) return;
 
-    // Consistency: if inTransit then loaded must exist (guard anyway)
     fresh.loadedAt ??= fresh.inTransitAt ?? DateTime.now();
     if (fresh.loadedByUserId.trim().isEmpty) {
       fresh.loadedByUserId = (Session.currentUserId ?? 'system').trim();
@@ -137,22 +157,18 @@ class PropertyService {
 
     final now = DateTime.now();
 
-    // Step 1: mark delivered FIRST (persist)
     fresh.status = PropertyStatus.delivered;
     fresh.deliveredAt = now;
     await fresh.save();
 
-    // Step 2: issue OTP + QR using PickupQrService (single source of truth)
     final otp = (fresh.pickupOtp ?? '').trim().isEmpty
         ? _generateOtp()
         : fresh.pickupOtp!.trim();
 
     await PickupQrService.issueForDelivered(fresh, otp: otp);
 
-    // Receiver update (non-blocking) AFTER QR/OTP exists
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'DELIVERED');
 
-    // Notifications
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
       title: 'Property delivered to station',
@@ -175,7 +191,6 @@ class PropertyService {
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
-    // Optional safety: repair legacy inconsistency
     await repairMissingLoadedMilestone(fresh);
 
     if (fresh.status != PropertyStatus.delivered) return false;
@@ -193,7 +208,6 @@ class PropertyService {
       return false;
     }
 
-    // Ensure milestone chain exists (consistency)
     fresh.deliveredAt ??= DateTime.now();
     fresh.inTransitAt ??= fresh.deliveredAt;
     fresh.loadedAt ??= fresh.inTransitAt;
@@ -207,12 +221,10 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // one-time QR: consumed after successful pickup
     fresh.qrConsumedAt = DateTime.now();
 
     await fresh.save();
 
-    // Receiver update (non-blocking)
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PICKED UP');
 
     await NotificationService.notify(
@@ -258,7 +270,6 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // reset QR session on OTP reset
     fresh.qrIssuedAt = DateTime.now();
     fresh.qrNonce = _newNonce();
     fresh.qrConsumedAt = null;
@@ -283,37 +294,13 @@ class PropertyService {
 
   /// STRICT FLOW:
   /// pending → (desk marks Loaded → loadedAt) → driver starts trip → inTransit
-  ///
-  /// Returns null on success, or a human-friendly error string (for UI).
-  static Future<String?> markInTransit(Property p) async {
-    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) {
-      return 'Not authorized.';
-    }
+  static Future markInTransit(Property p) async {
+    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return;
 
-    final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    if (fresh.status != PropertyStatus.pending) {
-      return 'Only Pending cargo can be loaded.';
-    }
+    final pBox = HiveService.propertyBox();
+    final fresh = pBox.get(p.key) ?? p;
 
-    // STRICT FLOW: cannot go inTransit unless Desk marked LOADED (timestamp-based)
-    if (fresh.loadedAt == null) {
-      await NotificationService.notify(
-        targetUserId: NotificationService.adminInbox,
-        title: 'Load blocked (missing LOADED milestone)',
-        message:
-            'Driver tried to start trip but LOADED milestone is missing.\n'
-            'Property: ${fresh.receiverName} (${fresh.receiverPhone}).\n'
-            'Desk must mark LOADED first.',
-      );
-
-      await AuditService.log(
-        action: 'driver_load_blocked_missing_loadedAt',
-        propertyKey: fresh.key.toString(),
-        details: 'Blocked pending→inTransit because loadedAt == null',
-      );
-
-      return 'Not loaded yet ❌ Desk must mark LOADED first.';
-    }
+    if (fresh.status != PropertyStatus.pending) return;
 
     final route = findRouteById(fresh.routeId);
     if (route == null) {
@@ -323,19 +310,40 @@ class PropertyService {
         message:
             'Cannot start trip: property for ${fresh.receiverName} has no valid routeId.',
       );
-      return 'Route missing ❌ Ask admin/staff.';
+      return;
     }
-
     final cps = validatedCheckpoints(route);
     if (cps.isEmpty) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
         title: 'Route invalid',
         message:
-            'Route "${route.name}" has invalid checkpoints.\n'
-            'Fix coordinates before tracking.',
+            'Route "${route.name}" has invalid checkpoints.\nFix coordinates before tracking.',
       );
-      return 'Route "${route.name}" invalid ❌ Ask admin to fix checkpoints.';
+      return;
+    }
+
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+    final hasLoaded = items.any(
+      (x) => x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
+    );
+    if (!hasLoaded) {
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'No loaded items',
+        message:
+            'Driver tried to start trip but no items are marked LOADED for ${fresh.receiverName}.',
+      );
+      return;
     }
 
     final active = TripService.getActiveTripForCurrentDriver();
@@ -344,54 +352,81 @@ class PropertyService {
         targetUserId: NotificationService.adminInbox,
         title: 'Route mismatch blocked',
         message:
-            'Driver has an active trip (${active.routeName}) but tried to load cargo for route (${route.name}).\n'
-            'Blocked to avoid mixing routes.',
+            'Driver has an active trip (${active.routeName}) but tried to load cargo for route (${route.name}).\nBlocked to avoid mixing routes.',
       );
-      return 'Route mismatch ❌ Finish current trip first.';
+      return;
     }
 
+    // Trip creation first. We only mutate/persist property route+trip fields AFTER this succeeds.
+    final now = DateTime.now();
+
+    Trip trip;
+    try {
+      trip = await TripService.ensureActiveTrip(
+        routeId: route.id,
+        routeName: route.name,
+        checkpoints: cps,
+      );
+    } catch (e, st) {
+      // ✅ improvement: capture stacktrace too
+      await AuditService.log(
+        action: 'trip_ensure_failed',
+        propertyKey: fresh.key.toString(),
+        details: 'ensureActiveTrip failed: $e\n$st',
+      );
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Trip start failed',
+        message: 'Failed to start trip for route "${route.name}". Error: $e',
+      );
+      return;
+    }
+
+    await itemSvc.onTripStartedMoveLoadedToInTransitForProperty(
+      propertyKey: fresh.key.toString(),
+      tripId: trip.tripId,
+      now: now,
+    );
+
+    //  Now persist property as inTransit, with trip + route context.
     fresh.routeId = route.id;
     fresh.routeName = route.name;
     fresh.status = PropertyStatus.inTransit;
-    fresh.inTransitAt = DateTime.now();
-
-    final trip = await TripService.ensureActiveTrip(
-      routeId: route.id,
-      routeName: route.name,
-      checkpoints: cps,
-    );
-
+    fresh.inTransitAt = now;
     fresh.tripId = trip.tripId;
-
     await fresh.save();
 
-    // Receiver update (non-blocking)
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
-
-    await AuditService.log(
-      action: 'driver_mark_in_transit',
+    final counts = itemSvc.computeTripCounts(
       propertyKey: fresh.key.toString(),
-      details:
-          'Started trip: ${route.name} | tripId=${fresh.tripId} | loadedAt=${fresh.loadedAt}',
+      tripId: trip.tripId,
     );
+
+    final msg =
+        'Loaded today: ${counts.loadedForTrip}/${counts.total}\n'
+        'Remaining at station: ${counts.remainingAtStation}/${counts.total}\n'
+        'Route: ${route.name}';
 
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
       title: 'Property in transit',
-      message: 'Your property is now in transit.\nRoute: ${route.name}',
+      message: 'Your property is now in transit.\n$msg',
     );
-
     await NotificationService.notify(
       targetUserId: NotificationService.adminInbox,
       title: 'Driver update: In transit',
-      message:
-          'Property for ${fresh.receiverName} is in transit.\nRoute: ${route.name}',
+      message: 'Property for ${fresh.receiverName} is in transit.\n$msg',
     );
 
-    return null; // success
-  }
+    //  Receiver partial-load message (after trip start)
+    await _safeNotifyReceiverPartialLoad(
+      fresh: fresh,
+      counts: counts,
+      routeName: route.name,
+    );
 
-  // Admin override (CONSISTENT)
+    //  Optional (as requested): normal status notify too (rate-limited in ReceiverTrackingService)
+    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
+  }
 
   static Future adminSetStatus(Property p, PropertyStatus newStatus) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
@@ -399,13 +434,11 @@ class PropertyService {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
     if (fresh.status == newStatus) return;
 
-    // Safety: repair legacy inconsistency before admin action
     await repairMissingLoadedMilestone(fresh);
 
-    // Preserve “normal path” flows when possible
     if (newStatus == PropertyStatus.inTransit &&
         fresh.status == PropertyStatus.pending) {
-      await markInTransit(fresh); // enforces loadedAt
+      await markInTransit(fresh);
       return;
     }
 
@@ -431,19 +464,16 @@ class PropertyService {
 
       fresh.tripId = null;
 
-      // reset QR state
       fresh.qrIssuedAt = null;
       fresh.qrNonce = '';
       fresh.qrConsumedAt = null;
 
-      // reset loaded milestone
       fresh.loadedAt = null;
       fresh.loadedAtStation = '';
       fresh.loadedByUserId = '';
 
       await fresh.save();
 
-      // Receiver update on admin reset
       await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PENDING');
 
       await AuditService.log(
@@ -454,7 +484,6 @@ class PropertyService {
       return;
     }
 
-    // If admin pushes to inTransit, try to ensure trip context exists
     if (newStatus == PropertyStatus.inTransit) {
       final route = findRouteById(fresh.routeId);
       if (route != null) {
@@ -472,11 +501,8 @@ class PropertyService {
       }
     }
 
-    // timestamps + milestone consistency
     if (newStatus == PropertyStatus.inTransit) {
       fresh.inTransitAt ??= DateTime.now();
-
-      // inTransit implies LOADED exists
       fresh.loadedAt ??= fresh.inTransitAt;
 
       if (fresh.loadedByUserId.trim().isEmpty) {
@@ -493,11 +519,7 @@ class PropertyService {
 
     if (newStatus == PropertyStatus.delivered) {
       fresh.deliveredAt ??= DateTime.now();
-
-      // Delivered implies it must have been inTransit; ensure inTransitAt exists
       fresh.inTransitAt ??= fresh.deliveredAt;
-
-      // Delivered implies LOADED exists as well
       fresh.loadedAt ??= fresh.inTransitAt;
 
       fresh.pickupOtp ??= _generateOtp();
@@ -505,7 +527,6 @@ class PropertyService {
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
 
-      // ensure QR session exists for delivered
       fresh.qrIssuedAt ??= DateTime.now();
       if (fresh.qrNonce.trim().isEmpty) fresh.qrNonce = _newNonce();
       fresh.qrConsumedAt = null;
@@ -520,8 +541,6 @@ class PropertyService {
 
     if (newStatus == PropertyStatus.pickedUp) {
       fresh.pickedUpAt ??= DateTime.now();
-
-      // PickedUp implies delivered/inTransit/loaded exist
       fresh.deliveredAt ??= fresh.pickedUpAt;
       fresh.inTransitAt ??= fresh.deliveredAt;
       fresh.loadedAt ??= fresh.inTransitAt;
@@ -534,7 +553,6 @@ class PropertyService {
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
 
-      // consume QR
       fresh.qrConsumedAt ??= DateTime.now();
 
       await AuditService.log(
@@ -548,7 +566,6 @@ class PropertyService {
     fresh.status = newStatus;
     await fresh.save();
 
-    // Receiver update on admin override too (only if opted-in)
     final label = (newStatus == PropertyStatus.inTransit)
         ? 'IN TRANSIT'
         : (newStatus == PropertyStatus.delivered)
@@ -579,8 +596,6 @@ class PropertyService {
     );
   }
 
-  // WhatsApp OTP (Improved)
-
   static String _propertyCodeLabel(Property p) {
     final c = p.propertyCode.trim();
     return c.isEmpty ? p.key.toString() : c;
@@ -588,7 +603,7 @@ class PropertyService {
 
   static String _otpMessage(Property p) {
     final otp = (p.pickupOtp ?? '').trim();
-    final station = p.destination.trim(); // your existing station mapping
+    final station = p.destination.trim();
     final code = _propertyCodeLabel(p);
 
     final until = p.otpGeneratedAt?.add(_otpTtl);
@@ -606,15 +621,12 @@ class PropertyService {
     ].join('\n');
   }
 
-  /// Returns null on success, or a human-friendly error string.
   static Future<String?> sendPickupOtpViaWhatsApp(Property p) async {
     if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) {
       return 'Not authorized.';
     }
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
-
-    // Optional safety: repair legacy inconsistency
     await repairMissingLoadedMilestone(fresh);
 
     if (fresh.status != PropertyStatus.delivered) {
@@ -660,11 +672,8 @@ class PropertyService {
     return err;
   }
 
-  /// Call this from UI to force-refresh QR (optional).
   static Future refreshPickupQr(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
-
-    // Optional safety: repair legacy inconsistency
     await repairMissingLoadedMilestone(fresh);
 
     if (fresh.status != PropertyStatus.delivered) return;
@@ -677,34 +686,53 @@ class PropertyService {
     await fresh.save();
   }
 
-  // Desk "Loaded" milestone
-
-  static Future markLoaded(Property p, {required String station}) async {
+  static Future<bool> markLoaded(
+    Property p, {
+    required String station,
+    List<int>? itemNos,
+  }) async {
     if (!RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin})) {
       return false;
     }
 
-    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    final pBox = HiveService.propertyBox();
+    final fresh = pBox.get(p.key) ?? p;
 
-    // only allow when still pending
     if (fresh.status != PropertyStatus.pending) return false;
 
-    // idempotent
-    if (fresh.loadedAt != null) return true;
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
 
-    fresh.loadedAt = DateTime.now();
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final selectedNos = (itemNos == null || itemNos.isEmpty)
+        ? List<int>.generate(fresh.itemCount, (i) => i + 1)
+        : itemNos;
+
+    final now = DateTime.now();
+
+    await itemSvc.markSelectedItemsLoaded(
+      propertyKey: fresh.key.toString(),
+      itemNos: selectedNos,
+      tripId: '',
+      now: now,
+    );
+
+    fresh.loadedAt ??= now;
     fresh.loadedAtStation = station.trim();
     fresh.loadedByUserId = (Session.currentUserId ?? '').trim();
-
     await fresh.save();
 
     await AuditService.log(
-      action: 'desk_mark_loaded',
+      action: 'desk_mark_loaded_items',
       propertyKey: fresh.key.toString(),
-      details: 'Marked loaded at station: ${fresh.loadedAtStation}',
+      details:
+          'Loaded items: ${selectedNos.join(",")} at station: ${fresh.loadedAtStation}',
     );
-
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'LOADED');
 
     return true;
   }

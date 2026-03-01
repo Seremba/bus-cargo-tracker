@@ -8,7 +8,17 @@ import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 
 class OutboundMessagesScreen extends StatefulWidget {
-  const OutboundMessagesScreen({super.key});
+  /// Optional channel-only mode: 'sms' or 'whatsapp'
+  final String? channelFilter;
+
+  /// Optional title override
+  final String? title;
+
+  const OutboundMessagesScreen({
+    super.key,
+    this.channelFilter,
+    this.title,
+  });
 
   @override
   State<OutboundMessagesScreen> createState() => _OutboundMessagesScreenState();
@@ -17,13 +27,23 @@ class OutboundMessagesScreen extends StatefulWidget {
 class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     with SingleTickerProviderStateMixin {
   late TabController _controller;
-
   bool _busy = false;
 
   bool get _canUse => RoleGuard.hasAny({
         UserRole.deskCargoOfficer,
         UserRole.admin,
       });
+
+  String get _filterCh => (widget.channelFilter ?? '').trim().toLowerCase();
+
+  bool get _hasFilter => _filterCh.isNotEmpty;
+
+  String get _screenTitle {
+    if ((widget.title ?? '').trim().isNotEmpty) return widget.title!.trim();
+    if (_filterCh == 'sms') return 'SMS Processing';
+    if (_filterCh == 'whatsapp') return 'WhatsApp Processing';
+    return 'Outbound Messages';
+  }
 
   @override
   void initState() {
@@ -57,25 +77,38 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     setState(() => _busy = true);
 
     try {
-      final msg = await OutboundMessageService.processQueueOpenNext();
+      final msg = await OutboundMessageService.processQueueOpenNext(
+        channelFilter: _hasFilter ? _filterCh : null,
+      );
+
       if (!mounted) return;
 
       if (msg == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No eligible messages to open ✅')),
+          SnackBar(
+            content: Text(
+              _hasFilter
+                  ? 'No eligible ${_filterCh.toUpperCase()} messages to open ✅'
+                  : 'No eligible messages to open ✅',
+            ),
+          ),
         );
         return;
       }
 
       final st = msg.status.trim().toLowerCase();
+      final ch = msg.channel.trim().isEmpty
+          ? 'whatsapp'
+          : msg.channel.trim().toLowerCase();
+
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Opened WhatsApp for: ${msg.toPhone}')),
+          SnackBar(content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}')),
         );
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open composer for: ${msg.toPhone}')),
+          SnackBar(content: Text('Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}')),
         );
         _controller.animateTo(2); // Failed
       }
@@ -141,7 +174,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        title: const Text('Outbound Messages'),
+        title: Text(_screenTitle),
         bottom: TabBar(
           controller: _controller,
           tabs: const [
@@ -153,7 +186,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         ),
         actions: [
           IconButton(
-            tooltip: 'Open next',
+            tooltip: _busy ? 'Working...' : 'Open next',
             icon: const Icon(Icons.send_outlined),
             onPressed: _busy ? null : _openNext,
           ),
@@ -167,9 +200,26 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
           final items = b.values
               .whereType<OutboundMessage>()
-              .where((m) => m.status.trim().toLowerCase() == status)
+              .where((m) {
+                final st = m.status.trim().toLowerCase();
+                if (st != status) return false;
+
+                if (!_hasFilter) return true;
+                final ch = m.channel.trim().toLowerCase();
+                return ch == _filterCh;
+              })
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+          final label = _controller.index == 0
+              ? 'Queued'
+              : _controller.index == 1
+                  ? 'Opened'
+                  : _controller.index == 2
+                      ? 'Failed'
+                      : 'Sent';
+
+          final header = _hasFilter ? '$label ${_filterCh.toUpperCase()}' : label;
 
           return Column(
             children: [
@@ -184,7 +234,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            '${_controller.index == 0 ? 'Queued' : _controller.index == 1 ? 'Opened' : _controller.index == 2 ? 'Failed' : 'Sent'}: ${items.length}',
+                            '$header: ${items.length}',
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
@@ -216,6 +266,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
   Widget _tile(OutboundMessage m) {
     final when = m.createdAt.toLocal().toString().substring(0, 16);
+    final st = m.status.trim().toLowerCase();
+
+    final ch = m.channel.trim().isEmpty ? 'whatsapp' : m.channel.trim();
 
     return Card(
       child: Padding(
@@ -227,7 +280,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
               children: [
                 Expanded(
                   child: Text(
-                    '${m.channel.toUpperCase()} → ${m.toPhone}',
+                    '${ch.toUpperCase()} → ${m.toPhone}',
                     style: const TextStyle(fontWeight: FontWeight.w800),
                   ),
                 ),
@@ -252,8 +305,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
                 const Spacer(),
-                if (m.status.trim().toLowerCase() ==
-                    OutboundMessageService.statusOpened) ...[
+                if (st == OutboundMessageService.statusOpened) ...[
                   OutlinedButton(
                     onPressed: _busy ? null : () => _markFailed(m),
                     child: const Text('Mark failed'),
@@ -264,10 +316,8 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                     child: const Text('Mark sent'),
                   ),
                 ],
-                if (m.status.trim().toLowerCase() ==
-                        OutboundMessageService.statusQueued ||
-                    m.status.trim().toLowerCase() ==
-                        OutboundMessageService.statusFailed) ...[
+                if (st == OutboundMessageService.statusQueued ||
+                    st == OutboundMessageService.statusFailed) ...[
                   OutlinedButton(
                     onPressed: _busy ? null : _openNext,
                     child: const Text('Open next'),

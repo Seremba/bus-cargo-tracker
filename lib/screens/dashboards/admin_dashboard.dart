@@ -3,8 +3,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/notification_item.dart';
 import '../../models/user_role.dart';
+import '../../models/outbound_message.dart'; // ✅ 3A
 import '../../services/hive_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/outbound_message_service.dart'; // ✅ 3A
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 import '../../widgets/logout_button.dart';
@@ -20,6 +22,7 @@ import '../admin/admin_reports_screen.dart';
 import '../admin/admin_trips_screen.dart';
 import '../admin/admin_users_screen.dart';
 import '../admin/admin_outbound_messages_screen.dart';
+import '../common/outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
 import '../common/tracking_lookup_screen.dart';
 
@@ -28,7 +31,7 @@ class AdminDashboard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // ✅ UI guard (admin only)
+    //  UI guard (admin only)
     if (!RoleGuard.hasRole(UserRole.admin)) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
@@ -267,6 +270,69 @@ class AdminDashboard extends StatelessWidget {
               },
             ),
             const SizedBox(height: 10),
+
+            //  3B: SMS Processing button with badge (queued + failed)
+            ValueListenableBuilder(
+              valueListenable: HiveService.outboundMessageBox().listenable(),
+              builder: (context, Box box, _) {
+                final pendingSms = box.values
+                    .whereType<OutboundMessage>()
+                    .where((m) {
+                      final ch = m.channel.trim().toLowerCase();
+                      if (ch != 'sms') return false;
+                      final st = m.status.trim().toLowerCase();
+                      return st == OutboundMessageService.statusQueued ||
+                          st == OutboundMessageService.statusFailed;
+                    })
+                    .length;
+
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    icon: const Icon(Icons.sms_outlined),
+                    label: Row(
+                      children: [
+                        const Expanded(child: Text('SMS Processing')),
+                        if (pendingSms > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              pendingSms > 99 ? '99+' : pendingSms.toString(),
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const OutboundMessagesScreen(
+                            channelFilter: 'sms',
+                            title: 'SMS Processing',
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+                );
+              },
+            ),
+            const SizedBox(height: 10),
+
             actionButton(
               icon: Icons.outbox_outlined,
               label: 'Outbound Messages',

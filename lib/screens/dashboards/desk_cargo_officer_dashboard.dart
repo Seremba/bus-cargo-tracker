@@ -2,12 +2,15 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/user_role.dart';
+import '../../models/outbound_message.dart'; // ✅ 2A
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 
 import '../../services/exports/payment_export_service.dart';
 import '../../services/file_share_service.dart';
+
+import '../../services/outbound_message_service.dart'; // ✅ 2A
 
 import '../desk/desk_scan_and_pay_screen.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
@@ -24,6 +27,9 @@ class DeskCargoOfficerDashboard extends StatefulWidget {
 
 class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   bool _openingOutbound = false;
+
+  // ✅ 2B: debounce for SMS screen open
+  bool _openingSms = false;
 
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
 
@@ -43,6 +49,26 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
       );
     } finally {
       if (mounted) setState(() => _openingOutbound = false);
+    }
+  }
+
+  // ✅ 2B: Open SMS-only processing view
+  Future<void> _openSmsProcessing() async {
+    if (_openingSms) return;
+
+    setState(() => _openingSms = true);
+    try {
+      await Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) => const OutboundMessagesScreen(
+            channelFilter: 'sms',
+            title: 'SMS Processing',
+          ),
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _openingSms = false);
     }
   }
 
@@ -82,11 +108,63 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             ],
           ),
           actions: [
+            // ✅ 2C: SMS badge + shortcut
+            ValueListenableBuilder(
+              valueListenable: HiveService.outboundMessageBox().listenable(),
+              builder: (context, Box box, _) {
+                final pendingSms = box.values
+                    .whereType<OutboundMessage>()
+                    .where((m) {
+                      final ch = m.channel.trim().toLowerCase();
+                      if (ch != 'sms') return false;
+                      final st = m.status.trim().toLowerCase();
+                      return st == OutboundMessageService.statusQueued ||
+                          st == OutboundMessageService.statusFailed;
+                    })
+                    .length;
+
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    IconButton(
+                      tooltip: _openingSms ? 'Opening...' : 'SMS Processing',
+                      icon: const Icon(Icons.sms_outlined),
+                      onPressed: _openingSms ? null : _openSmsProcessing,
+                    ),
+                    if (pendingSms > 0)
+                      Positioned(
+                        right: 8,
+                        top: 8,
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.red,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Text(
+                            pendingSms > 99 ? '99+' : pendingSms.toString(),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 10,
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                );
+              },
+            ),
+
+            // Existing outbound messages (all channels)
             IconButton(
               tooltip: _openingOutbound ? 'Opening...' : 'Outbound Messages',
-              icon: const Icon(Icons.send_outlined), // ✅ clearer icon
-              onPressed: _openingOutbound ? null : _openOutboundMessages, // ✅ debounce
+              icon: const Icon(Icons.send_outlined),
+              onPressed: _openingOutbound ? null : _openOutboundMessages,
             ),
+
             PopupMenuButton<String>(
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),

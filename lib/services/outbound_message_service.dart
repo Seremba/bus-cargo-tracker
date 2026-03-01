@@ -1,11 +1,11 @@
 import 'dart:math';
 
-import 'package:url_launcher/url_launcher.dart';
 
 import '../models/outbound_message.dart';
 import 'audit_service.dart';
 import 'hive_service.dart';
 import 'whatsapp_service.dart';
+import 'sms_service.dart';
 
 class OutboundMessageService {
   OutboundMessageService._();
@@ -179,6 +179,37 @@ class OutboundMessageService {
     return Duration(seconds: base[idx]);
   }
 
+   static Future<OutboundMessage?> openSpecific(OutboundMessage msg) async {
+    final now = DateTime.now();
+
+    final ok = await _openComposer(msg);
+
+    msg.attempts = msg.attempts + 1;
+    msg.lastAttemptAt = now;
+
+    if (ok) {
+      msg.status = statusOpened;
+      await msg.save();
+      await AuditService.log(
+        action: 'OUTBOUND_MSG_OPENED',
+        propertyKey: msg.propertyKey,
+        details:
+            'Opened composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+      );
+      return msg;
+    } else {
+      msg.status = statusFailed;
+      await msg.save();
+      await AuditService.log(
+        action: 'OUTBOUND_MSG_OPEN_FAILED',
+        propertyKey: msg.propertyKey,
+        details:
+            'Failed to open composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+      );
+      return msg;
+    }
+  }
+
   static Future<bool> _openComposer(OutboundMessage msg) async {
     final channel = msg.channel.trim().toLowerCase();
 
@@ -192,33 +223,13 @@ class OutboundMessageService {
     }
 
     if (channel == 'sms') {
-      return _openSms(toPhone: msg.toPhone, body: msg.body);
+      return SmsService.openSms(
+        toPhone: msg.toPhone,
+        body: msg.body,
+      );
     }
 
     return false;
   }
 
-  static Future<bool> _openSms({
-    required String toPhone,
-    required String body,
-  }) async {
-    final phone = toPhone.trim();
-    if (phone.isEmpty) return false;
-
-    // sms:<number>?body=<text>
-    final uri = Uri(
-      scheme: 'sms',
-      path: phone,
-      queryParameters: <String, String>{
-        'body': body,
-      },
-    );
-
-    final ok = await launchUrl(
-      uri,
-      mode: LaunchMode.externalApplication,
-    );
-
-    return ok;
-  }
 }

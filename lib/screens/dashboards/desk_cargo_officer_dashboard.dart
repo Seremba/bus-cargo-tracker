@@ -1,16 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../models/outbound_message.dart';
 import '../../models/user_role.dart';
-import '../../models/outbound_message.dart'; // ✅ 2A
 import '../../services/hive_service.dart';
+import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 
 import '../../services/exports/payment_export_service.dart';
 import '../../services/file_share_service.dart';
-
-import '../../services/outbound_message_service.dart'; // ✅ 2A
 
 import '../desk/desk_scan_and_pay_screen.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
@@ -28,7 +27,7 @@ class DeskCargoOfficerDashboard extends StatefulWidget {
 class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   bool _openingOutbound = false;
 
-  // ✅ 2B: debounce for SMS screen open
+  // NEW: debounce for SMS processing open
   bool _openingSms = false;
 
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
@@ -43,16 +42,14 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     try {
       await Navigator.push(
         context,
-        MaterialPageRoute(
-          builder: (_) => const OutboundMessagesScreen(),
-        ),
+        MaterialPageRoute(builder: (_) => const OutboundMessagesScreen()),
       );
     } finally {
       if (mounted) setState(() => _openingOutbound = false);
     }
   }
 
-  // ✅ 2B: Open SMS-only processing view
+  // NEW: SMS-only processing screen
   Future<void> _openSmsProcessing() async {
     if (_openingSms) return;
 
@@ -108,7 +105,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             ],
           ),
           actions: [
-            // ✅ 2C: SMS badge + shortcut
+            // ✅ NEW: SMS Processing with badge (queued + failed)
             ValueListenableBuilder(
               valueListenable: HiveService.outboundMessageBox().listenable(),
               builder: (context, Box box, _) {
@@ -158,13 +155,11 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               },
             ),
 
-            // Existing outbound messages (all channels)
             IconButton(
               tooltip: _openingOutbound ? 'Opening...' : 'Outbound Messages',
               icon: const Icon(Icons.send_outlined),
               onPressed: _openingOutbound ? null : _openOutboundMessages,
             ),
-
             PopupMenuButton<String>(
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),
@@ -181,12 +176,12 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                        .where(
-                          (x) =>
-                              x.station.trim().toLowerCase() ==
-                              station.toLowerCase(),
-                        )
-                        .toList();
+                          .where(
+                            (x) =>
+                                x.station.trim().toLowerCase() ==
+                                station.toLowerCase(),
+                          )
+                          .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -336,12 +331,12 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                        .where(
-                          (x) =>
-                              x.station.trim().toLowerCase() ==
-                              station.toLowerCase(),
-                        )
-                        .toList();
+                          .where(
+                            (x) =>
+                                x.station.trim().toLowerCase() ==
+                                station.toLowerCase(),
+                          )
+                          .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -416,8 +411,8 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                             );
                             final code =
                                 (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                    ? prop!.propertyCode.trim()
-                                    : '—';
+                                ? prop!.propertyCode.trim()
+                                : '—';
 
                             return Text(
                               'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',

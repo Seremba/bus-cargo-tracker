@@ -7,7 +7,6 @@ import '../../services/hive_service.dart';
 import '../../services/payment_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
-
 import '../../services/printing/payment_receipt_print_service.dart';
 import '../../services/receiver_tracking_service.dart';
 
@@ -16,22 +15,35 @@ class DeskRecordPaymentScreen extends StatefulWidget {
   const DeskRecordPaymentScreen({super.key, required this.property});
 
   @override
-  State<DeskRecordPaymentScreen> createState() =>
-      _DeskRecordPaymentScreenState();
+  State<DeskRecordPaymentScreen> createState() => _DeskRecordPaymentScreenState();
 }
 
 class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   final _formKey = GlobalKey<FormState>();
-
   final _amount = TextEditingController();
   final _txnRef = TextEditingController();
-  String _method = 'cash';
 
+  String _method = 'cash';
   bool _saving = false;
 
   // Receiver tracking (opt-in)
   bool _notifyReceiver = false;
   String _notifyChannel = 'whatsapp';
+
+  bool get _canUse => RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
+
+  @override
+  void initState() {
+    super.initState();
+
+    // ✅ Initialize receiver updates UI from the stored property
+    final p = widget.property;
+    _notifyReceiver = p.notifyReceiver == true;
+
+    // If receiverNotifyChannel is missing/empty, default to whatsapp (A)
+    final c = (p.receiverNotifyChannel).trim().toLowerCase();
+    _notifyChannel = (c == 'sms') ? 'sms' : 'whatsapp';
+  }
 
   @override
   void dispose() {
@@ -40,15 +52,10 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     super.dispose();
   }
 
-  bool get _canUse =>
-      RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
-
   Future<void> _copy(BuildContext context, String label, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$label copied ✅')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label copied ✅')));
   }
 
   @override
@@ -67,13 +74,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(widget.property.key) ?? widget.property;
 
-    final displayCode = fresh.propertyCode.trim().isEmpty
-        ? fresh.key.toString()
-        : fresh.propertyCode.trim();
-
-    final displayCurrency = fresh.currency.trim().isEmpty
-        ? 'UGX'
-        : fresh.currency.trim();
+    final displayCode =
+        fresh.propertyCode.trim().isEmpty ? fresh.key.toString() : fresh.propertyCode.trim();
+    final displayCurrency = fresh.currency.trim().isEmpty ? 'UGX' : fresh.currency.trim();
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Record Payment')),
@@ -94,26 +97,21 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                           Expanded(
                             child: Text(
                               'Property: $displayCode',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
+                              style: const TextStyle(fontWeight: FontWeight.w700),
                             ),
                           ),
                           if (fresh.propertyCode.trim().isNotEmpty)
                             IconButton(
                               tooltip: 'Copy code',
                               icon: const Icon(Icons.copy, size: 18),
-                              onPressed: () =>
-                                  _copy(context, 'Property code', displayCode),
+                              onPressed: () => _copy(context, 'Property code', displayCode),
                             ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Text('Receiver: ${fresh.receiverName}'),
                       Text('Phone: ${fresh.receiverPhone}'),
-                      Text(
-                        'Route: ${fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim()}',
-                      ),
+                      Text('Route: ${fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim()}'),
                       Text('Destination: ${fresh.destination}'),
                       const SizedBox(height: 6),
                       Text('Station: $station'),
@@ -126,7 +124,6 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                   ),
                 ),
               ),
-
               const SizedBox(height: 12),
 
               TextFormField(
@@ -148,7 +145,6 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                   return null;
                 },
               ),
-
               const SizedBox(height: 12),
 
               DropdownButtonFormField<String>(
@@ -164,7 +160,6 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                 ],
                 onChanged: (v) => setState(() => _method = (v ?? 'cash')),
               ),
-
               const SizedBox(height: 12),
 
               TextFormField(
@@ -184,17 +179,12 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Receiver updates',
-                        style: TextStyle(fontWeight: FontWeight.w700),
-                      ),
+                      const Text('Receiver updates', style: TextStyle(fontWeight: FontWeight.w700)),
                       const SizedBox(height: 6),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Send progress updates to receiver'),
-                        subtitle: const Text(
-                          'Sends payment confirmation + later status updates.',
-                        ),
+                        subtitle: const Text('Sends payment confirmation + later status updates.'),
                         value: _notifyReceiver,
                         onChanged: (v) => setState(() => _notifyReceiver = v),
                       ),
@@ -207,15 +197,11 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                             border: OutlineInputBorder(),
                           ),
                           items: const [
-                            DropdownMenuItem(
-                              value: 'whatsapp',
-                              child: Text('WhatsApp'),
-                            ),
+                            DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
                             DropdownMenuItem(value: 'sms', child: Text('SMS')),
                           ],
-                          onChanged: (v) => setState(
-                            () => _notifyChannel = (v ?? 'whatsapp'),
-                          ),
+                          onChanged: (v) =>
+                              setState(() => _notifyChannel = (v ?? 'whatsapp')),
                         ),
                       ],
                     ],
@@ -227,9 +213,7 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
               ElevatedButton(
                 onPressed: _saving ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
+                style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
                 child: Text(_saving ? 'Saving...' : 'Save Payment'),
               ),
             ],
@@ -281,9 +265,7 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
           );
         } catch (e) {
           messenger.showSnackBar(
-            SnackBar(
-              content: Text('Payment saved, but receiver updates failed: $e'),
-            ),
+            SnackBar(content: Text('Payment saved, but receiver updates failed: $e')),
           );
         }
       } else {
@@ -306,8 +288,8 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
       final msg = (printed == true)
           ? 'Payment + receipt ✅'
           : (printed == false)
-          ? 'Payment saved (receipt failed) ⚠️'
-          : 'Payment recorded ✅';
+              ? 'Payment saved (receipt failed) ⚠️'
+              : 'Payment recorded ✅';
 
       messenger.showSnackBar(SnackBar(content: Text(msg)));
       Navigator.pop(context, true);

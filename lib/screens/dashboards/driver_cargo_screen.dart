@@ -284,12 +284,19 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                     return;
                   }
 
-                  final err = await PropertyService.markInTransit(p);
+                  try {
+                    await PropertyService.markInTransit(p);
 
-                  if (!context.mounted) return;
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(err ?? 'Marked In Transit ✅')),
-                  );
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Marked In Transit ✅')),
+                    );
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+                  }
                 }
               : null,
           child: Text(loadedOk ? 'Load' : 'Blocked'),

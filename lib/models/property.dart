@@ -125,6 +125,11 @@ class Property extends HiveObject {
   @HiveField(38)
   DateTime? lastReceiverNotifiedAt;
 
+  // NEW (append-only): receiver notification channel
+  // values: "whatsapp" | "sms"
+  @HiveField(39, defaultValue: 'whatsapp')
+  String receiverNotifyChannel;
+
   Property({
     required this.receiverName,
     required this.receiverPhone,
@@ -149,9 +154,7 @@ class Property extends HiveObject {
     this.qrIssuedAt,
     this.qrNonce = '',
     this.qrConsumedAt,
-
     String? propertyCode,
-
     this.amountPaidTotal = 0,
     String? currency,
     this.lastPaidAt,
@@ -167,19 +170,22 @@ class Property extends HiveObject {
     this.receiverNotifyEnabledAt,
     String? receiverNotifyEnabledByUserId,
     this.lastReceiverNotifiedAt,
-  }) : loadedAtStation = (loadedAtStation ?? '').trim(),
-       loadedByUserId = (loadedByUserId ?? '').trim(),
-       routeId = routeId ?? '',
-       routeName = routeName ?? '',
-       propertyCode = (propertyCode ?? '').trim(),
-       trackingCode = (trackingCode ?? '').trim(),
-       receiverNotifyEnabledByUserId = (receiverNotifyEnabledByUserId ?? '')
-           .trim(),
-       currency = (currency == null || currency.trim().isEmpty)
-           ? 'UGX'
-           : currency.trim(),
-       lastPaymentMethod = (lastPaymentMethod ?? '').trim(),
-       lastPaidByUserId = (lastPaidByUserId ?? '').trim(),
-       lastPaidAtStation = (lastPaidAtStation ?? '').trim(),
-       lastTxnRef = (lastTxnRef ?? '').trim();
+
+    String? receiverNotifyChannel,
+  })  : loadedAtStation = (loadedAtStation ?? '').trim(),
+        loadedByUserId = (loadedByUserId ?? '').trim(),
+        routeId = routeId ?? '',
+        routeName = routeName ?? '',
+        propertyCode = (propertyCode ?? '').trim(),
+        trackingCode = (trackingCode ?? '').trim(),
+        receiverNotifyEnabledByUserId = (receiverNotifyEnabledByUserId ?? '').trim(),
+        currency = (currency == null || currency.trim().isEmpty) ? 'UGX' : currency.trim(),
+        lastPaymentMethod = (lastPaymentMethod ?? '').trim(),
+        lastPaidByUserId = (lastPaidByUserId ?? '').trim(),
+        lastPaidAtStation = (lastPaidAtStation ?? '').trim(),
+        lastTxnRef = (lastTxnRef ?? '').trim(),
+        // default A: WhatsApp
+        receiverNotifyChannel = ((receiverNotifyChannel ?? '').trim().toLowerCase() == 'sms')
+            ? 'sms'
+            : 'whatsapp';
 }

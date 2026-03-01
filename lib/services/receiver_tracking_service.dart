@@ -42,7 +42,7 @@ class ReceiverTrackingService {
     }
   }
 
-  static Future<void> afterPaymentRecorded({
+  static Future afterPaymentRecorded({
     required Property property,
     required bool enabled,
     String channel = 'whatsapp', // whatsapp/sms
@@ -57,7 +57,6 @@ class ReceiverTrackingService {
       if (fresh.notifyReceiver == true) {
         fresh.notifyReceiver = false;
         await fresh.save();
-
         await AuditService.log(
           action: 'RECEIVER_TRACKING_DISABLED',
           propertyKey: fresh.key.toString(),
@@ -78,13 +77,11 @@ class ReceiverTrackingService {
       return;
     }
 
-    // Guard: avoid duplicate payment-confirmed messages within 60s
     if (fresh.lastReceiverNotifiedAt != null) {
       final dt = DateTime.now()
           .difference(fresh.lastReceiverNotifiedAt!)
           .inSeconds;
       if (dt >= 0 && dt < 60) {
-        // Already notified very recently; do not queue again.
         return;
       }
     }
@@ -97,6 +94,8 @@ class ReceiverTrackingService {
     fresh.notifyReceiver = true;
     fresh.receiverNotifyEnabledAt = DateTime.now();
     fresh.receiverNotifyEnabledByUserId = (Session.currentUserId ?? '').trim();
+
+    fresh.receiverNotifyChannel = cleanChannel;
 
     await fresh.save();
 
@@ -127,10 +126,11 @@ class ReceiverTrackingService {
   }
 
   /// Call this from PropertyService when status changes (inTransit/delivered/pickedUp).
-  static Future<void> notifyReceiverOnStatusChange({
+  static Future notifyReceiverOnStatusChange({
     required Property property,
     required String eventLabel, // e.g. 'IN TRANSIT', 'DELIVERED'
-    String channel = 'whatsapp',
+    String channel =
+        '', //  2B: if empty, use saved property.receiverNotifyChannel
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
@@ -140,9 +140,15 @@ class ReceiverTrackingService {
     final phone = _cleanPhone(fresh.receiverPhone);
     if (!_looksLikePhone(phone)) return;
 
-    final cleanChannel = _cleanChannel(channel);
+    //  2B: choose effective channel from property if caller didn't specify
+    final effective = channel.trim().isEmpty
+        ? (fresh.receiverNotifyChannel.trim().isEmpty
+              ? 'whatsapp'
+              : fresh.receiverNotifyChannel)
+        : channel;
 
-    // Simple rate limit: avoid spamming within 3 minutes (except critical events)
+    final cleanChannel = _cleanChannel(effective);
+
     final critical = (eventLabel == 'DELIVERED' || eventLabel == 'PICKED UP');
     if (!critical && fresh.lastReceiverNotifiedAt != null) {
       final dt = DateTime.now()
@@ -180,7 +186,6 @@ class ReceiverTrackingService {
     final cur = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
     final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
     final when = DateTime.now().toLocal().toString().substring(0, 16);
-
     final status = _friendlyStatus(p);
     final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
 
@@ -203,13 +208,12 @@ class ReceiverTrackingService {
     final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
     final when = DateTime.now().toLocal().toString().substring(0, 16);
     final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
-
     final pickupHint = (eventLabel == 'DELIVERED')
         ? '\nPickup requires: OTP + QR'
         : '';
 
     return ''
-        'Bebeto Cargo update 📦\n'
+        'Bebeto Cargo update \n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Status: $eventLabel\n'
@@ -219,14 +223,14 @@ class ReceiverTrackingService {
         'Help: $_supportPhones';
   }
 
-  /// ✅ NEW: partial-load message after trip starts.
-  static Future<void> notifyReceiverPartialLoadOnTripStart({
+  ///  NEW: partial-load message after trip starts.
+  static Future notifyReceiverPartialLoadOnTripStart({
     required Property property,
     required int loadedForTrip,
     required int total,
     required int remainingAtStation,
     required String routeName,
-    String channel = 'whatsapp',
+    String channel = '',
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
@@ -236,9 +240,14 @@ class ReceiverTrackingService {
     final phone = _cleanPhone(fresh.receiverPhone);
     if (!_looksLikePhone(phone)) return;
 
-    final cleanChannel = _cleanChannel(channel);
+    final effective = channel.trim().isEmpty
+        ? (fresh.receiverNotifyChannel.trim().isEmpty
+              ? 'whatsapp'
+              : fresh.receiverNotifyChannel)
+        : channel;
 
-    // Rate limit like normal updates (not critical)
+    final cleanChannel = _cleanChannel(effective);
+
     if (fresh.lastReceiverNotifiedAt != null) {
       final dt = DateTime.now()
           .difference(fresh.lastReceiverNotifiedAt!)
@@ -256,13 +265,12 @@ class ReceiverTrackingService {
     final desc = fresh.description.trim().isEmpty
         ? 'Cargo'
         : fresh.description.trim();
-
     final route = routeName.trim().isEmpty
         ? (fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim())
         : routeName.trim();
 
     final body = [
-      'Bebeto Cargo update 📦',
+      'Bebeto Cargo update ',
       'Tracking: $code',
       'Item: $desc (x${fresh.itemCount})',
       'In transit now: $loadedForTrip/$total item(s)',

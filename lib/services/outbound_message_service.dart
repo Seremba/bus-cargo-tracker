@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:url_launcher/url_launcher.dart';
+
 import '../models/outbound_message.dart';
 import 'audit_service.dart';
 import 'hive_service.dart';
@@ -42,8 +44,7 @@ class OutboundMessageService {
     await AuditService.log(
       action: 'OUTBOUND_MSG_QUEUED',
       propertyKey: propertyKey,
-      details:
-          'Queued outbound message: channel=${msg.channel} to=${msg.toPhone}',
+      details: 'Queued outbound message: channel=${msg.channel} to=${msg.toPhone}',
     );
 
     return msg;
@@ -51,7 +52,7 @@ class OutboundMessageService {
 
   /// Operator-assisted queue processing:
   /// - Picks next eligible message (queued/failed) using backoff.
-  /// - Opens WhatsApp (or SMS later) with prefilled text.
+  /// - Opens WhatsApp OR SMS with prefilled text.
   /// - Marks message as "opened" to avoid immediate re-pop.
   ///
   /// Returns the message that was attempted (opened or failed), or null if none eligible.
@@ -92,6 +93,7 @@ class OutboundMessageService {
 
     // Oldest first (fair queue)
     candidates.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
     final msg = candidates.first;
 
     final ok = await _openComposer(msg);
@@ -135,12 +137,11 @@ class OutboundMessageService {
     await AuditService.log(
       action: 'OUTBOUND_MSG_SENT',
       propertyKey: msg.propertyKey,
-      details:
-          'Marked sent: id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+      details: 'Marked sent: id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
     );
   }
 
-  /// Mark message as FAILED (call this from UI if user cancels/WhatsApp failed).
+  /// Mark message as FAILED (call this from UI if user cancels/WhatsApp/SMS failed).
   static Future<void> markFailed(
     OutboundMessage msg, {
     String reason = '',
@@ -160,7 +161,6 @@ class OutboundMessageService {
   /// You can run this on app start.
   static Future<void> requeueOpenedMessages() async {
     final box = HiveService.outboundMessageBox();
-
     final opened = box.values
         .whereType<OutboundMessage>()
         .where((m) => m.status.trim().toLowerCase() == statusOpened);
@@ -192,10 +192,33 @@ class OutboundMessageService {
     }
 
     if (channel == 'sms') {
-      // Later: SmsService.openSms(toPhone: msg.toPhone, body: msg.body)
-      return false;
+      return _openSms(toPhone: msg.toPhone, body: msg.body);
     }
 
     return false;
+  }
+
+  static Future<bool> _openSms({
+    required String toPhone,
+    required String body,
+  }) async {
+    final phone = toPhone.trim();
+    if (phone.isEmpty) return false;
+
+    // sms:<number>?body=<text>
+    final uri = Uri(
+      scheme: 'sms',
+      path: phone,
+      queryParameters: <String, String>{
+        'body': body,
+      },
+    );
+
+    final ok = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    return ok;
   }
 }

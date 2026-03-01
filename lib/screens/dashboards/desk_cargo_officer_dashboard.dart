@@ -27,37 +27,20 @@ class DeskCargoOfficerDashboard extends StatefulWidget {
 class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   bool _openingOutbound = false;
 
-  // NEW: debounce for SMS processing open
-  bool _openingSms = false;
-
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
 
   bool get _canUse =>
       RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
 
-  Future<void> _openOutboundMessages() async {
+  Future<void> _openOutboundMessagesSms() async {
     if (_openingOutbound) return;
 
     setState(() => _openingOutbound = true);
     try {
       await Navigator.push(
         context,
-        MaterialPageRoute(builder: (_) => const OutboundMessagesScreen()),
-      );
-    } finally {
-      if (mounted) setState(() => _openingOutbound = false);
-    }
-  }
-
-  // NEW: SMS-only processing screen
-  Future<void> _openSmsProcessing() async {
-    if (_openingSms) return;
-
-    setState(() => _openingSms = true);
-    try {
-      await Navigator.push(
-        context,
         MaterialPageRoute(
+          // ✅ Open SMS Processing directly (best UX for desk)
           builder: (_) => const OutboundMessagesScreen(
             channelFilter: 'sms',
             title: 'SMS Processing',
@@ -65,8 +48,35 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _openingSms = false);
+      if (mounted) setState(() => _openingOutbound = false);
     }
+  }
+
+  Widget _smsBadge({required int queuedSms, required int failedSms}) {
+    if (queuedSms <= 0 && failedSms <= 0) return const SizedBox.shrink();
+
+    String fmt(int n) => n > 99 ? '99+' : n.toString();
+    final text = '${fmt(queuedSms)}/${fmt(failedSms)}';
+
+    return Positioned(
+      right: 6,
+      top: 6,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: Colors.red,
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Text(
+          text,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 10,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -77,6 +87,8 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
     final payBox = HiveService.paymentBox();
     final propBox = HiveService.propertyBox();
+    final outBox = HiveService.outboundMessageBox();
+
     final name = (Session.currentUserFullName ?? '—').trim();
     final station = (Session.currentStationName ?? '').trim();
 
@@ -105,66 +117,50 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             ],
           ),
           actions: [
-            // ✅ NEW: SMS Processing with badge (queued + failed)
             ValueListenableBuilder(
-              valueListenable: HiveService.outboundMessageBox().listenable(),
-              builder: (context, Box box, _) {
-                final pendingSms = box.values
-                    .whereType<OutboundMessage>()
-                    .where((m) {
-                      final ch = m.channel.trim().toLowerCase();
-                      if (ch != 'sms') return false;
-                      final st = m.status.trim().toLowerCase();
-                      return st == OutboundMessageService.statusQueued ||
-                          st == OutboundMessageService.statusFailed;
-                    })
-                    .length;
+              valueListenable: outBox.listenable(),
+              builder: (context, Box<OutboundMessage> b, _) {
+                int queuedSms = 0;
+                int failedSms = 0;
 
-                return Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    IconButton(
-                      tooltip: _openingSms ? 'Opening...' : 'SMS Processing',
-                      icon: const Icon(Icons.sms_outlined),
-                      onPressed: _openingSms ? null : _openSmsProcessing,
-                    ),
-                    if (pendingSms > 0)
-                      Positioned(
-                        right: 8,
-                        top: 8,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 2,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.red,
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          child: Text(
-                            pendingSms > 99 ? '99+' : pendingSms.toString(),
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontSize: 10,
-                            ),
-                          ),
-                        ),
+                // ✅ Count only ACTIONABLE SMS (attempts < maxAttempts)
+                for (final m in b.values) {
+                  final ch = m.channel.trim().toLowerCase();
+                  if (ch != 'sms') continue;
+
+                  if (m.attempts >= OutboundMessageService.maxAttempts) {
+                    continue;
+                  }
+
+                  final st = m.status.trim().toLowerCase();
+                  if (st == OutboundMessageService.statusQueued) queuedSms++;
+                  if (st == OutboundMessageService.statusFailed) failedSms++;
+                }
+
+                return Tooltip(
+                  message: 'SMS — Queued: $queuedSms • Failed: $failedSms',
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      IconButton(
+                        tooltip: _openingOutbound
+                            ? 'Opening...'
+                            : 'SMS Processing',
+                        icon: const Icon(Icons.sms_outlined),
+                        onPressed: _openingOutbound
+                            ? null
+                            : _openOutboundMessagesSms,
                       ),
-                  ],
+                      _smsBadge(queuedSms: queuedSms, failedSms: failedSms),
+                    ],
+                  ),
                 );
               },
-            ),
-
-            IconButton(
-              tooltip: _openingOutbound ? 'Opening...' : 'Outbound Messages',
-              icon: const Icon(Icons.send_outlined),
-              onPressed: _openingOutbound ? null : _openOutboundMessages,
             ),
             PopupMenuButton<String>(
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),
               onSelected: (v) async {
-                //  capture messenger BEFORE any await
                 final messenger = ScaffoldMessenger.of(context);
 
                 final station = (Session.currentStationName ?? '').trim();
@@ -281,7 +277,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
         ),
         body: TabBarView(
           children: [
-            //  TAB 1: Scan
+            // TAB 1: Scan
             ListView(
               padding: const EdgeInsets.all(12),
               children: [
@@ -316,7 +312,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               ],
             ),
 
-            //  TAB 2: Recent
+            // TAB 2: Recent
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),

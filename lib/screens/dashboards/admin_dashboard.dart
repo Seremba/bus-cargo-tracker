@@ -334,19 +334,66 @@ class AdminDashboard extends StatelessWidget {
             ),
             const SizedBox(height: 10),
 
-            actionButton(
-              icon: Icons.outbox_outlined,
-              label: 'Outbound Messages',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminOutboundMessagesScreen(),
+            // ✅ PATCH 3A + 3B: Outbound Messages button with SMS queued/failed badge
+            ValueListenableBuilder(
+              valueListenable: HiveService.outboundMessageBox().listenable(),
+              builder: (context, Box<OutboundMessage> b, _) {
+                int queuedSms = 0;
+                int failedSms = 0;
+
+                for (final m in b.values) {
+                  final ch = m.channel.trim().toLowerCase();
+                  if (ch != 'sms') continue;
+
+                  final st = m.status.trim().toLowerCase();
+                  if (st == OutboundMessageService.statusQueued) queuedSms++;
+                  if (st == OutboundMessageService.statusFailed) failedSms++;
+                }
+
+                return SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    icon: const Icon(Icons.outbox_outlined),
+                    label: Row(
+                      children: [
+                        const Expanded(child: Text('Outbound Messages')),
+                        if (queuedSms > 0 || failedSms > 0)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
+                            decoration: BoxDecoration(
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Text(
+                              'SMS ${queuedSms.clamp(0, 99)}/${failedSms.clamp(0, 99)}',
+                              style: const TextStyle(
+                                color: Colors.white,
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AdminOutboundMessagesScreen(),
+                        ),
+                      );
+                    },
                   ),
                 );
               },
             ),
             const SizedBox(height: 10),
+
             actionButton(
               icon: Icons.search,
               label: 'Tracking Lookup',

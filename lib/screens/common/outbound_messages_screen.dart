@@ -8,17 +8,13 @@ import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 
 class OutboundMessagesScreen extends StatefulWidget {
-  /// Optional channel-only mode: 'sms' or 'whatsapp'
+  /// Optional initial channel mode: 'sms' or 'whatsapp'
   final String? channelFilter;
 
   /// Optional title override
   final String? title;
 
-  const OutboundMessagesScreen({
-    super.key,
-    this.channelFilter,
-    this.title,
-  });
+  const OutboundMessagesScreen({super.key, this.channelFilter, this.title});
 
   @override
   State<OutboundMessagesScreen> createState() => _OutboundMessagesScreenState();
@@ -29,18 +25,16 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   late TabController _controller;
   bool _busy = false;
 
-  bool get _canUse => RoleGuard.hasAny({
-        UserRole.deskCargoOfficer,
-        UserRole.admin,
-      });
+  // values: 'all' | 'sms' | 'whatsapp'
+  late String _channelMode;
 
-  String get _filterCh => (widget.channelFilter ?? '').trim().toLowerCase();
-  bool get _hasFilter => _filterCh.isNotEmpty;
+  bool get _canUse =>
+      RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
 
   String get _screenTitle {
     if ((widget.title ?? '').trim().isNotEmpty) return widget.title!.trim();
-    if (_filterCh == 'sms') return 'SMS Processing';
-    if (_filterCh == 'whatsapp') return 'WhatsApp Processing';
+    if (_channelMode == 'sms') return 'SMS Processing';
+    if (_channelMode == 'whatsapp') return 'WhatsApp Processing';
     return 'Outbound Messages';
   }
 
@@ -48,6 +42,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   void initState() {
     super.initState();
     _controller = TabController(length: 4, vsync: this);
+
+    final initial = (widget.channelFilter ?? '').trim().toLowerCase();
+    _channelMode = (initial == 'sms' || initial == 'whatsapp') ? initial : 'all';
   }
 
   @override
@@ -71,13 +68,19 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     }
   }
 
+  bool _passesChannel(OutboundMessage m) {
+    if (_channelMode == 'all') return true;
+    final ch = m.channel.trim().toLowerCase();
+    return ch == _channelMode;
+  }
+
   Future<void> _openNext() async {
     if (_busy) return;
     setState(() => _busy = true);
 
     try {
       final msg = await OutboundMessageService.processQueueOpenNext(
-        channelFilter: _hasFilter ? _filterCh : null,
+        channelFilter: _channelMode == 'all' ? null : _channelMode,
       );
 
       if (!mounted) return;
@@ -86,9 +89,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              _hasFilter
-                  ? 'No eligible ${_filterCh.toUpperCase()} messages to open ✅'
-                  : 'No eligible messages to open ✅',
+              _channelMode == 'all'
+                  ? 'No eligible messages to open ✅'
+                  : 'No eligible ${_channelMode.toUpperCase()} messages to open ✅',
             ),
           ),
         );
@@ -121,7 +124,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     }
   }
 
-  // ✅ NEW: open THIS message (exact row)
   Future<void> _openSpecific(OutboundMessage msg) async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -130,13 +132,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       final res = await OutboundMessageService.openSpecific(msg);
 
       if (!mounted) return;
-
-      if (res == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Nothing to open.')),
-        );
-        return;
-      }
+      if (res == null) return;
 
       final st = res.status.trim().toLowerCase();
       final ch = res.channel.trim().isEmpty
@@ -175,7 +171,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         const SnackBar(content: Text('Marked as sent ✅')),
       );
 
-      // ✅ Jump to Sent tab
+      // UX: jump to Sent tab
       _controller.animateTo(3);
     } catch (e) {
       if (!mounted) return;
@@ -201,7 +197,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         const SnackBar(content: Text('Marked as failed ⚠️')),
       );
 
-      // ✅ Jump to Failed tab
+      // UX: jump to Failed tab
       _controller.animateTo(2);
     } catch (e) {
       if (!mounted) return;
@@ -235,6 +231,26 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           ],
         ),
         actions: [
+          // Filter dropdown (All / SMS / WhatsApp)
+          DropdownButtonHideUnderline(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: DropdownButton<String>(
+                value: _channelMode,
+                dropdownColor: Theme.of(context).colorScheme.surface,
+                icon: const Icon(Icons.filter_list),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('All')),
+                  DropdownMenuItem(value: 'sms', child: Text('SMS')),
+                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _channelMode = v);
+                },
+              ),
+            ),
+          ),
           IconButton(
             tooltip: _busy ? 'Working...' : 'Open next',
             icon: const Icon(Icons.send_outlined),
@@ -242,34 +258,34 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           ),
         ],
       ),
-      body: ValueListenableBuilder(
-        valueListenable: box.listenable(),
-        builder: (context, Box b, _) {
+
+      // ✅ IMPORTANT: rebuild on BOTH tab changes and box changes
+      body: AnimatedBuilder(
+        animation: Listenable.merge([box.listenable(), _controller]),
+        builder: (context, _) {
           final tabIndex = _controller.index;
           final status = _statusForTab(tabIndex);
 
-          final items = b.values
-              .whereType<OutboundMessage>()
+          final items = box.values
               .where((m) {
                 final st = m.status.trim().toLowerCase();
                 if (st != status) return false;
-
-                if (!_hasFilter) return true;
-                final ch = m.channel.trim().toLowerCase();
-                return ch == _filterCh;
+                return _passesChannel(m);
               })
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          final label = _controller.index == 0
+          final label = tabIndex == 0
               ? 'Queued'
-              : _controller.index == 1
+              : tabIndex == 1
                   ? 'Opened'
-                  : _controller.index == 2
+                  : tabIndex == 2
                       ? 'Failed'
                       : 'Sent';
 
-          final header = _hasFilter ? '$label ${_filterCh.toUpperCase()}' : label;
+          final header = _channelMode == 'all'
+              ? label
+              : '$label ${_channelMode.toUpperCase()}';
 
           return Column(
             children: [
@@ -355,6 +371,13 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                 ),
                 const Spacer(),
 
+                if (st == OutboundMessageService.statusQueued ||
+                    st == OutboundMessageService.statusFailed)
+                  OutlinedButton(
+                    onPressed: _busy ? null : () => _openSpecific(m),
+                    child: const Text('Open'),
+                  ),
+
                 if (st == OutboundMessageService.statusOpened) ...[
                   OutlinedButton(
                     onPressed: _busy ? null : () => _markFailed(m),
@@ -364,20 +387,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                   ElevatedButton(
                     onPressed: _busy ? null : () => _markSent(m),
                     child: const Text('Mark sent'),
-                  ),
-                ],
-
-                if (st == OutboundMessageService.statusQueued ||
-                    st == OutboundMessageService.statusFailed) ...[
-                  // ✅ NEW: open specific
-                  OutlinedButton(
-                    onPressed: _busy ? null : () => _openSpecific(m),
-                    child: const Text('Open'),
-                  ),
-                  const SizedBox(width: 8),
-                  OutlinedButton(
-                    onPressed: _busy ? null : _openNext,
-                    child: const Text('Open next'),
                   ),
                 ],
               ],

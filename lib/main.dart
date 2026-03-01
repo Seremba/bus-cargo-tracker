@@ -5,30 +5,30 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'models/audit_event.dart';
 import 'models/checkpoint.dart';
 import 'models/notification_item.dart';
+import 'models/outbound_message.dart';
+import 'models/payment_record.dart';
 import 'models/printer_settings.dart';
 import 'models/property.dart';
-import 'models/property_item.dart';
-import 'models/property_item_status.dart';
 import 'models/property_status.dart';
 import 'models/trip.dart';
 import 'models/trip_status.dart';
 import 'models/user.dart';
 import 'models/user_role.dart';
-import 'models/payment_record.dart';
 
 import 'screens/login_screen.dart';
+
 import 'services/auth_service.dart';
 import 'services/hive_service.dart';
 import 'services/outbound_message_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
   await Hive.initFlutter();
 
+  // Register adapters
   Hive.registerAdapter(PropertyAdapter());
   Hive.registerAdapter(PropertyStatusAdapter());
-  Hive.registerAdapter(PropertyItemStatusAdapter());
-  Hive.registerAdapter(PropertyItemAdapter());
   Hive.registerAdapter(NotificationItemAdapter());
   Hive.registerAdapter(TripAdapter());
   Hive.registerAdapter(TripStatusAdapter());
@@ -39,8 +39,12 @@ void main() async {
   Hive.registerAdapter(PaymentRecordAdapter());
   Hive.registerAdapter(PrinterSettingsAdapter());
 
+  Hive.registerAdapter(OutboundMessageAdapter());
+
   await HiveService.openAllBoxes();
+
   await OutboundMessageService.requeueOpenedMessages();
+
   // Prototype-friendly seeding; later keep only in debug/dev
   if (kDebugMode) {
     await AuthService.seedAdminIfMissing(

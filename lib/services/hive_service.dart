@@ -10,6 +10,8 @@ import '../models/payment_record.dart';
 import '../models/outbound_message.dart';
 import '../models/property_item.dart';
 
+import 'outbound_message_service.dart';
+
 class HiveService {
   static const String _propertyBoxName = 'properties';
   static const String _notificationBoxName = 'notifications';
@@ -26,6 +28,8 @@ class HiveService {
     Session.currentUserId = userId;
   }
 
+  /// Opens all Hive boxes required by the app.
+  ///  Also repairs outbound queue: "opened" -> "queued" (crash-safe).
   static Future<void> openAllBoxes() async {
     await openPropertyBox();
     await openPropertyItemBox();
@@ -36,6 +40,12 @@ class HiveService {
     await openPaymentBox();
     await openPrinterSettingsBox();
     await openOutboundMessageBox();
+
+    try {
+      await OutboundMessageService.requeueOpenedMessages();
+    } catch (_) {
+      // Never block app boot due to queue repair
+    }
   }
 
   static Future<void> openPropertyBox() async {

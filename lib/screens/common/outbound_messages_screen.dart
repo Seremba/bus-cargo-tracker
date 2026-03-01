@@ -14,7 +14,11 @@ class OutboundMessagesScreen extends StatefulWidget {
   /// Optional title override
   final String? title;
 
-  const OutboundMessagesScreen({super.key, this.channelFilter, this.title});
+  const OutboundMessagesScreen({
+    super.key,
+    this.channelFilter,
+    this.title,
+  });
 
   @override
   State<OutboundMessagesScreen> createState() => _OutboundMessagesScreenState();
@@ -25,8 +29,10 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   late TabController _controller;
   bool _busy = false;
 
-  bool get _canUse =>
-      RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
+  bool get _canUse => RoleGuard.hasAny({
+        UserRole.deskCargoOfficer,
+        UserRole.admin,
+      });
 
   String get _filterCh => (widget.channelFilter ?? '').trim().toLowerCase();
   bool get _hasFilter => _filterCh.isNotEmpty;
@@ -96,26 +102,63 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}'),
-          ),
+          SnackBar(content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}')),
         );
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}',
-            ),
-          ),
+          SnackBar(content: Text('Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}')),
         );
         _controller.animateTo(2); // Failed
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  // ✅ NEW: open THIS message (exact row)
+  Future<void> _openSpecific(OutboundMessage msg) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+
+    try {
+      final res = await OutboundMessageService.openSpecific(msg);
+
+      if (!mounted) return;
+
+      if (res == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Nothing to open.')),
+        );
+        return;
+      }
+
+      final st = res.status.trim().toLowerCase();
+      final ch = res.channel.trim().isEmpty
+          ? 'whatsapp'
+          : res.channel.trim().toLowerCase();
+
+      if (st == OutboundMessageService.statusOpened) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Opened ${ch.toUpperCase()} for: ${res.toPhone}')),
+        );
+        _controller.animateTo(1); // Opened
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Failed to open ${ch.toUpperCase()} for: ${res.toPhone}')),
+        );
+        _controller.animateTo(2); // Failed
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -128,16 +171,17 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       await OutboundMessageService.markSent(msg);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Marked as sent ✅')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Marked as sent ✅')),
+      );
 
+      // ✅ Jump to Sent tab
       _controller.animateTo(3);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -153,17 +197,17 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       );
       if (!mounted) return;
 
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Marked as failed ⚠️')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Marked as failed ⚠️')),
+      );
 
-      // ✅ NEW: jump to Failed tab
+      // ✅ Jump to Failed tab
       _controller.animateTo(2);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -204,26 +248,28 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           final tabIndex = _controller.index;
           final status = _statusForTab(tabIndex);
 
-          final items = b.values.whereType<OutboundMessage>().where((m) {
-            final st = m.status.trim().toLowerCase();
-            if (st != status) return false;
+          final items = b.values
+              .whereType<OutboundMessage>()
+              .where((m) {
+                final st = m.status.trim().toLowerCase();
+                if (st != status) return false;
 
-            if (!_hasFilter) return true;
-            final ch = m.channel.trim().toLowerCase();
-            return ch == _filterCh;
-          }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                if (!_hasFilter) return true;
+                final ch = m.channel.trim().toLowerCase();
+                return ch == _filterCh;
+              })
+              .toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
           final label = _controller.index == 0
               ? 'Queued'
               : _controller.index == 1
-              ? 'Opened'
-              : _controller.index == 2
-              ? 'Failed'
-              : 'Sent';
+                  ? 'Opened'
+                  : _controller.index == 2
+                      ? 'Failed'
+                      : 'Sent';
 
-          final header = _hasFilter
-              ? '$label ${_filterCh.toUpperCase()}'
-              : label;
+          final header = _hasFilter ? '$label ${_filterCh.toUpperCase()}' : label;
 
           return Column(
             children: [
@@ -308,6 +354,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                   style: const TextStyle(fontSize: 12, color: Colors.black54),
                 ),
                 const Spacer(),
+
                 if (st == OutboundMessageService.statusOpened) ...[
                   OutlinedButton(
                     onPressed: _busy ? null : () => _markFailed(m),
@@ -319,8 +366,15 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                     child: const Text('Mark sent'),
                   ),
                 ],
+
                 if (st == OutboundMessageService.statusQueued ||
                     st == OutboundMessageService.statusFailed) ...[
+                  // ✅ NEW: open specific
+                  OutlinedButton(
+                    onPressed: _busy ? null : () => _openSpecific(m),
+                    child: const Text('Open'),
+                  ),
+                  const SizedBox(width: 8),
                   OutlinedButton(
                     onPressed: _busy ? null : _openNext,
                     child: const Text('Open next'),

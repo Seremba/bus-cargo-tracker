@@ -18,8 +18,6 @@ import 'trip_service.dart';
 import 'whatsapp_service.dart';
 
 class PropertyService {
-  // -------- OTP helpers --------
-
   static String _generateOtp() {
     final ms = DateTime.now().millisecondsSinceEpoch;
     return (100000 + (ms % 900000)).toString();
@@ -103,8 +101,35 @@ class PropertyService {
     }
   }
 
-  /// ✅ Required by your spec: SMS OTP is queued via OutboundMessageService.
-  /// Non-blocking by design.
+  static bool _alreadyQueuedOtpSms({
+    required String propertyKey,
+    required String otp,
+  }) {
+    final needle = otp.trim();
+    if (needle.isEmpty) return false;
+
+    final box = HiveService.outboundMessageBox();
+
+    for (final m in box.values) {
+      if (m.propertyKey != propertyKey) continue;
+
+      final ch = m.channel.trim().toLowerCase();
+      if (ch != 'sms') continue;
+
+      final st = m.status.trim().toLowerCase();
+      final active =
+          st == OutboundMessageService.statusQueued ||
+          st == OutboundMessageService.statusOpened ||
+          st == OutboundMessageService.statusSent;
+
+      if (!active) continue;
+
+      if (m.body.contains(needle)) return true;
+    }
+
+    return false;
+  }
+
   static Future<void> _safeSendOtpIfSms({
     required Property fresh,
     required String otp,
@@ -118,11 +143,24 @@ class PropertyService {
       final phone = fresh.receiverPhone.trim();
       if (phone.isEmpty) return;
 
+      final pKey = fresh.key.toString();
+
+      //  DEDUPE: don't queue if same OTP SMS already exists for this property
+      if (_alreadyQueuedOtpSms(propertyKey: pKey, otp: otp)) {
+        await AuditService.log(
+          action: 'OTP_SMS_SKIPPED_DUPLICATE',
+          propertyKey: pKey,
+          details: 'Skipped duplicate OTP SMS queue (otp=$otp)',
+        );
+        return;
+      }
+
       final code = fresh.trackingCode.trim().isEmpty
           ? '—'
           : fresh.trackingCode.trim();
 
-      final body = 'Bebeto Cargo OTP: $otp\n'
+      final body =
+          'Bebeto Cargo OTP: $otp\n'
           'Do not share this code.\n'
           'Track: $code';
 
@@ -130,12 +168,12 @@ class PropertyService {
         toPhone: phone,
         channel: 'sms',
         body: body,
-        propertyKey: fresh.key.toString(),
+        propertyKey: pKey,
       );
 
       await AuditService.log(
         action: 'OTP_SMS_QUEUED',
-        propertyKey: fresh.key.toString(),
+        propertyKey: pKey,
         details: 'Queued OTP SMS to receiver phone=$phone',
       );
     } catch (e) {
@@ -148,8 +186,6 @@ class PropertyService {
       } catch (_) {}
     }
   }
-
-  // -------- Auto-repair --------
 
   static Future<bool> repairMissingLoadedMilestone(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
@@ -189,8 +225,6 @@ class PropertyService {
     return true;
   }
 
-  // -------- REQUIRED: markDelivered --------
-
   static Future<void> markDelivered(Property p) async {
     if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return;
 
@@ -227,7 +261,7 @@ class PropertyService {
     // Issue/refresh QR for delivered cargo
     await PickupQrService.issueForDelivered(fresh, otp: otp);
 
-    // SMS OTP (feature phone) if needed
+    // SMS OTP (feature phone) if needed (deduped)
     await _safeSendOtpIfSms(fresh: fresh, otp: otp);
 
     // Receiver status update (channel chosen inside ReceiverTrackingService)
@@ -247,8 +281,6 @@ class PropertyService {
           'Property for ${fresh.receiverName} delivered.\nOTP/QR issued for pickup.',
     );
   }
-
-  // -------- REQUIRED: confirmPickupWithOtp --------
 
   static Future<bool> confirmPickupWithOtp(Property p, String otp) async {
     if (!RoleGuard.hasAny({UserRole.staff, UserRole.admin})) return false;
@@ -309,8 +341,6 @@ class PropertyService {
     return true;
   }
 
-  // -------- Admin OTP controls --------
-
   static Future<void> adminUnlockOtp(Property p) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
@@ -347,7 +377,7 @@ class PropertyService {
 
     await fresh.save();
 
-    // If receiver uses SMS, queue the new OTP immediately (non-blocking)
+    // If receiver uses SMS, queue the new OTP immediately (deduped, non-blocking)
     await _safeSendOtpIfSms(fresh: fresh, otp: otp);
 
     await NotificationService.notify(
@@ -364,8 +394,6 @@ class PropertyService {
           'Admin reset OTP for ${fresh.receiverName} (${fresh.receiverPhone}).',
     );
   }
-
-  // -------- REQUIRED: markInTransit --------
 
   /// STRICT FLOW:
   /// pending → (desk marks Loaded → loadedAt) → driver starts trip → inTransit
@@ -505,8 +533,6 @@ class PropertyService {
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
   }
 
-  // -------- REQUIRED: markLoaded --------
-
   static Future<bool> markLoaded(
     Property p, {
     required String station,
@@ -558,9 +584,10 @@ class PropertyService {
     return true;
   }
 
-  // -------- REQUIRED: adminSetStatus --------
-
-  static Future<void> adminSetStatus(Property p, PropertyStatus newStatus) async {
+  static Future<void> adminSetStatus(
+    Property p,
+    PropertyStatus newStatus,
+  ) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
@@ -676,7 +703,7 @@ class PropertyService {
             'Prepared delivered: deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
       );
 
-      // If receiver uses SMS, queue OTP (non-blocking)
+      // If receiver uses SMS, queue OTP (deduped, non-blocking)
       await _safeSendOtpIfSms(fresh: fresh, otp: otp);
     }
 
@@ -710,10 +737,10 @@ class PropertyService {
     final label = (newStatus == PropertyStatus.inTransit)
         ? 'IN TRANSIT'
         : (newStatus == PropertyStatus.delivered)
-            ? 'DELIVERED'
-            : (newStatus == PropertyStatus.pickedUp)
-                ? 'PICKED UP'
-                : 'PENDING';
+        ? 'DELIVERED'
+        : (newStatus == PropertyStatus.pickedUp)
+        ? 'PICKED UP'
+        : 'PENDING';
 
     await _safeNotifyReceiver(fresh: fresh, eventLabel: label);
 
@@ -737,8 +764,6 @@ class PropertyService {
           'Status set to ${newStatus.name} for ${fresh.receiverName} (${fresh.receiverPhone}).',
     );
   }
-
-  // -------- Optional helpers (kept because your app uses them) --------
 
   static String _propertyCodeLabel(Property p) {
     final c = p.propertyCode.trim();

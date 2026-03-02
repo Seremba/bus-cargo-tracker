@@ -3,12 +3,17 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/trip.dart';
 import '../../models/checkpoint.dart';
-import '../../models/property_status.dart';
 import '../../models/trip_status.dart';
 import '../../models/user_role.dart';
+
 import '../../services/hive_service.dart';
 import '../../services/trip_service.dart';
 import '../../services/role_guard.dart';
+
+import '../../theme/status_colors.dart';
+import '../../widgets/status_chip.dart';
+
+import '../../ui/status_labels.dart';
 
 class AdminTripDetailsScreen extends StatelessWidget {
   final Trip trip;
@@ -16,30 +21,6 @@ class AdminTripDetailsScreen extends StatelessWidget {
 
   Widget _notAuthorized() =>
       const Scaffold(body: Center(child: Text('Not authorized')));
-
-  String _statusText(PropertyStatus s) {
-    switch (s) {
-      case PropertyStatus.pending:
-        return '🟡 Pending';
-      case PropertyStatus.inTransit:
-        return '🔵 In Transit';
-      case PropertyStatus.delivered:
-        return '🟢 Delivered';
-      case PropertyStatus.pickedUp:
-        return '✅ Picked Up';
-    }
-  }
-
-  String _tripStatusText(TripStatus status) {
-    switch (status) {
-      case TripStatus.active:
-        return '🟢 Active';
-      case TripStatus.ended:
-        return '✅ Ended';
-      case TripStatus.cancelled:
-        return '⛔ Cancelled';
-    }
-  }
 
   Future<String?> _askCancelReason(BuildContext context) async {
     final controller = TextEditingController();
@@ -94,18 +75,35 @@ class AdminTripDetailsScreen extends StatelessWidget {
           orElse: () => trip,
         );
 
-        final cargo =
-            propertyBox.values
-                .where((p) => p.tripId == refreshedTrip.tripId)
-                .toList()
-              ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+        final cargo = propertyBox.values
+            .where((p) => p.tripId == refreshedTrip.tripId)
+            .toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+        // ✅ Standardized trip chip colors (bg + fg)
+        final tripBg = TripStatusColors.background(refreshedTrip.status);
+        final tripFg = TripStatusColors.foreground(refreshedTrip.status);
 
         return Scaffold(
           appBar: AppBar(
             centerTitle: true,
             elevation: 2,
-            title: Text(
-              '${refreshedTrip.routeName} • ${_tripStatusText(refreshedTrip.status)}',
+            title: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Flexible(
+                  child: Text(
+                    refreshedTrip.routeName,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                const SizedBox(width: 10),
+                StatusChip(
+                  text: TripStatusLabels.text(refreshedTrip.status),
+                  bgColor: tripBg,
+                  fgColor: tripFg,
+                ),
+              ],
             ),
             actions: [
               if (refreshedTrip.status == TripStatus.active) ...[
@@ -176,26 +174,36 @@ class AdminTripDetailsScreen extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(
-                        refreshedTrip.routeName,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              refreshedTrip.routeName,
+                              style: const TextStyle(
+                                fontSize: 16,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          StatusChip(
+                            text: TripStatusLabels.text(refreshedTrip.status),
+                            bgColor: tripBg,
+                            fgColor: tripFg,
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 6),
+                      const SizedBox(height: 10),
                       Text('Driver: ${refreshedTrip.driverUserId}'),
-                      const SizedBox(height: 4),
-                      Text('Status: ${_tripStatusText(refreshedTrip.status)}'),
+                      const SizedBox(height: 6),
+                      Text(
+                        'Started: ${refreshedTrip.startedAt.toLocal().toString().substring(0, 16)}',
+                      ),
                       if (refreshedTrip.endedAt != null)
                         Text(
                           'Ended: ${refreshedTrip.endedAt!.toLocal().toString().substring(0, 16)}',
                         ),
-                      const SizedBox(height: 4),
-                      Text(
-                        'Started: ${refreshedTrip.startedAt.toLocal().toString().substring(0, 16)}',
-                      ),
-                      const SizedBox(height: 4),
+                      const SizedBox(height: 6),
                       Text(
                         'Last checkpoint index: ${refreshedTrip.lastCheckpointIndex}',
                       ),
@@ -249,18 +257,27 @@ class AdminTripDetailsScreen extends StatelessWidget {
                 const Text('No cargo assigned to this trip yet.')
               else
                 ...cargo.map((p) {
+                  final pBg = PropertyStatusColors.background(p.status);
+                  final pFg = PropertyStatusColors.foreground(p.status);
+
                   return Card(
                     child: ListTile(
-                      title: Text(p.receiverName),
+                      title: Row(
+                        children: [
+                          Expanded(child: Text(p.receiverName)),
+                          const SizedBox(width: 8),
+                          StatusChip(
+                            text: PropertyStatusLabels.text(p.status),
+                            bgColor: pBg,
+                            fgColor: pFg,
+                          ),
+                        ],
+                      ),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
+                          const SizedBox(height: 6),
                           Text('${p.destination} • ${p.receiverPhone}'),
-                          const SizedBox(height: 4),
-                          Text(
-                            _statusText(p.status),
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
                           const SizedBox(height: 4),
                           Text(
                             'Sender: ${p.createdByUserId}',

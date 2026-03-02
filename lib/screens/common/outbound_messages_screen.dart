@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/outbound_message.dart';
@@ -30,6 +31,8 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
   bool get _canUse =>
       RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
+
+  bool get _isAdmin => RoleGuard.hasRole(UserRole.admin);
 
   String get _screenTitle {
     if ((widget.title ?? '').trim().isNotEmpty) return widget.title!.trim();
@@ -74,6 +77,39 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     return ch == _channelMode;
   }
 
+  int _countForStatus(Box<OutboundMessage> box, String status) {
+    return box.values.where((m) {
+      final st = m.status.trim().toLowerCase();
+      if (st != status) return false;
+      return _passesChannel(m);
+    }).length;
+  }
+
+  Future<void> _requeueOpenedNow() async {
+    if (_busy) return;
+    setState(() => _busy = true);
+
+    try {
+      // NOTE: your service returns void, so do not expect an int count here.
+      await OutboundMessageService.requeueOpenedMessages();
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Requeued OPENED messages ✅')),
+      );
+
+      // After requeue, it makes sense to show Queue
+      _controller.animateTo(0);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
   Future<void> _openNext() async {
     if (_busy) return;
     setState(() => _busy = true);
@@ -110,7 +146,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}')),
+          SnackBar(
+            content: Text('Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}'),
+          ),
         );
         _controller.animateTo(2); // Failed
       }
@@ -146,7 +184,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to open ${ch.toUpperCase()} for: ${res.toPhone}')),
+          SnackBar(
+            content: Text('Failed to open ${ch.toUpperCase()} for: ${res.toPhone}'),
+          ),
         );
         _controller.animateTo(2); // Failed
       }
@@ -209,6 +249,14 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     }
   }
 
+  Future<void> _copyToClipboard(String text, {String? toast}) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(toast ?? 'Copied ✅')),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!_canUse) {
@@ -221,16 +269,37 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       appBar: AppBar(
         centerTitle: true,
         title: Text(_screenTitle),
-        bottom: TabBar(
-          controller: _controller,
-          tabs: const [
-            Tab(text: 'Queued'),
-            Tab(text: 'Opened'),
-            Tab(text: 'Failed'),
-            Tab(text: 'Sent'),
-          ],
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(kToolbarHeight),
+          child: AnimatedBuilder(
+            animation: Listenable.merge([box.listenable(), _controller]),
+            builder: (context, _) {
+              final q = _countForStatus(box, OutboundMessageService.statusQueued);
+              final o = _countForStatus(box, OutboundMessageService.statusOpened);
+              final f = _countForStatus(box, OutboundMessageService.statusFailed);
+              final s = _countForStatus(box, OutboundMessageService.statusSent);
+
+              return TabBar(
+                controller: _controller,
+                tabs: [
+                  Tab(text: 'Queued ($q)'),
+                  Tab(text: 'Opened ($o)'),
+                  Tab(text: 'Failed ($f)'),
+                  Tab(text: 'Sent ($s)'),
+                ],
+              );
+            },
+          ),
         ),
         actions: [
+          // Admin-only: manual recovery
+          if (_isAdmin)
+            IconButton(
+              tooltip: _busy ? 'Working...' : 'Requeue opened',
+              icon: const Icon(Icons.refresh),
+              onPressed: _busy ? null : _requeueOpenedNow,
+            ),
+
           // Filter dropdown (All / SMS / WhatsApp)
           DropdownButtonHideUnderline(
             child: Padding(
@@ -304,6 +373,13 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                         ),
+                        if (_isAdmin)
+                          TextButton.icon(
+                            onPressed: _busy ? null : _requeueOpenedNow,
+                            icon: const Icon(Icons.refresh, size: 18),
+                            label: const Text('Requeue opened'),
+                          ),
+                        const SizedBox(width: 6),
                         ElevatedButton.icon(
                           onPressed: _busy ? null : _openNext,
                           icon: const Icon(Icons.open_in_new),
@@ -336,62 +412,125 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     final ch = m.channel.trim().isEmpty ? 'whatsapp' : m.channel.trim();
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '${ch.toUpperCase()} → ${m.toPhone}',
-                    style: const TextStyle(fontWeight: FontWeight.w800),
-                  ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onLongPress: () async {
+          final choice = await showModalBottomSheet<String>(
+            context: context,
+            showDragHandle: true,
+            builder: (ctx) {
+              return SafeArea(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    ListTile(
+                      leading: const Icon(Icons.copy),
+                      title: const Text('Copy phone'),
+                      subtitle: Text(m.toPhone),
+                      onTap: () => Navigator.pop(ctx, 'phone'),
+                    ),
+                    ListTile(
+                      leading: const Icon(Icons.copy),
+                      title: const Text('Copy message'),
+                      subtitle: Text(
+                        m.body.length > 60 ? '${m.body.substring(0, 60)}…' : m.body,
+                      ),
+                      onTap: () => Navigator.pop(ctx, 'body'),
+                    ),
+                    if ((m.propertyKey).trim().isNotEmpty)
+                      ListTile(
+                        leading: const Icon(Icons.copy),
+                        title: const Text('Copy property key'),
+                        subtitle: Text(m.propertyKey),
+                        onTap: () => Navigator.pop(ctx, 'property'),
+                      ),
+                    const SizedBox(height: 6),
+                  ],
                 ),
-                Text(
-                  when,
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            Text(
-              'Property: ${m.propertyKey.isEmpty ? '—' : m.propertyKey}',
-              style: const TextStyle(color: Colors.black54),
-            ),
-            const SizedBox(height: 8),
-            Text(m.body),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Text(
-                  'Status: ${m.status} | Attempts: ${m.attempts}',
-                  style: const TextStyle(fontSize: 12, color: Colors.black54),
-                ),
-                const Spacer(),
+              );
+            },
+          );
 
-                if (st == OutboundMessageService.statusQueued ||
-                    st == OutboundMessageService.statusFailed)
-                  OutlinedButton(
-                    onPressed: _busy ? null : () => _openSpecific(m),
-                    child: const Text('Open'),
+          if (choice == 'phone') {
+            await _copyToClipboard(m.toPhone, toast: 'Phone copied ✅');
+          } else if (choice == 'body') {
+            await _copyToClipboard(m.body, toast: 'Message copied ✅');
+          } else if (choice == 'property') {
+            await _copyToClipboard(m.propertyKey, toast: 'Property key copied ✅');
+          }
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(10),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '${ch.toUpperCase()} → ${m.toPhone}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    ),
                   ),
-
-                if (st == OutboundMessageService.statusOpened) ...[
-                  OutlinedButton(
-                    onPressed: _busy ? null : () => _markFailed(m),
-                    child: const Text('Mark failed'),
-                  ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
-                    onPressed: _busy ? null : () => _markSent(m),
-                    child: const Text('Mark sent'),
+                  Text(
+                    when,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.60),
+                    ),
                   ),
                 ],
-              ],
-            ),
-          ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Property: ${m.propertyKey.isEmpty ? '—' : m.propertyKey}',
+                style: TextStyle(
+                  color: Theme.of(context)
+                      .colorScheme
+                      .onSurface
+                      .withValues(alpha: 0.60),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(m.body),
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Text(
+                    'Status: ${m.status} | Attempts: ${m.attempts}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.60),
+                    ),
+                  ),
+                  const Spacer(),
+                  if (st == OutboundMessageService.statusQueued ||
+                      st == OutboundMessageService.statusFailed)
+                    OutlinedButton(
+                      onPressed: _busy ? null : () => _openSpecific(m),
+                      child: const Text('Open'),
+                    ),
+                  if (st == OutboundMessageService.statusOpened) ...[
+                    OutlinedButton(
+                      onPressed: _busy ? null : () => _markFailed(m),
+                      child: const Text('Mark failed'),
+                    ),
+                    const SizedBox(width: 8),
+                    ElevatedButton(
+                      onPressed: _busy ? null : () => _markSent(m),
+                      child: const Text('Mark sent'),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ),
         ),
       ),
     );

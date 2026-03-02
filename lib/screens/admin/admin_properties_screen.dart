@@ -10,6 +10,11 @@ import '../../services/hive_service.dart';
 import '../../services/property_service.dart';
 import '../../services/role_guard.dart';
 
+import '../../theme/status_colors.dart';
+import '../../widgets/status_chip.dart';
+
+import '../../ui/status_labels.dart';
+
 class AdminPropertiesScreen extends StatefulWidget {
   const AdminPropertiesScreen({super.key});
 
@@ -23,28 +28,22 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   bool _autoRepairScheduled = false;
   bool _isRepairing = false;
 
-  // Safe helpers (works for String or String?)
   String _s(String? v) => v ?? '';
+
   String _dashIfEmpty(String? v) {
     final t = (v ?? '').trim();
     return t.isEmpty ? '—' : t;
   }
 
-  String _statusText(PropertyStatus status) {
-    switch (status) {
-      case PropertyStatus.pending:
-        return '🟡 Pending';
-      case PropertyStatus.inTransit:
-        return '🔵 In Transit';
-      case PropertyStatus.delivered:
-        return '🟢 Delivered';
-      case PropertyStatus.pickedUp:
-        return '✅ Picked Up';
-    }
+  String _fmt16(DateTime? d) {
+    if (d == null) return '—';
+    final s = d.toLocal().toString();
+    return s.length >= 16 ? s.substring(0, 16) : s;
   }
 
   bool _isLegacyBrokenLoaded(Property p) {
-    final impliesLoaded = p.status == PropertyStatus.inTransit ||
+    final impliesLoaded =
+        p.status == PropertyStatus.inTransit ||
         p.status == PropertyStatus.delivered ||
         p.status == PropertyStatus.pickedUp;
     return impliesLoaded && p.loadedAt == null;
@@ -57,6 +56,8 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     }
 
     final box = HiveService.propertyBox();
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
       appBar: AppBar(
@@ -99,23 +100,24 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               if (brokenCount > 0)
                 Card(
                   margin: const EdgeInsets.all(12),
-                  color: Colors.orangeAccent.withValues(alpha: 0.18),
+                  color: cs.tertiary.withValues(alpha: 0.12),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
                     child: Row(
                       children: [
-                        const Icon(Icons.warning_amber_rounded),
+                        Icon(Icons.warning_amber_rounded, color: cs.tertiary),
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
                             '$brokenCount old record(s) are missing Loaded milestone.\n'
                             'They will be repaired automatically when you open this screen.',
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                         ),
                         TextButton.icon(
-                          onPressed:
-                              _isRepairing ? null : () => _manualRepairAll(box),
+                          onPressed: _isRepairing
+                              ? null
+                              : () => _manualRepairAll(box),
                           icon: const Icon(Icons.build, size: 18),
                           label: const Text('Repair now'),
                         ),
@@ -133,46 +135,69 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                   final routeText = _dashIfEmpty(p.routeName);
                   final senderText = _dashIfEmpty(p.createdByUserId);
 
-                  final bool legacyBroken = _isLegacyBrokenLoaded(p);
-                  final bool loadedDone = p.loadedAt != null ||
+                  final legacyBroken = _isLegacyBrokenLoaded(p);
+                  final loadedDone =
+                      p.loadedAt != null ||
                       p.status == PropertyStatus.inTransit ||
                       p.status == PropertyStatus.delivered ||
                       p.status == PropertyStatus.pickedUp;
 
+                  final bg = PropertyStatusColors.background(p.status);
+                  final fg = PropertyStatusColors.foreground(p.status);
+
                   return Card(
-                    margin:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    margin: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
                     child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
                       title: Row(
                         children: [
-                          Expanded(child: Text(_s(p.receiverName))),
+                          Expanded(
+                            child: Text(
+                              _s(p.receiverName),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
                           const SizedBox(width: 8),
-                          _StatusChip(text: _statusText(p.status)),
+                          StatusChip(
+                            text: PropertyStatusLabels.text(p.status),
+                            bgColor: bg,
+                            fgColor: fg,
+                          ),
                         ],
                       ),
                       subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 6),
+                        padding: const EdgeInsets.only(top: 8),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('${_s(p.destination)} • ${_s(p.receiverPhone)}'),
-                            const SizedBox(height: 4),
+                            Text(
+                              '${_s(p.destination)} • ${_s(p.receiverPhone)}',
+                            ),
+                            const SizedBox(height: 6),
                             Text(
                               'Items: ${p.itemCount} • Route: $routeText',
-                              style: const TextStyle(fontSize: 12),
+                              style: TextStyle(fontSize: 12, color: muted),
                             ),
                             const SizedBox(height: 4),
                             Text(
                               'Sender: $senderText',
-                              style: const TextStyle(fontSize: 12),
+                              style: TextStyle(fontSize: 12, color: muted),
                             ),
+                            const SizedBox(height: 4),
                             Text(
-                              'Created: ${p.createdAt.toLocal().toString().substring(0, 16)}',
-                              style: const TextStyle(fontSize: 12),
+                              'Created: ${_fmt16(p.createdAt)}',
+                              style: TextStyle(fontSize: 12, color: muted),
                             ),
-                            const SizedBox(height: 6),
+                            const SizedBox(height: 10),
 
-                            // UI: show Loaded milestone clarity
                             Row(
                               children: [
                                 Icon(
@@ -180,14 +205,18 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                                       ? Icons.check_circle
                                       : Icons.radio_button_unchecked,
                                   size: 16,
-                                  color: loadedDone
-                                      ? Colors.green
-                                      : Colors.black54,
+                                  color: loadedDone ? cs.primary : muted,
                                 ),
                                 const SizedBox(width: 6),
-                                Text(
-                                  'Loaded: ${p.loadedAt == null ? '—' : p.loadedAt!.toLocal().toString().substring(0, 16)}',
-                                  style: const TextStyle(fontSize: 12),
+                                Expanded(
+                                  child: Text(
+                                    'Loaded: ${_fmt16(p.loadedAt)}',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: muted,
+                                    ),
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
                                 ),
                                 if (legacyBroken) ...[
                                   const SizedBox(width: 8),
@@ -200,9 +229,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                       ),
                       trailing: const Icon(Icons.edit),
                       onTap: () => _adminChangeStatus(context, p),
-                      onLongPress: legacyBroken
-                          ? () => _repairOne(p)
-                          : null, // quick admin fix per item
+                      onLongPress: legacyBroken ? () => _repairOne(p) : null,
                     ),
                   );
                 },
@@ -215,15 +242,12 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   }
 
   void _scheduleAutoRepairOnce(List<Property> items) {
-    // Only schedule once per screen open; repairs themselves are guarded by _repairedKeys.
     if (_autoRepairScheduled) return;
     _autoRepairScheduled = true;
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
 
-      // Repair a small batch to keep UI responsive.
-      // You can adjust the cap; 40 is usually safe.
       const int cap = 40;
       int repaired = 0;
 
@@ -238,8 +262,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
         _repairedKeys.add(key);
         if (did) repaired++;
       }
-
-      // If there are more than cap, admin can press "Repair now" to finish all.
     });
   }
 
@@ -256,9 +278,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Legacy record repaired ✅')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Legacy record repaired ✅')));
   }
 
   Future<void> _manualRepairAll(Box<Property> box) async {
@@ -268,7 +290,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     int repaired = 0;
 
     try {
-      // Make a stable list snapshot (avoid iterating live box while it changes)
       final items = box.values.toList();
 
       for (final p in items) {
@@ -346,29 +367,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     await PropertyService.adminSetStatus(p, result);
 
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Status updated ✅')),
-    );
-  }
-}
-
-class _StatusChip extends StatelessWidget {
-  final String text;
-  const _StatusChip({required this.text});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(20),
-        color: Colors.blue.shade50,
-      ),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w700),
-      ),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Status updated ✅')));
   }
 }
 
@@ -378,19 +379,21 @@ class _WarnBadge extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: Colors.deepOrange.withValues(alpha: 0.15),
+        color: cs.error.withValues(alpha: 0.10),
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.deepOrange.withValues(alpha: 0.4)),
+        border: Border.all(color: cs.error.withValues(alpha: 0.35)),
       ),
       child: Text(
         text,
-        style: const TextStyle(
+        style: TextStyle(
           fontSize: 11,
           fontWeight: FontWeight.w700,
-          color: Colors.deepOrange,
+          color: cs.error,
         ),
       ),
     );

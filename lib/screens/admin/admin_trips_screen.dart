@@ -6,6 +6,11 @@ import '../../models/trip_status.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
+
+import '../../theme/status_colors.dart';
+import '../../widgets/status_chip.dart';
+import '../../ui/status_labels.dart';
+
 import 'admin_trip_details_screen.dart';
 
 class AdminTripsScreen extends StatelessWidget {
@@ -13,17 +18,6 @@ class AdminTripsScreen extends StatelessWidget {
 
   Widget _notAuthorized() =>
       const Scaffold(body: Center(child: Text('Not authorized')));
-
-  String _statusText(TripStatus s) {
-    switch (s) {
-      case TripStatus.active:
-        return '🟢 Active';
-      case TripStatus.ended:
-        return '✅ Ended';
-      case TripStatus.cancelled:
-        return '⛔ Cancelled';
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,25 +65,35 @@ class AdminTripsScreen extends StatelessWidget {
                       ? t.checkpoints[i].name
                       : 'No checkpoint reached yet';
 
-                  final started = t.startedAt.toLocal().toString().substring(
-                    0,
-                    16,
-                  );
+                  final started = t.startedAt.toLocal().toString().substring(0, 16);
 
                   final endedText = (t.endedAt != null)
                       ? ' • Ended: ${t.endedAt!.toLocal().toString().substring(0, 16)}'
                       : '';
 
+                  // ✅ Standardized trip chip colors (bg + fg)
+                  final bg = TripStatusColors.background(t.status);
+                  final fg = TripStatusColors.foreground(t.status);
+
                   return Card(
                     margin: const EdgeInsets.only(bottom: 10),
                     child: ListTile(
-                      title: Text(t.routeName),
+                      title: Row(
+                        children: [
+                          Expanded(child: Text(t.routeName)),
+                          const SizedBox(width: 8),
+                          StatusChip(
+                            text: TripStatusLabels.text(t.status),
+                            bgColor: bg,
+                            fgColor: fg,
+                          ),
+                        ],
+                      ),
                       subtitle: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const SizedBox(height: 4),
+                          const SizedBox(height: 6),
                           Text('Driver: ${t.driverUserId}'),
-                          Text('Status: ${_statusText(t.status)}'),
                           Text('Started: $started$endedText'),
                           Text('Last checkpoint: $lastCheckpoint'),
                         ],

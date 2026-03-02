@@ -4,7 +4,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
-
 import '../../models/property_item_status.dart';
 
 import '../../services/hive_service.dart';
@@ -13,9 +12,13 @@ import '../../services/printing/printer_settings_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
-
 import '../../services/property_item_service.dart';
 import '../../services/printing/escpos_label_builder.dart';
+
+import '../../theme/status_colors.dart';
+import '../../widgets/status_chip.dart';
+
+import '../../ui/status_labels.dart';
 
 class DeskPropertyDetailsScreen extends StatefulWidget {
   final String scannedCode; // propertyCode
@@ -29,20 +32,8 @@ class DeskPropertyDetailsScreen extends StatefulWidget {
 class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
   static String _fmt16(DateTime? d) {
     if (d == null) return '—';
-    return d.toLocal().toString().substring(0, 16);
-  }
-
-  String _statusText(PropertyStatus s) {
-    switch (s) {
-      case PropertyStatus.pending:
-        return '🟡 Pending';
-      case PropertyStatus.inTransit:
-        return '🔵 In Transit';
-      case PropertyStatus.delivered:
-        return '🟢 Delivered';
-      case PropertyStatus.pickedUp:
-        return '✅ Picked Up';
-    }
+    final s = d.toLocal().toString();
+    return s.length >= 16 ? s.substring(0, 16) : s;
   }
 
   Property? _findByCode(Box<Property> box, String code) {
@@ -221,6 +212,8 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     }
 
     final box = HiveService.propertyBox();
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Scanned Property')),
@@ -249,6 +242,9 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
           final code = p.propertyCode.trim().isEmpty
               ? p.key.toString()
               : p.propertyCode.trim();
+
+          final bg = PropertyStatusColors.background(p.status);
+          final fg = PropertyStatusColors.foreground(p.status);
 
           // Desk can load as long as property is still pending.
           final canLoad = p.status == PropertyStatus.pending;
@@ -291,44 +287,81 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            'Code: $code',
-                            style: const TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.w800,
-                            ),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  'Code: $code',
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                              ),
+                              StatusChip(
+                                text: PropertyStatusLabels.text(p.status),
+                                bgColor: bg,
+                                fgColor: fg,
+                              ),
+                            ],
                           ),
-                          const SizedBox(height: 8),
-                          Text('Status: ${_statusText(p.status)}'),
+                          const SizedBox(height: 12),
                           Text('Receiver: ${p.receiverName}'),
                           Text('Phone: ${p.receiverPhone}'),
                           Text('Destination: ${p.destination}'),
                           Text('Items: ${p.itemCount}'),
-                          const SizedBox(height: 8),
-                          Text(
-                            'Loaded (not yet on trip): $loadedNotAssigned/${p.itemCount}',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          const SizedBox(height: 12),
+
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: cs.surfaceContainerHighest.withValues(
+                                alpha: 0.60,
+                              ),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: cs.onSurface.withValues(alpha: 0.08),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Loaded (not yet on trip): '
+                                  '$loadedNotAssigned/${p.itemCount}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Remaining pending at station: '
+                                  '$remainingPending/${p.itemCount}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
-                          Text(
-                            'Remaining pending at station: $remainingPending/${p.itemCount}',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 8),
+
+                          const SizedBox(height: 12),
                           Text(
                             'Created: ${_fmt16(p.createdAt)}',
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                           Text(
                             'LoadedAt: ${_fmt16(p.loadedAt)}',
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                           Text(
                             'InTransit: ${_fmt16(p.inTransitAt)}',
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                           Text(
                             'Delivered: ${_fmt16(p.deliveredAt)}',
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                         ],
                       ),
@@ -352,7 +385,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                           ? null
                           : () async {
                               final ctx = context;
-
                               final st = (Session.currentStationName ?? '')
                                   .trim();
 
@@ -398,7 +430,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                             },
                     ),
                   ),
-
                   const SizedBox(height: 12),
 
                   // Print item labels (thermal) for LOADED not assigned to a trip
@@ -411,7 +442,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                         final ctx = context;
 
                         try {
-                          // 1) Ensure printer connected
                           final connected =
                               await PrinterService.ensureConnectedFromSaved();
 
@@ -428,13 +458,11 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                             return;
                           }
 
-                          // 2) Ask copies per item (dialog uses ctx)
                           final copies = await _askCopiesPerItem(ctx);
 
                           if (!ctx.mounted) return;
                           if (copies == null) return;
 
-                          // 3) Ensure items exist
                           final itemBox = HiveService.propertyItemBox();
                           final itemSvc = PropertyItemService(itemBox);
 
@@ -448,7 +476,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                             p.key.toString(),
                           );
 
-                          // Print only items LOADED for today (trip not assigned yet)
                           final toPrint =
                               all
                                   .where(
@@ -472,7 +499,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                             return;
                           }
 
-                          // 4) Build + print labels per item (with copies)
                           final paperMm =
                               PrinterSettingsService.getOrCreate().paperMm;
 

@@ -16,14 +16,15 @@ import 'models/user.dart';
 import 'models/user_role.dart';
 
 import 'screens/login_screen.dart';
+import 'screens/splash/splash_screen.dart';
 
 import 'services/auth_service.dart';
 import 'services/hive_service.dart';
 import 'services/outbound_message_service.dart';
+import 'ui/app_colors.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
   await Hive.initFlutter();
 
   // Register adapters
@@ -38,11 +39,11 @@ void main() async {
   Hive.registerAdapter(UserRoleAdapter());
   Hive.registerAdapter(PaymentRecordAdapter());
   Hive.registerAdapter(PrinterSettingsAdapter());
-
   Hive.registerAdapter(OutboundMessageAdapter());
 
   await HiveService.openAllBoxes();
 
+  // Queue recovery: opened -> queued after crashes/power loss
   await OutboundMessageService.requeueOpenedMessages();
 
   // Prototype-friendly seeding; later keep only in debug/dev
@@ -60,13 +61,56 @@ void main() async {
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
+  ThemeData _theme() {
+    final scheme = ColorScheme.fromSeed(
+      seedColor: AppColors.primary,
+      primary: AppColors.primary,
+      secondary: AppColors.secondary,
+    );
+
+    return ThemeData(
+      useMaterial3: true,
+      colorScheme: scheme,
+      scaffoldBackgroundColor: Colors.white,
+      appBarTheme: AppBarTheme(
+        backgroundColor: scheme.surface,
+        foregroundColor: scheme.onSurface,
+        centerTitle: true,
+        elevation: 1,
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: AppColors.primary,
+          foregroundColor: Colors.white,
+          minimumSize: const Size.fromHeight(48),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+      outlinedButtonTheme: OutlinedButtonThemeData(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppColors.secondary,
+          side: BorderSide(color: AppColors.secondary.withValues(alpha: 0.5)),
+          minimumSize: const Size.fromHeight(44),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+          ),
+        ),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(14)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bus Property Tracker',
+      title: 'Bebeto Cargo',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: const LoginScreen(),
+      theme: _theme(),
+      home: const SplashScreen(next: LoginScreen()),
     );
   }
 }

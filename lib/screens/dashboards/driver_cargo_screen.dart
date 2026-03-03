@@ -1,18 +1,27 @@
 import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../models/property.dart';
 import '../../models/property_status.dart';
+import '../../models/property_item_status.dart';
 import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';
-import '../../services/property_service.dart';
 import '../../services/location_service.dart';
-import '../../services/trip_service.dart';
+import '../../services/property_item_service.dart';
+import '../../services/property_service.dart';
 import '../../services/role_guard.dart';
+import '../../services/trip_service.dart';
 
 import '../../data/routes_helpers.dart';
 import '../admin/driver_load_overview_screen.dart';
+
+import '../../theme/status_colors.dart';
+import '../../ui/status_labels.dart';
+import '../../widgets/status_chip.dart';
 
 class DriverCargoScreen extends StatefulWidget {
   const DriverCargoScreen({super.key});
@@ -102,7 +111,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
         _lastCheckpointCheck = now;
 
-        // ✅ Pass accuracy into service for robust detection
         final reached = await TripService.updateCheckpointFromLocation(
           lat: pos.latitude,
           lng: pos.longitude,
@@ -129,7 +137,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
         }
       },
-      onError: (e) {
+      onError: (_) {
         if (!mounted) return;
         setState(() => _gpsStatus = 'GPS: error, retrying...');
         _restartGps();
@@ -157,10 +165,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     return 'Last GPS: ${_lastGpsAt!.toLocal().toString().substring(0, 19)}';
   }
 
-  Widget _emptyHint(String text) {
+  Widget _emptyHint(BuildContext context, String text) {
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(text, style: const TextStyle(color: Colors.black54)),
+      child: Text(text, style: TextStyle(color: muted)),
     );
   }
 
@@ -170,11 +181,12 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
-    final box = HiveService.propertyBox();
+    final pBox = HiveService.propertyBox();
+    final iBox = HiveService.propertyItemBox();
 
-    final pending =
-        box.values.where((p) => p.status == PropertyStatus.pending).toList()
-          ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
       appBar: AppBar(
@@ -182,142 +194,220 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         elevation: 2,
         title: const Text('Driver'),
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(12),
-        children: [
-          _activeTripPanel(),
-          const SizedBox(height: 8),
+      body: AnimatedBuilder(
+        animation: Listenable.merge([pBox.listenable(), iBox.listenable()]),
+        builder: (context, _) {
+          final itemSvc = PropertyItemService(iBox);
 
-          SizedBox(
-            width: double.infinity,
-            child: OutlinedButton.icon(
-              icon: const Icon(Icons.inventory_2),
-              label: const Text('View Load Overview'),
-              onPressed: () {
-                Navigator.push(
+          final pending =
+              pBox.values
+                  .where((p) => p.status == PropertyStatus.pending)
+                  .toList()
+                ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+          return ListView(
+            padding: const EdgeInsets.all(12),
+            children: [
+              _activeTripPanel(context),
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  icon: const Icon(Icons.inventory_2_outlined),
+                  label: const Text('View Load Overview'),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const DriverLoadOverviewScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+              const SizedBox(height: 12),
+              Text(
+                _gpsStatus,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                _lastGpsText(),
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
+              const SizedBox(height: 14),
+              const Text(
+                'Pending (Ready to Load)',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Rule: Desk must mark items LOADED first before you can start a trip.',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
+              const SizedBox(height: 10),
+              if (pending.isEmpty)
+                _emptyHint(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const DriverLoadOverviewScreen(),
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            _gpsStatus,
-            style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(height: 4),
-          Text(_lastGpsText(), style: const TextStyle(fontSize: 12)),
-          const SizedBox(height: 10),
-          const Text(
-            'Pending (Ready to Load)',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 4),
-          const Text(
-            'Rule: Desk must mark LOADED first before you can start a trip.',
-            style: TextStyle(fontSize: 12, color: Colors.black54),
-          ),
-          const SizedBox(height: 8),
-          if (pending.isEmpty)
-            _emptyHint(
-              'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
-            ),
-          for (final p in pending) _pendingCard(context, p),
-        ],
+                  'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
+                ),
+              for (final p in pending)
+                _pendingCard(context, p, itemSvc: itemSvc),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _pendingCard(BuildContext context, dynamic p) {
-    final loadedOk = p.loadedAt != null;
+  Widget _pendingCard(
+    BuildContext context,
+    Property p, {
+    required PropertyItemService itemSvc,
+  }) {
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final ok = Theme.of(context).colorScheme.primary;
 
-    final loadedText = loadedOk
-        ? 'Loaded ✅ ${p.loadedAt.toLocal().toString().substring(0, 16)}'
-        : 'Not loaded yet ❌ (Desk must mark LOADED)';
+    final items = itemSvc.getItemsForProperty(p.key.toString());
+
+    final loadedReady = items
+        .where((x) => x.status == PropertyItemStatus.loaded)
+        .length;
+    final loadedOk = loadedReady > 0 || p.loadedAt != null;
+
+    final bg = PropertyStatusColors.background(p.status);
+    final fg = PropertyStatusColors.foreground(p.status);
 
     return Card(
-      child: ListTile(
-        title: Row(
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
           children: [
-            Expanded(child: Text(_s(p.receiverName))),
-            if (!loadedOk)
-              const Padding(
-                padding: EdgeInsets.only(left: 8),
-                child: Icon(Icons.warning_amber_rounded, size: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    _s(p.receiverName),
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                StatusChip(
+                  text: PropertyStatusLabels.text(p.status),
+                  bgColor: bg,
+                  fgColor: fg,
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text('${_s(p.destination)} • ${_s(p.receiverPhone)}'),
+            ),
+            const SizedBox(height: 4),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Items: ${p.itemCount} • Route: ${_dashIfEmpty(p.routeName)}',
+                style: TextStyle(fontSize: 12, color: muted),
               ),
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(
+                  loadedOk ? Icons.check_circle : Icons.warning_amber_rounded,
+                  size: 18,
+                  color: loadedOk ? ok : muted,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    loadedOk
+                        ? 'Loaded: $loadedReady/${p.itemCount}'
+                        : 'Not loaded yet (Desk must mark LOADED)',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+                ElevatedButton(
+                  onPressed: loadedOk
+                      ? () async {
+                          final route = findRouteById(p.routeId);
+                          if (route == null) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                  'Route missing ❌ Ask admin/staff',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          final cps = validatedCheckpoints(route);
+                          if (cps.isEmpty) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  'Route "${route.name}" has invalid checkpoints ❌',
+                                ),
+                              ),
+                            );
+                            return;
+                          }
+
+                          try {
+                            await PropertyService.markInTransit(p);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('Marked In Transit ✅'),
+                              ),
+                            );
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(content: Text('Failed: $e')),
+                            );
+                          }
+                        }
+                      : null,
+                  child: Text(loadedOk ? 'Load' : 'Blocked'),
+                ),
+              ],
+            ),
           ],
-        ),
-        subtitle: Text(
-          '${_s(p.destination)} • ${_s(p.receiverPhone)}\n'
-          'Items: ${p.itemCount} • Route: ${_dashIfEmpty(p.routeName)}\n'
-          '$loadedText',
-        ),
-        trailing: ElevatedButton(
-          // ✅ Hard UI-block when desk hasn't marked loaded
-          onPressed: loadedOk
-              ? () async {
-                  // Pre-check (UX)
-                  final route = findRouteById(p.routeId);
-                  if (route == null) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Route missing ❌ Ask admin/staff'),
-                      ),
-                    );
-                    return;
-                  }
-
-                  final cps = validatedCheckpoints(route);
-                  if (cps.isEmpty) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(
-                        content: Text(
-                          'Route "${route.name}" has invalid checkpoints ❌',
-                        ),
-                      ),
-                    );
-                    return;
-                  }
-
-                  try {
-                    await PropertyService.markInTransit(p);
-
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Marked In Transit ✅')),
-                    );
-                  } catch (e) {
-                    if (!context.mounted) return;
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text('Failed: $e')));
-                  }
-                }
-              : null,
-          child: Text(loadedOk ? 'Load' : 'Blocked'),
         ),
       ),
     );
   }
 
-  Widget _activeTripPanel() {
+  // ✅ UPDATED per your request: clearer "next checkpoint" and safer "completed checkpoints" text
+  Widget _activeTripPanel(BuildContext context) {
     final trip = TripService.getActiveTripForCurrentDriver();
+
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final surface = Theme.of(context).colorScheme.surface;
 
     if (trip == null) {
       return Card(
-        color: Colors.orangeAccent.shade100.withValues(alpha: 0.25),
-        child: const Padding(
-          padding: EdgeInsets.all(12),
+        color: surface,
+        child: Padding(
+          padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              Icon(Icons.info_outline, size: 18),
-              SizedBox(width: 8),
-              Expanded(
+              Icon(Icons.info_outline, size: 18, color: muted),
+              const SizedBox(width: 8),
+              const Expanded(
                 child: Text('No active trip yet. Load cargo to start a trip.'),
               ),
             ],
@@ -326,27 +416,49 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       );
     }
 
-    final nextIndex = trip.lastCheckpointIndex + 1;
-    final nextName = (nextIndex >= 0 && nextIndex < trip.checkpoints.length)
-        ? trip.checkpoints[nextIndex].name
-        : 'Completed';
+    final total = trip.checkpoints.length;
+    final reachedCount = (trip.lastCheckpointIndex + 1).clamp(0, total);
+
+    String nextName;
+    if (total == 0) {
+      nextName = '—';
+    } else if (trip.lastCheckpointIndex + 1 >= total) {
+      nextName = '— (all checkpoints reached)';
+    } else {
+      nextName = trip.checkpoints[trip.lastCheckpointIndex + 1].name;
+    }
+
+    final tripBg = TripStatusColors.background(trip.status);
+    final tripFg = TripStatusColors.foreground(trip.status);
 
     return Card(
-      color: Colors.lightBlueAccent.shade100.withValues(alpha: 0.25),
+      color: surface,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              '🚍 Active Trip',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                const Expanded(
+                  child: Text(
+                    'Active Trip',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                StatusChip(
+                  text: TripStatusLabels.text(trip.status),
+                  bgColor: tripBg,
+                  fgColor: tripFg,
+                ),
+              ],
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text('Route: ${trip.routeName}'),
             Text('Next checkpoint: $nextName'),
             Text(
-              'Progress: ${trip.lastCheckpointIndex + 1} / ${trip.checkpoints.length}',
+              'Progress: $reachedCount / $total',
+              style: TextStyle(fontSize: 12, color: muted),
             ),
           ],
         ),

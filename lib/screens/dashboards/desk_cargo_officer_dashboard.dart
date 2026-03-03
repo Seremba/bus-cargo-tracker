@@ -40,7 +40,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
       await Navigator.push(
         context,
         MaterialPageRoute(
-          // ✅ Open SMS Processing directly (best UX for desk)
           builder: (_) => const OutboundMessagesScreen(
             channelFilter: 'sms',
             title: 'SMS Processing',
@@ -52,7 +51,11 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     }
   }
 
-  Widget _smsBadge({required int queuedSms, required int failedSms}) {
+  Widget _smsBadge({
+    required int queuedSms,
+    required int failedSms,
+    required ColorScheme cs,
+  }) {
     if (queuedSms <= 0 && failedSms <= 0) return const SizedBox.shrink();
 
     String fmt(int n) => n > 99 ? '99+' : n.toString();
@@ -64,15 +67,15 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
         decoration: BoxDecoration(
-          color: Colors.red,
+          color: cs.error,
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
           text,
-          style: const TextStyle(
-            color: Colors.white,
+          style: TextStyle(
+            color: cs.onError,
             fontSize: 10,
-            fontWeight: FontWeight.w700,
+            fontWeight: FontWeight.w800,
           ),
         ),
       ),
@@ -84,6 +87,9 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     if (!_canUse) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
+
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
 
     final payBox = HiveService.paymentBox();
     final propBox = HiveService.propertyBox();
@@ -103,9 +109,10 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               const Text('Desk Cargo Officer'),
               Text(
                 station.isEmpty ? name : '$name • $station',
-                style: const TextStyle(
+                style: TextStyle(
                   fontSize: 12,
-                  fontWeight: FontWeight.w400,
+                  fontWeight: FontWeight.w500,
+                  color: muted,
                 ),
               ),
             ],
@@ -123,7 +130,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 int queuedSms = 0;
                 int failedSms = 0;
 
-                // ✅ Count only ACTIONABLE SMS (attempts < maxAttempts)
                 for (final m in b.values) {
                   final ch = m.channel.trim().toLowerCase();
                   if (ch != 'sms') continue;
@@ -143,15 +149,17 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                     alignment: Alignment.center,
                     children: [
                       IconButton(
-                        tooltip: _openingOutbound
-                            ? 'Opening...'
-                            : 'SMS Processing',
+                        tooltip:
+                            _openingOutbound ? 'Opening...' : 'SMS Processing',
                         icon: const Icon(Icons.sms_outlined),
-                        onPressed: _openingOutbound
-                            ? null
-                            : _openOutboundMessagesSms,
+                        onPressed:
+                            _openingOutbound ? null : _openOutboundMessagesSms,
                       ),
-                      _smsBadge(queuedSms: queuedSms, failedSms: failedSms),
+                      _smsBadge(
+                        queuedSms: queuedSms,
+                        failedSms: failedSms,
+                        cs: cs,
+                      ),
                     ],
                   ),
                 );
@@ -172,12 +180,12 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -327,12 +335,12 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 final stationItems = station.isEmpty
                     ? items
                     : items
-                          .where(
-                            (x) =>
-                                x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
-                          )
-                          .toList();
+                        .where(
+                          (x) =>
+                              x.station.trim().toLowerCase() ==
+                              station.toLowerCase(),
+                        )
+                        .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
@@ -379,7 +387,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                                   ? 'Totals (All stations)'
                                   : 'Totals — $station',
                               style: const TextStyle(
-                                fontWeight: FontWeight.w700,
+                                fontWeight: FontWeight.w800,
                               ),
                             ),
                             const SizedBox(height: 8),
@@ -389,6 +397,11 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                             const SizedBox(height: 4),
                             Text(
                               'All time: UGX $allTotal  •  Payments: ${stationItems.length}',
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Showing latest 50 payments.',
+                              style: TextStyle(fontSize: 12, color: muted),
                             ),
                           ],
                         ),
@@ -402,22 +415,20 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                             'UGX ${x.amount} • ${x.method.trim().isEmpty ? '—' : x.method.trim()}',
                           ),
                           subtitle: () {
-                            final prop = propBox.get(
-                              int.tryParse(x.propertyKey),
-                            );
+                            final prop = propBox.get(int.tryParse(x.propertyKey));
                             final code =
                                 (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                ? prop!.propertyCode.trim()
-                                : '—';
+                                    ? prop!.propertyCode.trim()
+                                    : '—';
 
                             return Text(
                               'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',
-                              style: const TextStyle(fontSize: 12),
+                              style: TextStyle(fontSize: 12, color: muted),
                             );
                           }(),
                           trailing: Text(
                             _fmt16(x.createdAt),
-                            style: const TextStyle(fontSize: 12),
+                            style: TextStyle(fontSize: 12, color: muted),
                           ),
                         ),
                       ),

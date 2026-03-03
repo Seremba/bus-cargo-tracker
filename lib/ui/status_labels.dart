@@ -18,6 +18,13 @@ class PropertyStatusLabels {
 
 class TripStatusLabels {
   static String text(TripStatus s) {
-    return s.name; // fine default
+    switch (s) {
+      case TripStatus.active:
+        return 'Active';
+      case TripStatus.ended:
+        return 'Ended';
+      case TripStatus.cancelled:
+        return 'Cancelled';
+    }
   }
 }

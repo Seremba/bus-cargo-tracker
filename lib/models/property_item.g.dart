@@ -35,7 +35,7 @@ class PropertyItemAdapter extends TypeAdapter<PropertyItem> {
     writer
       ..writeByte(10)
       ..writeByte(0)
-      ..write(obj.key)
+      ..write(obj.itemKey)
       ..writeByte(1)
       ..write(obj.propertyKey)
       ..writeByte(2)

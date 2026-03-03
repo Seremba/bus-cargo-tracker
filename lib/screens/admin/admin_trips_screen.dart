@@ -19,11 +19,18 @@ class AdminTripsScreen extends StatelessWidget {
   Widget _notAuthorized() =>
       const Scaffold(body: Center(child: Text('Not authorized')));
 
+  static String _fmt16(DateTime? d) {
+    if (d == null) return '—';
+    return d.toLocal().toString().substring(0, 16);
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!RoleGuard.hasRole(UserRole.admin)) return _notAuthorized();
 
     final tripBox = HiveService.tripBox();
+    final muted =
+        Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.60);
 
     return DefaultTabController(
       length: 3,
@@ -65,13 +72,9 @@ class AdminTripsScreen extends StatelessWidget {
                       ? t.checkpoints[i].name
                       : 'No checkpoint reached yet';
 
-                  final started = t.startedAt.toLocal().toString().substring(0, 16);
+                  final started = _fmt16(t.startedAt);
+                  final ended = _fmt16(t.endedAt);
 
-                  final endedText = (t.endedAt != null)
-                      ? ' • Ended: ${t.endedAt!.toLocal().toString().substring(0, 16)}'
-                      : '';
-
-                  // ✅ Standardized trip chip colors (bg + fg)
                   final bg = TripStatusColors.background(t.status);
                   final fg = TripStatusColors.foreground(t.status);
 
@@ -80,7 +83,12 @@ class AdminTripsScreen extends StatelessWidget {
                     child: ListTile(
                       title: Row(
                         children: [
-                          Expanded(child: Text(t.routeName)),
+                          Expanded(
+                            child: Text(
+                              t.routeName,
+                              style: const TextStyle(fontWeight: FontWeight.w800),
+                            ),
+                          ),
                           const SizedBox(width: 8),
                           StatusChip(
                             text: TripStatusLabels.text(t.status),
@@ -89,14 +97,24 @@ class AdminTripsScreen extends StatelessWidget {
                           ),
                         ],
                       ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 6),
-                          Text('Driver: ${t.driverUserId}'),
-                          Text('Started: $started$endedText'),
-                          Text('Last checkpoint: $lastCheckpoint'),
-                        ],
+                      subtitle: Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Driver: ${t.driverUserId}'),
+                            Text(
+                              t.endedAt == null
+                                  ? 'Started: $started'
+                                  : 'Started: $started  •  Ended: $ended',
+                              style: TextStyle(color: muted),
+                            ),
+                            Text(
+                              'Last checkpoint: $lastCheckpoint',
+                              style: TextStyle(color: muted),
+                            ),
+                          ],
+                        ),
                       ),
                       trailing: const Icon(Icons.chevron_right),
                       onTap: () {

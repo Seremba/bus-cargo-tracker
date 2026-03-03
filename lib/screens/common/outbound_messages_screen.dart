@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/outbound_message.dart';
@@ -89,16 +89,38 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     if (_busy) return;
     setState(() => _busy = true);
 
+    final box = HiveService.outboundMessageBox();
+
+    // Compute count from Hive to avoid relying on service return type
+    final beforeOpened = box.values.where((m) {
+      final st = m.status.trim().toLowerCase();
+      if (st != OutboundMessageService.statusOpened) return false;
+      return _passesChannel(m);
+    }).length;
+
     try {
-      // NOTE: your service returns void, so do not expect an int count here.
       await OutboundMessageService.requeueOpenedMessages();
 
       if (!mounted) return;
+
+      final afterOpened = box.values.where((m) {
+        final st = m.status.trim().toLowerCase();
+        if (st != OutboundMessageService.statusOpened) return false;
+        return _passesChannel(m);
+      }).length;
+
+      final n = (beforeOpened - afterOpened);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Requeued OPENED messages ✅')),
+        SnackBar(
+          content: Text(
+            n <= 0
+                ? 'No OPENED messages to requeue ✅'
+                : 'Requeued $n OPENED message(s) ✅',
+          ),
+        ),
       );
 
-      // After requeue, it makes sense to show Queue
+      // After requeue, show Queue tab
       _controller.animateTo(0);
     } catch (e) {
       if (!mounted) return;
@@ -211,7 +233,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         const SnackBar(content: Text('Marked as sent ✅')),
       );
 
-      // UX: jump to Sent tab
       _controller.animateTo(3);
     } catch (e) {
       if (!mounted) return;
@@ -237,7 +258,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         const SnackBar(content: Text('Marked as failed ⚠️')),
       );
 
-      // UX: jump to Failed tab
       _controller.animateTo(2);
     } catch (e) {
       if (!mounted) return;
@@ -269,8 +289,10 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       appBar: AppBar(
         centerTitle: true,
         title: Text(_screenTitle),
+
+        // ✅ AppBar.bottom MUST be PreferredSizeWidget
         bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(kToolbarHeight),
+          preferredSize: const Size.fromHeight(48),
           child: AnimatedBuilder(
             animation: Listenable.merge([box.listenable(), _controller]),
             builder: (context, _) {
@@ -291,16 +313,14 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             },
           ),
         ),
+
         actions: [
-          // Admin-only: manual recovery
           if (_isAdmin)
             IconButton(
               tooltip: _busy ? 'Working...' : 'Requeue opened',
               icon: const Icon(Icons.refresh),
               onPressed: _busy ? null : _requeueOpenedNow,
             ),
-
-          // Filter dropdown (All / SMS / WhatsApp)
           DropdownButtonHideUnderline(
             child: Padding(
               padding: const EdgeInsets.only(right: 6),
@@ -327,8 +347,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           ),
         ],
       ),
-
-      // ✅ IMPORTANT: rebuild on BOTH tab changes and box changes
       body: AnimatedBuilder(
         animation: Listenable.merge([box.listenable(), _controller]),
         builder: (context, _) {
@@ -370,14 +388,14 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                         Expanded(
                           child: Text(
                             '$header: ${items.length}',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                            style: const TextStyle(fontWeight: FontWeight.w800),
                           ),
                         ),
                         if (_isAdmin)
                           TextButton.icon(
                             onPressed: _busy ? null : _requeueOpenedNow,
                             icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Requeue opened'),
+                            label: const Text('Requeue'),
                           ),
                         const SizedBox(width: 6),
                         ElevatedButton.icon(
@@ -411,7 +429,10 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     final st = m.status.trim().toLowerCase();
     final ch = m.channel.trim().isEmpty ? 'whatsapp' : m.channel.trim();
 
+    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.60);
+
     return Card(
+      margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
         onLongPress: () async {
@@ -437,7 +458,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                       ),
                       onTap: () => Navigator.pop(ctx, 'body'),
                     ),
-                    if ((m.propertyKey).trim().isNotEmpty)
+                    if (m.propertyKey.trim().isNotEmpty)
                       ListTile(
                         leading: const Icon(Icons.copy),
                         title: const Text('Copy property key'),
@@ -472,27 +493,13 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                       style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
-                  Text(
-                    when,
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.60),
-                    ),
-                  ),
+                  Text(when, style: TextStyle(fontSize: 12, color: muted)),
                 ],
               ),
               const SizedBox(height: 6),
               Text(
-                'Property: ${m.propertyKey.isEmpty ? '—' : m.propertyKey}',
-                style: TextStyle(
-                  color: Theme.of(context)
-                      .colorScheme
-                      .onSurface
-                      .withValues(alpha: 0.60),
-                ),
+                'Property: ${m.propertyKey.trim().isEmpty ? '—' : m.propertyKey}',
+                style: TextStyle(color: muted),
               ),
               const SizedBox(height: 8),
               Text(m.body),
@@ -501,13 +508,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                 children: [
                   Text(
                     'Status: ${m.status} | Attempts: ${m.attempts}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.60),
-                    ),
+                    style: TextStyle(fontSize: 12, color: muted),
                   ),
                   const Spacer(),
                   if (st == OutboundMessageService.statusQueued ||

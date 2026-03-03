@@ -15,21 +15,24 @@ import 'outbound_message_service.dart';
 
 class HiveService {
   static const String _propertyBoxName = 'properties';
+  static const String _propertyItemBoxName = 'property_items';
   static const String _notificationBoxName = 'notifications';
   static const String _tripBoxName = 'trips';
   static const String _auditBoxName = 'audit_events';
   static const String _userBoxName = 'users';
-
   static const String _paymentBoxName = 'payments';
   static const String _printerSettingsBoxName = 'printer_settings';
   static const String _outboundMsgBoxName = 'outbound_messages';
-  static const String _propertyItemBoxName = 'property_items';
+
+  static const String _appSettingsBoxName = 'app_settings';
 
   static void setUser(String userId) {
     Session.currentUserId = userId;
   }
 
   static Future<void> openAllBoxes() async {
+    await openAppSettingsBox();
+
     await openPropertyBox();
     await openPropertyItemBox();
     await openNotificationBox();
@@ -40,8 +43,22 @@ class HiveService {
     await openPrinterSettingsBox();
     await openOutboundMessageBox();
 
-    //  Important: recover queue after app restarts/crashes
     await OutboundMessageService.requeueOpenedMessages();
+  }
+
+  static Future<void> openAppSettingsBox() async {
+    if (!Hive.isBoxOpen(_appSettingsBoxName)) {
+      await Hive.openBox(_appSettingsBoxName);
+    }
+  }
+
+  static Box appSettingsBox() {
+    if (!Hive.isBoxOpen(_appSettingsBoxName)) {
+      throw HiveError(
+        'AppSettings box is not open. Call HiveService.openAppSettingsBox() first.',
+      );
+    }
+    return Hive.box(_appSettingsBoxName);
   }
 
   static Future<void> openPropertyBox() async {
@@ -53,7 +70,7 @@ class HiveService {
   static Box<Property> propertyBox() {
     if (!Hive.isBoxOpen(_propertyBoxName)) {
       throw HiveError(
-        'Property box is not open. Call HiveService.openPropertyBox() first.',
+        'Property box is not open.\nCall HiveService.openPropertyBox() first.',
       );
     }
     return Hive.box<Property>(_propertyBoxName);
@@ -68,7 +85,7 @@ class HiveService {
   static Box<PropertyItem> propertyItemBox() {
     if (!Hive.isBoxOpen(_propertyItemBoxName)) {
       throw HiveError(
-        'PropertyItem box is not open. Call HiveService.openPropertyItemBox() first.',
+        'PropertyItem box is not open.\nCall HiveService.openPropertyItemBox() first.',
       );
     }
     return Hive.box<PropertyItem>(_propertyItemBoxName);
@@ -83,7 +100,7 @@ class HiveService {
   static Box<NotificationItem> notificationBox() {
     if (!Hive.isBoxOpen(_notificationBoxName)) {
       throw HiveError(
-        'Notification box is not open. Call HiveService.openNotificationBox() first.',
+        'Notification box is not open.\nCall HiveService.openNotificationBox() first.',
       );
     }
     return Hive.box<NotificationItem>(_notificationBoxName);
@@ -98,7 +115,7 @@ class HiveService {
   static Box<Trip> tripBox() {
     if (!Hive.isBoxOpen(_tripBoxName)) {
       throw HiveError(
-        'Trip box is not open. Ensure main.dart opens it or call HiveService.openTripBox().',
+        'Trip box is not open.\nEnsure main.dart opens it or call HiveService.openTripBox().',
       );
     }
     return Hive.box<Trip>(_tripBoxName);
@@ -110,7 +127,14 @@ class HiveService {
     }
   }
 
-  static Box<AuditEvent> auditBox() => Hive.box<AuditEvent>(_auditBoxName);
+  static Box<AuditEvent> auditBox() {
+    if (!Hive.isBoxOpen(_auditBoxName)) {
+      throw HiveError(
+        'Audit box is not open.\nCall HiveService.openAuditBox() first.',
+      );
+    }
+    return Hive.box<AuditEvent>(_auditBoxName);
+  }
 
   static Future<void> openUserBox() async {
     if (!Hive.isBoxOpen(_userBoxName)) {
@@ -121,12 +145,14 @@ class HiveService {
   static Box<User> userBox() {
     if (!Hive.isBoxOpen(_userBoxName)) {
       throw HiveError(
-        'User box is not open. Call HiveService.openUserBox() first.',
+        'User box is not open.\nCall HiveService.openUserBox() first.',
       );
     }
     return Hive.box<User>(_userBoxName);
   }
 
+  // Payments
+  // ----------------------------
   static Future<void> openPaymentBox() async {
     if (!Hive.isBoxOpen(_paymentBoxName)) {
       await Hive.openBox<PaymentRecord>(_paymentBoxName);
@@ -136,13 +162,13 @@ class HiveService {
   static Box<PaymentRecord> paymentBox() {
     if (!Hive.isBoxOpen(_paymentBoxName)) {
       throw HiveError(
-        'Payment box is not open. Call HiveService.openPaymentBox() first.',
+        'Payment box is not open.\nCall HiveService.openPaymentBox() first.',
       );
     }
     return Hive.box<PaymentRecord>(_paymentBoxName);
   }
 
-  static Future openPrinterSettingsBox() async {
+  static Future<void> openPrinterSettingsBox() async {
     if (!Hive.isBoxOpen(_printerSettingsBoxName)) {
       await Hive.openBox(_printerSettingsBoxName);
     }
@@ -166,7 +192,7 @@ class HiveService {
   static Box<OutboundMessage> outboundMessageBox() {
     if (!Hive.isBoxOpen(_outboundMsgBoxName)) {
       throw HiveError(
-        'OutboundMessage box is not open. Call HiveService.openOutboundMessageBox() first.',
+        'OutboundMessage box is not open.\nCall HiveService.openOutboundMessageBox() first.',
       );
     }
     return Hive.box<OutboundMessage>(_outboundMsgBoxName);

@@ -2,8 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../models/user_role.dart';
 import '../services/auth_service.dart';
-import '../services/hive_service.dart';
-import '../services/session.dart';
+import '../services/session_service.dart';
 
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
@@ -12,10 +11,12 @@ import 'sender/sender_dashboard.dart';
 import 'dashboards/staff_dashboard.dart';
 import 'dashboards/driver_dashboard.dart';
 import 'dashboards/admin_dashboard.dart';
-import 'dashboards/desk_cargo_officer_dashboard.dart'; // ✅ add this
+import 'dashboards/desk_cargo_officer_dashboard.dart';
 
 class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
+  final String? initialPhone;
+
+  const LoginScreen({super.key, this.initialPhone});
 
   @override
   State<LoginScreen> createState() => _LoginScreenState();
@@ -23,11 +24,36 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
 
+  final FocusNode _passwordFocus = FocusNode();
+
   bool _loading = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // ✅ Prefill phone if coming from Register
+    if (widget.initialPhone != null &&
+        widget.initialPhone!.trim().isNotEmpty) {
+      phoneController.text = widget.initialPhone!;
+
+      // Small UX polish: move focus to password automatically
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _passwordFocus.requestFocus();
+      });
+    }
+  }
+
+  @override
+  void dispose() {
+    phoneController.dispose();
+    passwordController.dispose();
+    _passwordFocus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -50,6 +76,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   TextFormField(
                     controller: phoneController,
                     keyboardType: TextInputType.phone,
+                    textInputAction: TextInputAction.next,
                     decoration: const InputDecoration(
                       labelText: 'Phone Number',
                       border: OutlineInputBorder(),
@@ -64,7 +91,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: passwordController,
+                    focusNode: _passwordFocus,
                     obscureText: true,
+                    textInputAction: TextInputAction.done,
+                    onFieldSubmitted: (_) =>
+                        _loading ? null : _handleLogin(),
                     decoration: const InputDecoration(
                       labelText: 'Password',
                       border: OutlineInputBorder(),
@@ -88,7 +119,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const ForgotPasswordScreen(),
+                              builder: (_) =>
+                                  const ForgotPasswordScreen(),
                             ),
                           );
                         },
@@ -99,7 +131,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => const RegisterScreen(),
+                              builder: (_) =>
+                                  const RegisterScreen(),
                             ),
                           );
                         },
@@ -113,7 +146,8 @@ class _LoginScreenState extends State<LoginScreen> {
                       minimumSize: const Size.fromHeight(48),
                     ),
                     onPressed: _loading ? null : _handleLogin,
-                    child: Text(_loading ? 'Logging in...' : 'Login'),
+                    child:
+                        Text(_loading ? 'Logging in...' : 'Login'),
                   ),
                 ],
               ),
@@ -130,8 +164,6 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _loading = true);
 
     try {
-      await HiveService.openAllBoxes();
-
       final phone = phoneController.text.trim();
       final password = passwordController.text.trim();
 
@@ -144,16 +176,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
       if (user == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Invalid phone/password ❌')),
+          const SnackBar(
+              content: Text('Invalid phone/password ❌')),
         );
         return;
       }
 
-      HiveService.setUser(user.id);
-      Session.currentUserId = user.id;
-      Session.currentUserFullName = user.fullName;
-      Session.currentRole = user.role;
-      Session.currentStationName = user.stationName;
+      await SessionService.saveUser(user);
 
       final Widget destination;
       switch (user.role) {
@@ -170,7 +199,8 @@ class _LoginScreenState extends State<LoginScreen> {
           destination = const AdminDashboard();
           break;
         case UserRole.deskCargoOfficer:
-          destination = const DeskCargoOfficerDashboard();
+          destination =
+              const DeskCargoOfficerDashboard();
           break;
       }
 
@@ -181,12 +211,5 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  @override
-  void dispose() {
-    phoneController.dispose();
-    passwordController.dispose();
-    super.dispose();
   }
 }

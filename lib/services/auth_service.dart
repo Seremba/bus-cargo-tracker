@@ -1,10 +1,10 @@
-import 'package:crypto/crypto.dart';
 import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
 
 import '../models/user.dart';
 import '../models/user_role.dart';
 import 'hive_service.dart';
-import 'session.dart';
 import 'role_guard.dart';
 
 class AuthService {
@@ -13,7 +13,43 @@ class AuthService {
     return sha256.convert(bytes).toString();
   }
 
-  /// Seed an admin account if there is no admin in the users box.
+  static String normalizePhoneUg(String raw) {
+    var d = raw.replaceAll(RegExp(r'[^0-9]'), '').trim();
+    if (d.isEmpty) return '';
+
+    // 07XXXXXXXX -> 2567XXXXXXXX
+    if (d.startsWith('0') && d.length == 10) {
+      d = '256${d.substring(1)}';
+      return d;
+    }
+
+    // 7XXXXXXXX -> 2567XXXXXXXX (if user omits leading 0)
+    if (!d.startsWith('256') &&
+        d.length == 9 &&
+        (d.startsWith('7') || d.startsWith('3'))) {
+      d = '256$d';
+      return d;
+    }
+
+    return d;
+  }
+
+  static bool isValidUgMobileCanonical(String canonical) {
+    if (canonical.length != 12) return false;
+    if (!canonical.startsWith('256')) return false;
+
+    final after = canonical.substring(3);
+    if (after.length != 9) return false;
+    if (!(after.startsWith('7') || after.startsWith('3'))) return false;
+
+    return true;
+  }
+
+  static User? getUserById(String id) {
+    final box = HiveService.userBox();
+    return box.get(id);
+  }
+
   static Future<void> seedAdminIfMissing({
     required String phone,
     required String password,
@@ -24,13 +60,15 @@ class AuthService {
     final hasAdmin = box.values.any((u) => u.role == UserRole.admin);
     if (hasAdmin) return;
 
-    final cleanPhone = phone.trim();
     final cleanName = fullName.trim();
+    final cleanPhone = normalizePhoneUg(phone);
+
+    if (cleanPhone.isEmpty) return;
 
     final phoneTaken = box.values.any((u) => u.phone == cleanPhone);
     if (phoneTaken) return;
 
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
 
     final admin = User(
       id: id,
@@ -49,40 +87,86 @@ class AuthService {
     return role == UserRole.staff || role == UserRole.deskCargoOfficer;
   }
 
-  static Future<User?> register({
+  static Future<User?> registerSender({
+    required String fullName,
+    required String phone,
+    required String password,
+  }) async {
+    return register(
+      fullName: fullName,
+      phone: phone,
+      password: password,
+      role: UserRole.sender,
+      stationName: null,
+      requireAdminForNonSender: false,
+      allowAdminCreation: false,
+    );
+  }
+
+  static Future<User?> adminCreateUser({
     required String fullName,
     required String phone,
     required String password,
     required UserRole role,
     String? stationName,
   }) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return null;
+
+    // block creating admin from UI
+    if (role == UserRole.admin) return null;
+
+    return register(
+      fullName: fullName,
+      phone: phone,
+      password: password,
+      role: role,
+      stationName: stationName,
+      requireAdminForNonSender: false,
+      allowAdminCreation: false,
+    );
+  }
+
+  static Future<User?> register({
+    required String fullName,
+    required String phone,
+    required String password,
+    required UserRole role,
+    String? stationName,
+
+    bool requireAdminForNonSender = false,
+
+    /// Never allow creating admin through regular registration.
+    bool allowAdminCreation = false,
+  }) async {
     final box = HiveService.userBox();
 
-    final cleanPhone = phone.trim();
     final cleanName = fullName.trim();
+    final cleanPhone = normalizePhoneUg(phone);
     final cleanStation = stationName?.trim();
+
+    if (cleanName.isEmpty) return null;
+    if (cleanPhone.isEmpty) return null;
+
+    // If you want strict UG phones only, enforce here:
+    // if (!isValidUgMobileCanonical(cleanPhone)) return null;
+
+    // Block creating admin via this method by default
+    if (role == UserRole.admin && !allowAdminCreation) return null;
+
+    // Optional backward-compat guard (prefer adminCreateUser)
+    if (requireAdminForNonSender && role != UserRole.sender) {
+      if (!RoleGuard.hasRole(UserRole.admin)) return null;
+    }
 
     // Station rule: required for staff + deskCargoOfficer only
     if (_requiresStation(role)) {
       if (cleanStation == null || cleanStation.isEmpty) return null;
-    } else {
-      stationName = null;
-    }
-
-    // Only admin can create non-sender accounts
-    if (role != UserRole.sender && Session.currentRole != UserRole.admin) {
-      return null;
-    }
-
-    // Block creating admin via this method (admin created only via seed or other secure flow)
-    if (role == UserRole.admin) {
-      return null;
     }
 
     final exists = box.values.any((u) => u.phone == cleanPhone);
     if (exists) return null;
 
-    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final id = DateTime.now().microsecondsSinceEpoch.toString();
 
     final user = User(
       id: id,
@@ -104,7 +188,7 @@ class AuthService {
     required UserRole role,
   }) async {
     final box = HiveService.userBox();
-    final cleanPhone = phone.trim();
+    final cleanPhone = normalizePhoneUg(phone);
 
     try {
       final user = box.values.firstWhere(
@@ -125,7 +209,7 @@ class AuthService {
     required String password,
   }) async {
     final box = HiveService.userBox();
-    final cleanPhone = phone.trim();
+    final cleanPhone = normalizePhoneUg(phone);
 
     try {
       final user = box.values.firstWhere((u) => u.phone == cleanPhone);

@@ -15,12 +15,12 @@ import 'models/trip_status.dart';
 import 'models/user.dart';
 import 'models/user_role.dart';
 
-import 'screens/login_screen.dart';
 import 'screens/splash/splash_screen.dart';
 
 import 'services/auth_service.dart';
 import 'services/hive_service.dart';
-import 'services/outbound_message_service.dart';
+import 'services/route_decider_service.dart';
+
 import 'ui/app_colors.dart';
 
 void main() async {
@@ -43,10 +43,6 @@ void main() async {
 
   await HiveService.openAllBoxes();
 
-  // Queue recovery: opened -> queued after crashes/power loss
-  await OutboundMessageService.requeueOpenedMessages();
-
-  // Prototype-friendly seeding; later keep only in debug/dev
   if (kDebugMode) {
     await AuthService.seedAdminIfMissing(
       phone: '0700000000',
@@ -110,7 +106,8 @@ class MyApp extends StatelessWidget {
       title: 'Bebeto Cargo',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-      home: const SplashScreen(next: LoginScreen()),
+
+      home: SplashScreen(nextBuilder: RouteDeciderService.nextWidget),
     );
   }
 }

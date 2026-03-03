@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
-import '../services/session.dart';
+
 import '../screens/login_screen.dart';
+import '../services/session_service.dart';
 
 class LogoutButton extends StatelessWidget {
   const LogoutButton({super.key});
@@ -11,9 +12,8 @@ class LogoutButton extends StatelessWidget {
       icon: const Icon(Icons.logout),
       tooltip: 'Logout',
       onPressed: () async {
-        Session.currentUserId = null;
-        Session.currentRole = null;
-        Session.currentStationName = null;
+        // Clear persisted + in-memory session
+        await SessionService.clear();
 
         if (!context.mounted) return;
 

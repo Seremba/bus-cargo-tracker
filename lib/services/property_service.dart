@@ -16,6 +16,7 @@ import 'role_guard.dart';
 import 'session.dart';
 import 'trip_service.dart';
 import 'whatsapp_service.dart';
+import 'phone_normalizer.dart';
 
 class PropertyService {
   static String _generateOtp() {
@@ -28,7 +29,6 @@ class PropertyService {
   static const Duration _otpLockDuration = Duration(minutes: 10);
 
   static String _newNonce() {
-    // offline-friendly unique-ish value
     return DateTime.now().microsecondsSinceEpoch.toString();
   }
 
@@ -54,8 +54,6 @@ class PropertyService {
     return diff.inMinutes < 0 ? 0 : diff.inMinutes;
   }
 
-  // -------- Receiver tracking (safe hooks) --------
-
   static Future<void> _safeNotifyReceiver({
     required Property fresh,
     required String eventLabel,
@@ -66,7 +64,6 @@ class PropertyService {
         eventLabel: eventLabel,
       );
     } catch (e) {
-      // Never block business flow (even audit must not crash)
       try {
         await AuditService.log(
           action: 'receiver_notify_failed',
@@ -130,7 +127,7 @@ class PropertyService {
     return false;
   }
 
-  static Future<void> _safeSendOtpIfSms({
+  static Future _safeSendOtpIfSms({
     required Property fresh,
     required String otp,
   }) async {
@@ -140,12 +137,54 @@ class PropertyService {
       final ch = fresh.receiverNotifyChannel.trim().toLowerCase();
       if (ch != 'sms') return;
 
-      final phone = fresh.receiverPhone.trim();
-      if (phone.isEmpty) return;
+      final rawPhone = fresh.receiverPhone.trim();
+      if (rawPhone.isEmpty) return;
+
+      final phone = PhoneNormalizer.normalizeForMessaging(rawPhone);
+
+      if (phone.isEmpty) {
+        final pKey = fresh.key.toString();
+
+        try {
+          await AuditService.log(
+            action: 'OTP_SMS_INVALID_PHONE',
+            propertyKey: pKey,
+            details:
+                'Receiver phone not message-ready. raw="$rawPhone".\n'
+                'SMS OTP not queued.',
+          );
+        } catch (_) {}
+
+        try {
+          await NotificationService.notify(
+            targetUserId: NotificationService.adminInbox,
+            title: 'OTP not sent (invalid phone)',
+            message:
+                'Property for ${fresh.receiverName}: receiver phone is not message-ready.\n'
+                'Phone entered: "$rawPhone"\n'
+                'Fix the receiver phone number to enable SMS OTP.',
+          );
+        } catch (_) {}
+
+        try {
+          if (fresh.createdByUserId.trim().isNotEmpty) {
+            await NotificationService.notify(
+              targetUserId: fresh.createdByUserId,
+              title: 'OTP not sent (check receiver phone)',
+              message:
+                  'Receiver phone for ${fresh.receiverName} is not message-ready.\n'
+                  'Phone entered: "$rawPhone"\n'
+                  'Please correct it to enable SMS OTP.',
+            );
+          }
+        } catch (_) {}
+
+        return;
+      }
 
       final pKey = fresh.key.toString();
 
-      //  DEDUPE: don't queue if same OTP SMS already exists for this property
+      // DEDUPE: don't queue if same OTP SMS already exists for this property
       if (_alreadyQueuedOtpSms(propertyKey: pKey, otp: otp)) {
         await AuditService.log(
           action: 'OTP_SMS_SKIPPED_DUPLICATE',
@@ -174,7 +213,7 @@ class PropertyService {
       await AuditService.log(
         action: 'OTP_SMS_QUEUED',
         propertyKey: pKey,
-        details: 'Queued OTP SMS to receiver phone=$phone',
+        details: 'Queued OTP SMS to receiver phone="$phone" (raw="$rawPhone")',
       );
     } catch (e) {
       try {
@@ -242,11 +281,9 @@ class PropertyService {
 
     final now = DateTime.now();
 
-    // status transition
     fresh.status = PropertyStatus.delivered;
     fresh.deliveredAt = now;
 
-    // OTP persistence (critical)
     final otp = (fresh.pickupOtp ?? '').trim().isEmpty
         ? _generateOtp()
         : fresh.pickupOtp!.trim();
@@ -258,13 +295,10 @@ class PropertyService {
 
     await fresh.save();
 
-    // Issue/refresh QR for delivered cargo
     await PickupQrService.issueForDelivered(fresh, otp: otp);
 
-    // SMS OTP (feature phone) if needed (deduped)
     await _safeSendOtpIfSms(fresh: fresh, otp: otp);
 
-    // Receiver status update (channel chosen inside ReceiverTrackingService)
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'DELIVERED');
 
     await NotificationService.notify(
@@ -312,13 +346,11 @@ class PropertyService {
     fresh.pickedUpAt = DateTime.now();
     fresh.staffPickupConfirmed = true;
 
-    // clear OTP/locks after success
     fresh.pickupOtp = null;
     fresh.otpGeneratedAt = null;
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // consume QR
     fresh.qrConsumedAt = DateTime.now();
 
     await fresh.save();
@@ -377,7 +409,6 @@ class PropertyService {
 
     await fresh.save();
 
-    // If receiver uses SMS, queue the new OTP immediately (deduped, non-blocking)
     await _safeSendOtpIfSms(fresh: fresh, otp: otp);
 
     await NotificationService.notify(
@@ -395,8 +426,6 @@ class PropertyService {
     );
   }
 
-  /// STRICT FLOW:
-  /// pending → (desk marks Loaded → loadedAt) → driver starts trip → inTransit
   static Future<void> markInTransit(Property p) async {
     if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return;
 
@@ -462,7 +491,6 @@ class PropertyService {
       return;
     }
 
-    // Trip creation first. We only mutate/persist property route+trip fields AFTER this succeeds.
     final now = DateTime.now();
     Trip trip;
 
@@ -492,7 +520,6 @@ class PropertyService {
       now: now,
     );
 
-    // Now persist property as inTransit, with trip + route context.
     fresh.routeId = route.id;
     fresh.routeName = route.name;
     fresh.status = PropertyStatus.inTransit;
@@ -522,14 +549,12 @@ class PropertyService {
       message: 'Property for ${fresh.receiverName} is in transit.\n$msg',
     );
 
-    // Receiver partial-load message (after trip start)
     await _safeNotifyReceiverPartialLoad(
       fresh: fresh,
       counts: counts,
       routeName: route.name,
     );
 
-    // Optional: normal status notify too (rate-limited in ReceiverTrackingService)
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
   }
 
@@ -595,7 +620,6 @@ class PropertyService {
 
     await repairMissingLoadedMilestone(fresh);
 
-    // Prefer strict transitions through official methods
     if (newStatus == PropertyStatus.inTransit &&
         fresh.status == PropertyStatus.pending) {
       await markInTransit(fresh);
@@ -608,7 +632,6 @@ class PropertyService {
       return;
     }
 
-    // Full reset to pending
     if (newStatus == PropertyStatus.pending) {
       fresh.status = PropertyStatus.pending;
 
@@ -646,7 +669,6 @@ class PropertyService {
       return;
     }
 
-    // Admin override preparation
     if (newStatus == PropertyStatus.inTransit) {
       final route = findRouteById(fresh.routeId);
       if (route != null) {
@@ -703,7 +725,6 @@ class PropertyService {
             'Prepared delivered: deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
       );
 
-      // If receiver uses SMS, queue OTP (deduped, non-blocking)
       await _safeSendOtpIfSms(fresh: fresh, otp: otp);
     }
 

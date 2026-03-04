@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../screens/login_screen.dart';
 import '../services/session_service.dart';
+import '../services/outbound_queue_runner.dart';
 
 class LogoutButton extends StatelessWidget {
   const LogoutButton({super.key});
@@ -12,7 +13,8 @@ class LogoutButton extends StatelessWidget {
       icon: const Icon(Icons.logout),
       tooltip: 'Logout',
       onPressed: () async {
-        // Clear persisted + in-memory session
+        OutboundQueueRunner.stop();
+
         await SessionService.clear();
 
         if (!context.mounted) return;

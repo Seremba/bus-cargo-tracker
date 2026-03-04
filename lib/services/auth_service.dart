@@ -1,48 +1,16 @@
 import 'dart:convert';
-
 import 'package:crypto/crypto.dart';
 
 import '../models/user.dart';
 import '../models/user_role.dart';
 import 'hive_service.dart';
+import 'phone_normalizer.dart';
 import 'role_guard.dart';
 
 class AuthService {
   static String hashPassword(String password) {
     final bytes = utf8.encode(password.trim());
     return sha256.convert(bytes).toString();
-  }
-
-  static String normalizePhoneUg(String raw) {
-    var d = raw.replaceAll(RegExp(r'[^0-9]'), '').trim();
-    if (d.isEmpty) return '';
-
-    // 07XXXXXXXX -> 2567XXXXXXXX
-    if (d.startsWith('0') && d.length == 10) {
-      d = '256${d.substring(1)}';
-      return d;
-    }
-
-    // 7XXXXXXXX -> 2567XXXXXXXX (if user omits leading 0)
-    if (!d.startsWith('256') &&
-        d.length == 9 &&
-        (d.startsWith('7') || d.startsWith('3'))) {
-      d = '256$d';
-      return d;
-    }
-
-    return d;
-  }
-
-  static bool isValidUgMobileCanonical(String canonical) {
-    if (canonical.length != 12) return false;
-    if (!canonical.startsWith('256')) return false;
-
-    final after = canonical.substring(3);
-    if (after.length != 9) return false;
-    if (!(after.startsWith('7') || after.startsWith('3'))) return false;
-
-    return true;
   }
 
   static User? getUserById(String id) {
@@ -61,11 +29,17 @@ class AuthService {
     if (hasAdmin) return;
 
     final cleanName = fullName.trim();
-    final cleanPhone = normalizePhoneUg(phone);
+    final cleanPhone = PhoneNormalizer.normalizeForStorage(phone);
 
+    if (cleanName.isEmpty) return;
     if (cleanPhone.isEmpty) return;
 
-    final phoneTaken = box.values.any((u) => u.phone == cleanPhone);
+    // Prevent duplicate by digits-only identity
+    final phoneTaken = box.values.any(
+      (u) =>
+          PhoneNormalizer.digitsOnly(u.phone) ==
+          PhoneNormalizer.digitsOnly(cleanPhone),
+    );
     if (phoneTaken) return;
 
     final id = DateTime.now().microsecondsSinceEpoch.toString();
@@ -73,7 +47,7 @@ class AuthService {
     final admin = User(
       id: id,
       fullName: cleanName,
-      phone: cleanPhone,
+      phone: cleanPhone, // ✅ store digits-only as typed (no forced 256)
       passwordHash: hashPassword(password),
       role: UserRole.admin,
       stationName: null,
@@ -132,7 +106,6 @@ class AuthService {
     required String password,
     required UserRole role,
     String? stationName,
-
     bool requireAdminForNonSender = false,
 
     /// Never allow creating admin through regular registration.
@@ -141,14 +114,11 @@ class AuthService {
     final box = HiveService.userBox();
 
     final cleanName = fullName.trim();
-    final cleanPhone = normalizePhoneUg(phone);
+    final cleanPhone = PhoneNormalizer.normalizeForStorage(phone);
     final cleanStation = stationName?.trim();
 
     if (cleanName.isEmpty) return null;
     if (cleanPhone.isEmpty) return null;
-
-    // If you want strict UG phones only, enforce here:
-    // if (!isValidUgMobileCanonical(cleanPhone)) return null;
 
     // Block creating admin via this method by default
     if (role == UserRole.admin && !allowAdminCreation) return null;
@@ -163,7 +133,12 @@ class AuthService {
       if (cleanStation == null || cleanStation.isEmpty) return null;
     }
 
-    final exists = box.values.any((u) => u.phone == cleanPhone);
+    // Prevent duplicates by digits-only identity
+    final exists = box.values.any(
+      (u) =>
+          PhoneNormalizer.digitsOnly(u.phone) ==
+          PhoneNormalizer.digitsOnly(cleanPhone),
+    );
     if (exists) return null;
 
     final id = DateTime.now().microsecondsSinceEpoch.toString();
@@ -171,7 +146,7 @@ class AuthService {
     final user = User(
       id: id,
       fullName: cleanName,
-      phone: cleanPhone,
+      phone: cleanPhone, // ✅ digits-only stored
       passwordHash: hashPassword(password),
       role: role,
       stationName: _requiresStation(role) ? cleanStation : null,
@@ -188,12 +163,15 @@ class AuthService {
     required UserRole role,
   }) async {
     final box = HiveService.userBox();
-    final cleanPhone = normalizePhoneUg(phone);
+
+    final inputDigits = PhoneNormalizer.digitsOnly(phone);
+    if (inputDigits.isEmpty) return null;
 
     try {
-      final user = box.values.firstWhere(
-        (u) => u.phone == cleanPhone && u.role == role,
-      );
+      final user = box.values.firstWhere((u) {
+        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
+        return storedDigits == inputDigits && u.role == role;
+      });
 
       final hash = hashPassword(password);
       if (user.passwordHash != hash) return null;
@@ -209,10 +187,15 @@ class AuthService {
     required String password,
   }) async {
     final box = HiveService.userBox();
-    final cleanPhone = normalizePhoneUg(phone);
+
+    final inputDigits = PhoneNormalizer.digitsOnly(phone);
+    if (inputDigits.isEmpty) return null;
 
     try {
-      final user = box.values.firstWhere((u) => u.phone == cleanPhone);
+      final user = box.values.firstWhere((u) {
+        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
+        return storedDigits == inputDigits;
+      });
 
       final hash = hashPassword(password);
       if (user.passwordHash != hash) return null;

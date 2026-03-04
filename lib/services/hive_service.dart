@@ -23,6 +23,7 @@ class HiveService {
   static const String _paymentBoxName = 'payments';
   static const String _printerSettingsBoxName = 'printer_settings';
   static const String _outboundMsgBoxName = 'outbound_messages';
+  static const String _passwordResetBoxName = 'password_resets';
 
   static const String _appSettingsBoxName = 'app_settings';
 
@@ -42,6 +43,7 @@ class HiveService {
     await openPaymentBox();
     await openPrinterSettingsBox();
     await openOutboundMessageBox();
+    await openPasswordResetBox();
 
     await OutboundMessageService.requeueOpenedMessages();
   }
@@ -196,6 +198,21 @@ class HiveService {
       );
     }
     return Hive.box<OutboundMessage>(_outboundMsgBoxName);
+  }
+
+  static Future openPasswordResetBox() async {
+    if (!Hive.isBoxOpen(_passwordResetBoxName)) {
+      await Hive.openBox(_passwordResetBoxName);
+    }
+  }
+
+  static Box passwordResetBox() {
+    if (!Hive.isBoxOpen(_passwordResetBoxName)) {
+      throw HiveError(
+        'PasswordReset box is not open.\nCall HiveService.openPasswordResetBox() first.',
+      );
+    }
+    return Hive.box(_passwordResetBoxName);
   }
 
   static Future<void> closeAll() async {

@@ -106,7 +106,6 @@ class MyApp extends StatelessWidget {
       title: 'Bebeto Cargo',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-
       home: SplashScreen(nextBuilder: RouteDeciderService.nextWidget),
     );
   }

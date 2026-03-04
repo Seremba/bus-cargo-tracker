@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
+import '../services/phone_normalizer.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -251,9 +252,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
         const SnackBar(content: Text('Account created ✅ Please login')),
       );
 
+      final displayPhone = PhoneNormalizer.displayUg(phone);
+
       Navigator.pushAndRemoveUntil(
         context,
-        MaterialPageRoute(builder: (_) => LoginScreen(initialPhone: phone)),
+        MaterialPageRoute(
+          builder: (_) => LoginScreen(initialPhone: displayPhone),
+        ),
         (_) => false,
       );
     } catch (_) {

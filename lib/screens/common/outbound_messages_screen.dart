@@ -9,10 +9,8 @@ import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 
 class OutboundMessagesScreen extends StatefulWidget {
-  /// Optional initial channel mode: 'sms' or 'whatsapp'
   final String? channelFilter;
 
-  /// Optional title override
   final String? title;
 
   const OutboundMessagesScreen({super.key, this.channelFilter, this.title});
@@ -94,19 +92,16 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     try {
       final box = HiveService.outboundMessageBox();
 
-      // Count OPENED before
       final beforeOpened = box.values.where((m) {
         final st = m.status.trim().toLowerCase();
         if (st != OutboundMessageService.statusOpened) return false;
         return _passesChannel(m);
       }).length;
 
-      // ✅ Actually requeue (manual admin action)
       await OutboundMessageService.requeueOpenedMessages();
 
       if (!mounted) return;
 
-      // Count OPENED after
       final afterOpened = box.values.where((m) {
         final st = m.status.trim().toLowerCase();
         if (st != OutboundMessageService.statusOpened) return false;
@@ -125,7 +120,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         ),
       );
 
-      // After requeue, show Queue tab
       _controller.animateTo(0);
     } catch (e) {
       if (!mounted) return;
@@ -172,7 +166,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}'),
           ),
         );
-        _controller.animateTo(1); // Opened
+        _controller.animateTo(1);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -181,7 +175,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             ),
           ),
         );
-        _controller.animateTo(2); // Failed
+        _controller.animateTo(2);
       }
     } catch (e) {
       if (!mounted) return;
@@ -214,7 +208,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             content: Text('Opened ${ch.toUpperCase()} for: ${res.toPhone}'),
           ),
         );
-        _controller.animateTo(1); // Opened
+        _controller.animateTo(1);
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -223,7 +217,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             ),
           ),
         );
-        _controller.animateTo(2); // Failed
+        _controller.animateTo(2);
       }
     } catch (e) {
       if (!mounted) return;
@@ -245,7 +239,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Marked as sent ✅')));
-
       _controller.animateTo(3);
     } catch (e) {
       if (!mounted) return;
@@ -270,7 +263,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Marked as failed ⚠️')));
-
       _controller.animateTo(2);
     } catch (e) {
       if (!mounted) return;
@@ -290,156 +282,81 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     ).showSnackBar(SnackBar(content: Text(toast ?? 'Copied ✅')));
   }
 
-  @override
-  Widget build(BuildContext context) {
-    if (!_canUse) {
-      return const Scaffold(body: Center(child: Text('Not authorized')));
+  Widget _buildTab(Box<OutboundMessage> box, String status) {
+    final items = box.values.where((m) {
+      final st = m.status.trim().toLowerCase();
+      if (st != status) return false;
+      return _passesChannel(m);
+    }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
+
+    String headerLabel;
+    if (status == OutboundMessageService.statusQueued) {
+      headerLabel = 'Queued';
+    } else if (status == OutboundMessageService.statusOpened) {
+      headerLabel = 'Opened';
+    } else if (status == OutboundMessageService.statusFailed) {
+      headerLabel = 'Failed';
+    } else {
+      headerLabel = 'Sent';
     }
 
-    final box = HiveService.outboundMessageBox();
+    final header = _channelMode == 'all'
+        ? headerLabel
+        : '$headerLabel ${_channelMode.toUpperCase()}';
 
-    return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: Text(_screenTitle),
-
-        // ✅ AppBar.bottom MUST be PreferredSizeWidget
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(48),
-          child: AnimatedBuilder(
-            animation: Listenable.merge([box.listenable(), _controller]),
-            builder: (context, _) {
-              final q = _countForStatus(
-                box,
-                OutboundMessageService.statusQueued,
-              );
-              final o = _countForStatus(
-                box,
-                OutboundMessageService.statusOpened,
-              );
-              final f = _countForStatus(
-                box,
-                OutboundMessageService.statusFailed,
-              );
-              final s = _countForStatus(box, OutboundMessageService.statusSent);
-
-              return TabBar(
-                controller: _controller,
-                tabs: [
-                  Tab(text: 'Queued ($q)'),
-                  Tab(text: 'Opened ($o)'),
-                  Tab(text: 'Failed ($f)'),
-                  Tab(text: 'Sent ($s)'),
-                ],
-              );
-            },
-          ),
-        ),
-
-        actions: [
-          if (_isAdmin)
-            IconButton(
-              tooltip: _busy ? 'Working...' : 'Requeue opened',
-              icon: const Icon(Icons.refresh),
-              onPressed: _busy ? null : _requeueOpenedNow,
-            ),
-          DropdownButtonHideUnderline(
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Card(
             child: Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: DropdownButton<String>(
-                value: _channelMode,
-                dropdownColor: Theme.of(context).colorScheme.surface,
-                icon: const Icon(Icons.filter_list),
-                items: const [
-                  DropdownMenuItem(value: 'all', child: Text('All')),
-                  DropdownMenuItem(value: 'sms', child: Text('SMS')),
-                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _channelMode = v);
-                },
-              ),
-            ),
-          ),
-          IconButton(
-            tooltip: _busy ? 'Working...' : 'Open next',
-            icon: const Icon(Icons.send_outlined),
-            onPressed: _busy ? null : _openNext,
-          ),
-        ],
-      ),
-      body: AnimatedBuilder(
-        animation: Listenable.merge([box.listenable(), _controller]),
-        builder: (context, _) {
-          final tabIndex = _controller.index;
-          final status = _statusForTab(tabIndex);
-
-          final items = box.values.where((m) {
-            final st = m.status.trim().toLowerCase();
-            if (st != status) return false;
-            return _passesChannel(m);
-          }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
-
-          final label = tabIndex == 0
-              ? 'Queued'
-              : tabIndex == 1
-              ? 'Opened'
-              : tabIndex == 2
-              ? 'Failed'
-              : 'Sent';
-
-          final header = _channelMode == 'all'
-              ? label
-              : '$label ${_channelMode.toUpperCase()}';
-
-          return Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(12),
-                child: Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
-                      children: [
-                        const Icon(Icons.info_outline, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            '$header: ${items.length}',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                        if (_isAdmin)
-                          TextButton.icon(
-                            onPressed: _busy ? null : _requeueOpenedNow,
-                            icon: const Icon(Icons.refresh, size: 18),
-                            label: const Text('Requeue'),
-                          ),
-                        const SizedBox(width: 6),
-                        ElevatedButton.icon(
-                          onPressed: _busy ? null : _openNext,
-                          icon: const Icon(Icons.open_in_new),
-                          label: Text(_busy ? 'Working...' : 'Open next'),
-                        ),
-                      ],
+              padding: const EdgeInsets.all(12),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      '$header: ${items.length}',
+                      style: const TextStyle(fontWeight: FontWeight.w800),
                     ),
                   ),
+                  if (_isAdmin)
+                    TextButton.icon(
+                      onPressed: _busy ? null : _requeueOpenedNow,
+                      icon: const Icon(Icons.refresh, size: 18),
+                      label: const Text('Requeue'),
+                    ),
+                  const SizedBox(width: 6),
+                  ElevatedButton.icon(
+                    onPressed: _busy ? null : _openNext,
+                    icon: const Icon(Icons.open_in_new),
+                    label: Text(_busy ? 'Working...' : 'Open next'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        Expanded(
+          child: items.isEmpty
+              ? Center(
+                  child: Text(
+                    'No messages here.',
+                    style: TextStyle(color: muted),
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  itemCount: items.length,
+                  itemBuilder: (_, i) => _tile(items[i]),
                 ),
-              ),
-              Expanded(
-                child: items.isEmpty
-                    ? const Center(child: Text('No messages here.'))
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 12),
-                        itemCount: items.length,
-                        itemBuilder: (_, i) => _tile(items[i]),
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
+        ),
+      ],
     );
   }
 
@@ -559,6 +476,93 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_canUse) {
+      return const Scaffold(body: Center(child: Text('Not authorized')));
+    }
+
+    final box = HiveService.outboundMessageBox();
+
+    return Scaffold(
+      appBar: AppBar(
+        centerTitle: true,
+        title: Text(_screenTitle),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(48),
+          child: ValueListenableBuilder(
+            valueListenable: box.listenable(),
+            builder: (context, Box<OutboundMessage> b, _) {
+              final q = _countForStatus(b, OutboundMessageService.statusQueued);
+              final o = _countForStatus(b, OutboundMessageService.statusOpened);
+              final f = _countForStatus(b, OutboundMessageService.statusFailed);
+              final s = _countForStatus(b, OutboundMessageService.statusSent);
+
+              return TabBar(
+                controller: _controller,
+                tabs: [
+                  Tab(text: 'Queued ($q)'),
+                  Tab(text: 'Opened ($o)'),
+                  Tab(text: 'Failed ($f)'),
+                  Tab(text: 'Sent ($s)'),
+                ],
+              );
+            },
+          ),
+        ),
+        actions: [
+          if (_isAdmin)
+            IconButton(
+              tooltip: _busy ? 'Working...' : 'Requeue opened',
+              icon: const Icon(Icons.refresh),
+              onPressed: _busy ? null : _requeueOpenedNow,
+            ),
+          DropdownButtonHideUnderline(
+            child: Padding(
+              padding: const EdgeInsets.only(right: 6),
+              child: DropdownButton<String>(
+                value: _channelMode,
+                dropdownColor: Theme.of(context).colorScheme.surface,
+                icon: const Icon(Icons.filter_list),
+                items: const [
+                  DropdownMenuItem(value: 'all', child: Text('All')),
+                  DropdownMenuItem(value: 'sms', child: Text('SMS')),
+                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _channelMode = v);
+                },
+              ),
+            ),
+          ),
+          IconButton(
+            tooltip: _busy ? 'Working...' : 'Open next',
+            icon: const Icon(Icons.send_outlined),
+            onPressed: _busy ? null : _openNext,
+          ),
+        ],
+      ),
+
+      body: ValueListenableBuilder(
+        valueListenable: box.listenable(),
+        builder: (context, Box<OutboundMessage> b, _) {
+          return TabBarView(
+            controller: _controller,
+            physics:
+                const NeverScrollableScrollPhysics(), // optional but recommended
+            children: [
+              _buildTab(b, _statusForTab(0)),
+              _buildTab(b, _statusForTab(1)),
+              _buildTab(b, _statusForTab(2)),
+              _buildTab(b, _statusForTab(3)),
+            ],
+          );
+        },
       ),
     );
   }

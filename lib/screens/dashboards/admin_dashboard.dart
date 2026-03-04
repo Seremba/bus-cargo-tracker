@@ -4,11 +4,13 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../models/notification_item.dart';
 import '../../models/outbound_message.dart';
 import '../../models/user_role.dart';
+
 import '../../services/hive_service.dart';
 import '../../services/notification_service.dart';
 import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
+
 import '../../widgets/logout_button.dart';
 
 import '../admin/admin_active_trips_screen.dart';
@@ -38,53 +40,11 @@ class AdminDashboard extends StatelessWidget {
     }
 
     final cs = Theme.of(context).colorScheme;
-    final muted = cs.onSurface.withValues(alpha: 0.60);
+    final muted = cs.onSurface.withValues(alpha: 0.65);
 
-    Widget sectionTitle(String text) {
-      return Padding(
-        padding: const EdgeInsets.only(top: 18, bottom: 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              text,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-            ),
-            const SizedBox(height: 6),
-            Divider(thickness: 1, height: 1, color: muted.withValues(alpha: 0.35)),
-          ],
-        ),
-      );
-    }
+    final adminName = (Session.currentUserFullName ?? 'Admin').trim();
 
-    Widget actionButton({
-      required IconData icon,
-      required String label,
-      required VoidCallback onPressed,
-      Widget? trailing,
-    }) {
-      return SizedBox(
-        width: double.infinity,
-        child: ElevatedButton.icon(
-          icon: Icon(icon),
-          label: Row(
-            children: [
-              Expanded(child: Text(label)),
-              if (trailing != null) trailing,
-            ],
-          ),
-          onPressed: onPressed,
-        ),
-      );
-    }
-
-    Widget badgePill({
-      required String text,
-      Color? bg,
-      Color? fg,
-    }) {
+    Widget badgePill({required String text, Color? bg, Color? fg}) {
       return Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
         decoration: BoxDecoration(
@@ -95,8 +55,102 @@ class AdminDashboard extends StatelessWidget {
           text,
           style: TextStyle(
             color: fg ?? cs.onError,
-            fontWeight: FontWeight.w800,
+            fontWeight: FontWeight.w900,
             fontSize: 12,
+          ),
+        ),
+      );
+    }
+
+    Widget sectionCard({
+      required String title,
+      required List<Widget> children,
+      IconData? icon,
+    }) {
+      return Card(
+        margin: const EdgeInsets.only(bottom: 14),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  if (icon != null) ...[
+                    Icon(icon, size: 18, color: muted),
+                    const SizedBox(width: 8),
+                  ],
+                  Text(
+                    title,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              ...children,
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget actionTile({
+      required IconData icon,
+      required String title,
+      String? subtitle,
+      Widget? trailing,
+      required VoidCallback onTap,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Material(
+          color: cs.surface,
+          borderRadius: BorderRadius.circular(14),
+          child: InkWell(
+            borderRadius: BorderRadius.circular(14),
+            onTap: onTap,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: cs.primary.withValues(alpha: 0.10),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: Icon(icon, color: cs.primary),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.w900),
+                        ),
+                        if ((subtitle ?? '').trim().isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            subtitle!,
+                            style: TextStyle(fontSize: 12, color: muted),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  if (trailing != null) ...[
+                    trailing,
+                    const SizedBox(width: 10),
+                  ],
+                  Icon(Icons.chevron_right, color: muted),
+                ],
+              ),
+            ),
           ),
         ),
       );
@@ -107,19 +161,30 @@ class AdminDashboard extends StatelessWidget {
       child: Scaffold(
         appBar: AppBar(
           centerTitle: true,
-          elevation: 2,
-          title: const Text('Admin Dashboard'),
+          elevation: 1,
+          title: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Admin Dashboard',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 2),
+              Text(adminName, style: TextStyle(fontSize: 12, color: muted)),
+            ],
+          ),
           actions: [
             // Notifications with unread badge (theme-safe)
             ValueListenableBuilder(
               valueListenable: HiveService.notificationBox().listenable(),
               builder: (context, Box box, _) {
-                final userId = Session.currentUserId!;
+                final userId = Session.currentUserId;
                 final unreadCount = box.values.where((n) {
                   final ni = n as NotificationItem;
                   final isForAdminInbox =
                       ni.targetUserId == NotificationService.adminInbox;
-                  final isForThisAdmin = ni.targetUserId == userId;
+                  final isForThisAdmin =
+                      (userId != null && ni.targetUserId == userId);
                   return (isForAdminInbox || isForThisAdmin) && !ni.isRead;
                 }).length;
 
@@ -156,7 +221,7 @@ class AdminDashboard extends StatelessWidget {
                             style: TextStyle(
                               color: cs.onError,
                               fontSize: 10,
-                              fontWeight: FontWeight.w800,
+                              fontWeight: FontWeight.w900,
                             ),
                           ),
                         ),
@@ -171,236 +236,276 @@ class AdminDashboard extends StatelessWidget {
         body: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            sectionTitle('Operations'),
-            actionButton(
-              icon: Icons.inventory_2_outlined,
-              label: 'All Properties',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminPropertiesScreen(),
-                  ),
-                );
-              },
+            sectionCard(
+              title: 'Operations',
+              icon: Icons.settings_outlined,
+              children: [
+                actionTile(
+                  icon: Icons.inventory_2_outlined,
+                  title: 'All Properties',
+                  subtitle: 'View, search, and manage cargo',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminPropertiesScreen(),
+                      ),
+                    );
+                  },
+                ),
+                actionTile(
+                  icon: Icons.route_outlined,
+                  title: 'Trips',
+                  subtitle: 'Create + manage trips and routes',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminTripsScreen(),
+                      ),
+                    );
+                  },
+                ),
+                actionTile(
+                  icon: Icons.local_shipping_outlined,
+                  title: 'Active Trips',
+                  subtitle: 'Trips currently in progress',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminActiveTripsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            actionButton(
-              icon: Icons.route_outlined,
-              label: 'Trips',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminTripsScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            actionButton(
-              icon: Icons.local_shipping_outlined,
-              label: 'Active Trips',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminActiveTripsScreen(),
-                  ),
-                );
-              },
-            ),
-
-            sectionTitle('Finance'),
-            actionButton(
+            sectionCard(
+              title: 'Finance',
               icon: Icons.payments_outlined,
-              label: 'Payments',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminPaymentsScreen(),
-                  ),
-                );
-              },
+              children: [
+                actionTile(
+                  icon: Icons.payments_outlined,
+                  title: 'Payments',
+                  subtitle: 'Review and export payments',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminPaymentsScreen(),
+                      ),
+                    );
+                  },
+                ),
+                actionTile(
+                  icon: Icons.insights_outlined,
+                  title: 'Reports',
+                  subtitle: 'Totals and performance reports',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminReportsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-            actionButton(
-              icon: Icons.insights_outlined,
-              label: 'Reports',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminReportsScreen()),
-                );
-              },
-            ),
-
-            sectionTitle('Users'),
-            actionButton(
-              icon: Icons.person_add,
-              label: 'Create User',
-              onPressed: () async {
-                final createdUser = await Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminCreateUserScreen(),
-                  ),
-                );
-
-                if (createdUser != null && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('User created ✅')),
-                  );
-                }
-              },
-            ),
-            const SizedBox(height: 10),
-            actionButton(
+            sectionCard(
+              title: 'Users',
               icon: Icons.people_outline,
-              label: 'Manage Users',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminUsersScreen()),
-                );
-              },
+              children: [
+                actionTile(
+                  icon: Icons.person_add,
+                  title: 'Create User',
+                  subtitle: 'Add staff, driver, desk officer',
+                  onTap: () async {
+                    final createdUser = await Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminCreateUserScreen(),
+                      ),
+                    );
+                    if (createdUser != null && context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('User created ✅')),
+                      );
+                    }
+                  },
+                ),
+                actionTile(
+                  icon: Icons.people_outline,
+                  title: 'Manage Users',
+                  subtitle: 'Edit roles and stations',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminUsersScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
+            sectionCard(
+              title: 'Monitoring',
+              icon: Icons.monitor_heart_outlined,
+              children: [
+                actionTile(
+                  icon: Icons.history,
+                  title: 'Audit Log',
+                  subtitle: 'All critical actions (traceability)',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminAuditScreen(),
+                      ),
+                    );
+                  },
+                ),
+                actionTile(
+                  icon: Icons.speed_outlined,
+                  title: 'Performance',
+                  subtitle: 'App health and usage signals',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminPerformanceScreen(),
+                      ),
+                    );
+                  },
+                ),
+                actionTile(
+                  icon: Icons.report_problem_outlined,
+                  title: 'Exceptions',
+                  subtitle: 'Errors captured for review',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const AdminExceptionsScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
+            ),
+            sectionCard(
+              title: 'Outbound',
+              icon: Icons.outbox_outlined,
+              children: [
+                ValueListenableBuilder(
+                  valueListenable: HiveService.outboundMessageBox()
+                      .listenable(),
+                  builder: (context, Box box, _) {
+                    final pendingSms = box.values
+                        .whereType<OutboundMessage>()
+                        .where((m) {
+                          final ch = m.channel.trim().toLowerCase();
+                          if (ch != 'sms') return false;
+                          final st = m.status.trim().toLowerCase();
+                          return st == OutboundMessageService.statusQueued ||
+                              st == OutboundMessageService.statusFailed;
+                        })
+                        .length;
 
-            sectionTitle('Monitoring'),
-            actionButton(
-              icon: Icons.history,
-              label: 'Audit Log',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (_) => const AdminAuditScreen()),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            actionButton(
-              icon: Icons.speed_outlined,
-              label: 'Performance',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminPerformanceScreen(),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-            actionButton(
-              icon: Icons.report_problem_outlined,
-              label: 'Exceptions',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const AdminExceptionsScreen(),
-                  ),
-                );
-              },
-            ),
-            const SizedBox(height: 10),
+                    return actionTile(
+                      icon: Icons.sms_outlined,
+                      title: 'SMS Processing',
+                      subtitle: 'Open, mark sent/failed, requeue stale',
+                      trailing: pendingSms > 0
+                          ? badgePill(
+                              text: pendingSms > 99 ? '99+' : '$pendingSms',
+                            )
+                          : null,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const OutboundMessagesScreen(
+                              channelFilter: 'sms',
+                              title: 'SMS Processing',
+                            ),
+                          ),
+                        );
+                      },
+                    );
+                  },
+                ),
+                ValueListenableBuilder(
+                  valueListenable: HiveService.outboundMessageBox()
+                      .listenable(),
+                  builder: (context, Box b, _) {
+                    int queuedSms = 0;
+                    int failedSms = 0;
 
-            sectionTitle('Outbound'),
-            // SMS Processing (queued + failed badge)
-            ValueListenableBuilder(
-              valueListenable: HiveService.outboundMessageBox().listenable(),
-              builder: (context, Box box, _) {
-                final pendingSms = box.values
-                    .whereType<OutboundMessage>()
-                    .where((m) {
+                    for (final m in b.values.whereType<OutboundMessage>()) {
                       final ch = m.channel.trim().toLowerCase();
-                      if (ch != 'sms') return false;
+                      if (ch != 'sms') continue;
                       final st = m.status.trim().toLowerCase();
-                      return st == OutboundMessageService.statusQueued ||
-                          st == OutboundMessageService.statusFailed;
-                    })
-                    .length;
+                      if (st == OutboundMessageService.statusQueued)
+                        queuedSms++;
+                      if (st == OutboundMessageService.statusFailed)
+                        failedSms++;
+                    }
 
-                return actionButton(
-                  icon: Icons.sms_outlined,
-                  label: 'SMS Processing',
-                  trailing: pendingSms > 0
-                      ? badgePill(text: pendingSms > 99 ? '99+' : '$pendingSms')
-                      : null,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const OutboundMessagesScreen(
-                          channelFilter: 'sms',
-                          title: 'SMS Processing',
-                        ),
-                      ),
+                    final show = queuedSms > 0 || failedSms > 0;
+
+                    return actionTile(
+                      icon: Icons.outbox_outlined,
+                      title: 'Outbound Messages (Admin)',
+                      subtitle: 'Full queue visibility and management',
+                      trailing: show
+                          ? badgePill(
+                              text:
+                                  'SMS ${queuedSms.clamp(0, 99)}/${failedSms.clamp(0, 99)}',
+                              bg: cs.primary,
+                              fg: cs.onPrimary,
+                            )
+                          : null,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminOutboundMessagesScreen(),
+                          ),
+                        );
+                      },
                     );
                   },
-                );
-              },
+                ),
+              ],
             ),
-            const SizedBox(height: 10),
-
-            // Outbound Messages button with SMS queued/failed badge
-            ValueListenableBuilder(
-              valueListenable: HiveService.outboundMessageBox().listenable(),
-              builder: (context, Box<OutboundMessage> b, _) {
-                int queuedSms = 0;
-                int failedSms = 0;
-
-                for (final m in b.values) {
-                  final ch = m.channel.trim().toLowerCase();
-                  if (ch != 'sms') continue;
-
-                  final st = m.status.trim().toLowerCase();
-                  if (st == OutboundMessageService.statusQueued) queuedSms++;
-                  if (st == OutboundMessageService.statusFailed) failedSms++;
-                }
-
-                final show = queuedSms > 0 || failedSms > 0;
-
-                return actionButton(
-                  icon: Icons.outbox_outlined,
-                  label: 'Outbound Messages',
-                  trailing: show
-                      ? badgePill(
-                          text:
-                              'SMS ${queuedSms.clamp(0, 99)}/${failedSms.clamp(0, 99)}',
-                        )
-                      : null,
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const AdminOutboundMessagesScreen(),
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
-            const SizedBox(height: 10),
-
-            sectionTitle('Lookup'),
-            actionButton(
+            sectionCard(
+              title: 'Lookup',
               icon: Icons.search,
-              label: 'Tracking Lookup',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (_) => const TrackingLookupScreen(),
-                  ),
-                );
-              },
+              children: [
+                actionTile(
+                  icon: Icons.search,
+                  title: 'Tracking Lookup',
+                  subtitle: 'Search status by tracking code',
+                  onTap: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const TrackingLookupScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ],
             ),
-            const SizedBox(height: 12),
-
-            // subtle footer
-            Text(
-              'Tip: Keep SMS queue near zero to avoid delayed receiver updates.',
-              style: TextStyle(fontSize: 12, color: muted),
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Tip: Keep SMS queue near zero to avoid delayed receiver updates.',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
             ),
           ],
         ),

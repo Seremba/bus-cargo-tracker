@@ -2,11 +2,10 @@ import 'package:hive/hive.dart';
 
 part 'property_status.g.dart';
 
-@HiveType(typeId: 4) //
+@HiveType(typeId: 4)
 enum PropertyStatus {
   @HiveField(0)
   pending,
-  @HiveField(1)
 
   @HiveField(1)
   inTransit,

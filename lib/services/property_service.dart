@@ -432,7 +432,9 @@ class PropertyService {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(p.key) ?? p;
 
-    if (fresh.status != PropertyStatus.pending) return;
+    if (fresh.status != PropertyStatus.pending) {
+      return;
+    }
 
     final route = findRouteById(fresh.routeId);
     if (route == null) {
@@ -466,6 +468,7 @@ class PropertyService {
     );
 
     final items = itemSvc.getItemsForProperty(fresh.key.toString());
+
     final hasLoaded = items.any(
       (x) => x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
     );
@@ -520,20 +523,23 @@ class PropertyService {
       now: now,
     );
 
-    fresh.routeId = route.id;
-    fresh.routeName = route.name;
-    fresh.status = PropertyStatus.inTransit;
-    fresh.inTransitAt = now;
-    fresh.tripId = trip.tripId;
-    await fresh.save();
-
+    // Refresh counts after move
     final counts = itemSvc.computeTripCounts(
       propertyKey: fresh.key.toString(),
       tripId: trip.tripId,
     );
 
+    // Update property
+    fresh.routeId = route.id;
+    fresh.routeName = route.name;
+    fresh.status = PropertyStatus
+        .inTransit; // aggregate: if ANY item inTransit -> inTransit
+    fresh.inTransitAt = now;
+    fresh.tripId = trip.tripId;
+    await fresh.save();
+
     final msg =
-        'Loaded today: ${counts.loadedForTrip}/${counts.total}\n'
+        'Departed today: ${counts.loadedForTrip}/${counts.total}\n'
         'Remaining at station: ${counts.remainingAtStation}/${counts.total}\n'
         'Route: ${route.name}';
 
@@ -549,13 +555,16 @@ class PropertyService {
       message: 'Property for ${fresh.receiverName} is in transit.\n$msg',
     );
 
-    await _safeNotifyReceiverPartialLoad(
-      fresh: fresh,
-      counts: counts,
-      routeName: route.name,
-    );
-
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
+    // ✅ Receiver notification: choose ONE path (partial OR normal)
+    if (counts.remainingAtStation > 0) {
+      await _safeNotifyReceiverPartialLoad(
+        fresh: fresh,
+        counts: counts,
+        routeName: route.name,
+      );
+    } else {
+      await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
+    }
   }
 
   static Future<bool> markLoaded(
@@ -590,7 +599,6 @@ class PropertyService {
     await itemSvc.markSelectedItemsLoaded(
       propertyKey: fresh.key.toString(),
       itemNos: selectedNos,
-      tripId: '',
       now: now,
     );
 

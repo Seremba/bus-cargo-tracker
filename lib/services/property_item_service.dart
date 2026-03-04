@@ -62,23 +62,20 @@ class PropertyItemService {
   Future<void> markSelectedItemsLoaded({
     required String propertyKey,
     required List<int> itemNos,
-    required String tripId,
     required DateTime now,
   }) async {
     final items = getItemsForProperty(propertyKey);
-    final trip = tripId.trim();
 
     for (final no in itemNos) {
       final item = items.firstWhere((x) => x.itemNo == no);
 
       if (item.status != PropertyItemStatus.pending) {
-        // Non-blocking: just skip invalid items
         continue;
       }
 
       item.status = PropertyItemStatus.loaded;
       item.loadedAt = now;
-      item.tripId = trip;
+
       await item.save();
     }
   }
@@ -108,14 +105,20 @@ class PropertyItemService {
     final total = items.length;
     final trip = tripId.trim();
 
-    final loadedForTrip = items.where((x) => x.tripId == trip).length;
+    final onThisTrip = items.where((x) {
+      if (x.tripId.trim() != trip) return false;
+      return x.status == PropertyItemStatus.inTransit ||
+          x.status == PropertyItemStatus.delivered ||
+          x.status == PropertyItemStatus.pickedUp;
+    }).length;
+
     final remainingAtStation = items
         .where((x) => x.status == PropertyItemStatus.pending)
         .length;
 
     return PropertyItemTripCounts(
       total: total,
-      loadedForTrip: loadedForTrip,
+      loadedForTrip: onThisTrip, // keep field name, but treat as "onThisTrip"
       remainingAtStation: remainingAtStation,
     );
   }

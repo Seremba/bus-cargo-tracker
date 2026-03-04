@@ -26,7 +26,9 @@ class TripService {
   static bool _canTrackTrips() =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
 
-  static Future<T> _runWithCheckpointLock<T>(Future<T> Function() action) async {
+  static Future<T> _runWithCheckpointLock<T>(
+    Future<T> Function() action,
+  ) async {
     while (_checkpointLock != null) {
       await _checkpointLock!.future;
     }
@@ -39,7 +41,8 @@ class TripService {
     }
   }
 
-  static String _newTripId() => DateTime.now().millisecondsSinceEpoch.toString();
+  static String _newTripId() =>
+      DateTime.now().millisecondsSinceEpoch.toString();
 
   ///  Returns the active trip for THIS driver + THIS route, or creates one if none exists.
   static Future<Trip> ensureActiveTrip({
@@ -51,13 +54,18 @@ class TripService {
       throw StateError('Not authorized to create/ensure trips');
     }
 
-    final driverId = Session.currentUserId!;
+    final driverId = Session.currentUserId;
+    if (driverId == null || driverId.trim().isEmpty) {
+      throw StateError('No active session userId (cannot start trip)');
+    }
     final box = tripBox();
 
-    final existing = box.values.where((t) =>
-        t.driverUserId == driverId &&
-        t.status == TripStatus.active &&
-        t.routeId == routeId);
+    final existing = box.values.where(
+      (t) =>
+          t.driverUserId == driverId &&
+          t.status == TripStatus.active &&
+          t.routeId == routeId,
+    );
 
     if (existing.isNotEmpty) return existing.first;
 
@@ -129,7 +137,9 @@ class TripService {
     }
 
     return _runWithCheckpointLock(() async {
-      final driverId = Session.currentUserId!;
+      final driverId = Session.currentUserId;
+      if (driverId == null || driverId.trim().isEmpty) return false;
+
       final box = tripBox();
 
       final activeTrips = box.values.where(
@@ -242,8 +252,11 @@ class TripService {
 
   /// Reject impossible jumps and persist last sample fields.
   /// Conservative rules: if it jumps >1000m in <5 seconds, ignore it.
-  static bool _acceptSample(Trip trip,
-      {required double lat, required double lng}) {
+  static bool _acceptSample(
+    Trip trip, {
+    required double lat,
+    required double lng,
+  }) {
     final prevLat = trip.lastGpsLat;
     final prevLng = trip.lastGpsLng;
     final prevAt = trip.lastGpsAt;

@@ -14,6 +14,7 @@ import '../../services/location_service.dart';
 import '../../services/property_item_service.dart';
 import '../../services/property_service.dart';
 import '../../services/role_guard.dart';
+import '../../services/session.dart';
 import '../../services/trip_service.dart';
 
 import '../../data/routes_helpers.dart';
@@ -52,8 +53,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   @override
   void initState() {
     super.initState();
+
     if (_canUseDriverTools) {
-      _startGps();
+      // ✅ Start GPS AFTER first frame to avoid init-time layout / permission side effects
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _startGps();
+      });
     } else {
       _gpsStatus = 'GPS: not allowed';
     }
@@ -72,78 +78,88 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     // Prevent double-start
     if (_sub != null) return;
 
-    final ok = await LocationService.ensurePermission();
-    if (!ok) {
-      if (mounted) {
-        setState(() => _gpsStatus = 'GPS: permission denied / location off');
-      }
-      _scheduleRetry();
-      return;
-    }
+    try {
+      final ok = await LocationService.ensurePermission();
 
-    if (mounted) setState(() => _gpsStatus = 'GPS: listening...');
-
-    _sub = LocationService.positionStream().listen(
-      (Position pos) async {
-        if (!mounted) return;
-
-        _lastGpsAt = DateTime.now();
-        final activeTrip = TripService.getActiveTripForCurrentDriver();
-        if (activeTrip == null) _lastSnackCheckpointIndex = -1;
-
-        setState(() {
-          final coords =
-              '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
-
-          final acc = pos.accuracy.isNaN
-              ? '—'
-              : '${pos.accuracy.toStringAsFixed(0)}m';
-
-          _gpsStatus = activeTrip == null
-              ? 'GPS: $coords (±$acc) (no active trip)'
-              : 'GPS: $coords (±$acc) (tracking trip: ${activeTrip.routeName})';
-        });
-
-        if (activeTrip == null) return;
-
-        // Screen-side throttle (battery + UI stability)
-        final now = DateTime.now();
-        if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
-        _lastCheckpointCheck = now;
-
-        final reached = await TripService.updateCheckpointFromLocation(
-          lat: pos.latitude,
-          lng: pos.longitude,
-          accuracyMeters: pos.accuracy,
-        );
-
-        if (!mounted) return;
-
-        final updatedTrip = TripService.getActiveTripForCurrentDriver();
-        final currentIndex = updatedTrip?.lastCheckpointIndex ?? -1;
-
-        if (reached && currentIndex > _lastSnackCheckpointIndex) {
-          _lastSnackCheckpointIndex = currentIndex;
-
-          final cpName =
-              (updatedTrip != null &&
-                  currentIndex >= 0 &&
-                  currentIndex < updatedTrip.checkpoints.length)
-              ? updatedTrip.checkpoints[currentIndex].name
-              : 'Checkpoint';
-
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
+      if (!ok) {
+        if (mounted) {
+          setState(() => _gpsStatus = 'GPS: permission denied / location off');
         }
-      },
-      onError: (_) {
-        if (!mounted) return;
-        setState(() => _gpsStatus = 'GPS: error, retrying...');
-        _restartGps();
-      },
-      cancelOnError: true,
-    );
+        _scheduleRetry();
+        return;
+      }
+
+      if (mounted) setState(() => _gpsStatus = 'GPS: listening...');
+
+      _sub = LocationService.positionStream().listen(
+        (Position pos) async {
+          if (!mounted) return;
+
+          _lastGpsAt = DateTime.now();
+
+          final activeTrip = TripService.getActiveTripForCurrentDriver();
+          if (activeTrip == null) _lastSnackCheckpointIndex = -1;
+
+          setState(() {
+            final coords =
+                '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
+
+            final acc = pos.accuracy.isNaN
+                ? '—'
+                : '${pos.accuracy.toStringAsFixed(0)}m';
+
+            _gpsStatus = activeTrip == null
+                ? 'GPS: $coords (±$acc) (no active trip)'
+                : 'GPS: $coords (±$acc) (tracking trip: ${activeTrip.routeName})';
+          });
+
+          if (activeTrip == null) return;
+
+          // Screen-side throttle (battery + UI stability)
+          final now = DateTime.now();
+          if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
+          _lastCheckpointCheck = now;
+
+          final reached = await TripService.updateCheckpointFromLocation(
+            lat: pos.latitude,
+            lng: pos.longitude,
+            accuracyMeters: pos.accuracy,
+          );
+
+          if (!mounted) return;
+
+          final updatedTrip = TripService.getActiveTripForCurrentDriver();
+          final currentIndex = updatedTrip?.lastCheckpointIndex ?? -1;
+
+          if (reached && currentIndex > _lastSnackCheckpointIndex) {
+            _lastSnackCheckpointIndex = currentIndex;
+
+            final cpName =
+                (updatedTrip != null &&
+                    currentIndex >= 0 &&
+                    currentIndex < updatedTrip.checkpoints.length)
+                ? updatedTrip.checkpoints[currentIndex].name
+                : 'Checkpoint';
+
+            ScaffoldMessenger.of(
+              context,
+            ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
+          }
+        },
+        // ✅ MUST handle errors so UI never becomes blank
+        onError: (e, st) {
+          if (!mounted) return;
+          setState(() => _gpsStatus = 'GPS error: $e');
+          _restartGps();
+        },
+        cancelOnError: false,
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _gpsStatus = 'GPS startup failed: $e');
+      }
+      _restartGps();
+    }
   }
 
   void _restartGps() {
@@ -175,8 +191,67 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
+  Widget _gpsPanel(BuildContext context) {
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
+
+    final isError =
+        _gpsStatus.toLowerCase().contains('error') ||
+        _gpsStatus.toLowerCase().contains('failed') ||
+        _gpsStatus.toLowerCase().contains('denied');
+
+    final icon = isError ? Icons.gps_off : Icons.gps_fixed;
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, size: 20, color: isError ? muted : null),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    _gpsStatus,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    _lastGpsText(),
+                    style: TextStyle(fontSize: 12, color: muted),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            OutlinedButton(
+              onPressed: () {
+                setState(() => _gpsStatus = 'GPS: retrying...');
+                _restartGps();
+              },
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    if (Session.currentUserId == null ||
+        (Session.currentUserId ?? '').trim().isEmpty) {
+      return const Scaffold(
+        body: Center(child: Text('Session expired. Please login again.')),
+      );
+    }
     if (!_canUseDriverTools) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
@@ -209,7 +284,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
             padding: const EdgeInsets.all(12),
             children: [
               _activeTripPanel(context),
-              const SizedBox(height: 8),
+              const SizedBox(height: 10),
+
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -225,19 +301,10 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   },
                 ),
               ),
-              const SizedBox(height: 12),
-              Text(
-                _gpsStatus,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                _lastGpsText(),
-                style: TextStyle(fontSize: 12, color: muted),
-              ),
+
+              const SizedBox(height: 10),
+              _gpsPanel(context),
+
               const SizedBox(height: 14),
               const Text(
                 'Pending (Ready to Load)',
@@ -249,11 +316,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                 style: TextStyle(fontSize: 12, color: muted),
               ),
               const SizedBox(height: 10),
+
               if (pending.isEmpty)
                 _emptyHint(
                   context,
                   'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
                 ),
+
               for (final p in pending)
                 _pendingCard(context, p, itemSvc: itemSvc),
             ],
@@ -278,6 +347,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     final loadedReady = items
         .where((x) => x.status == PropertyItemStatus.loaded)
         .length;
+
     final loadedOk = loadedReady > 0 || p.loadedAt != null;
 
     final bg = PropertyStatusColors.background(p.status);
@@ -334,52 +404,57 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                     style: const TextStyle(fontSize: 12),
                   ),
                 ),
-                ElevatedButton(
-                  onPressed: loadedOk
-                      ? () async {
-                          final route = findRouteById(p.routeId);
-                          if (route == null) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                  'Route missing ❌ Ask admin/staff',
-                                ),
-                              ),
-                            );
-                            return;
-                          }
 
-                          final cps = validatedCheckpoints(route);
-                          if (cps.isEmpty) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  'Route "${route.name}" has invalid checkpoints ❌',
+                // ✅ FIX: constrain the button width to prevent “infinite width” issues
+                ConstrainedBox(
+                  constraints: const BoxConstraints(minWidth: 90),
+                  child: ElevatedButton(
+                    onPressed: loadedOk
+                        ? () async {
+                            final route = findRouteById(p.routeId);
+                            if (route == null) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Route missing ❌ Ask admin/staff',
+                                  ),
                                 ),
-                              ),
-                            );
-                            return;
-                          }
+                              );
+                              return;
+                            }
 
-                          try {
-                            await PropertyService.markInTransit(p);
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Marked In Transit ✅'),
-                              ),
-                            );
-                          } catch (e) {
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(content: Text('Failed: $e')),
-                            );
+                            final cps = validatedCheckpoints(route);
+                            if (cps.isEmpty) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    'Route "${route.name}" has invalid checkpoints ❌',
+                                  ),
+                                ),
+                              );
+                              return;
+                            }
+
+                            try {
+                              await PropertyService.markInTransit(p);
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('Marked In Transit ✅'),
+                                ),
+                              );
+                            } catch (e) {
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('Failed: $e')),
+                              );
+                            }
                           }
-                        }
-                      : null,
-                  child: Text(loadedOk ? 'Load' : 'Blocked'),
+                        : null,
+                    child: Text(loadedOk ? 'Load' : 'Blocked'),
+                  ),
                 ),
               ],
             ),
@@ -389,7 +464,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  // ✅ UPDATED per your request: clearer "next checkpoint" and safer "completed checkpoints" text
   Widget _activeTripPanel(BuildContext context) {
     final trip = TripService.getActiveTripForCurrentDriver();
 

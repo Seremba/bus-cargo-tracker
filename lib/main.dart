@@ -78,7 +78,7 @@ class MyApp extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: AppColors.primary,
           foregroundColor: Colors.white,
-          minimumSize: const Size.fromHeight(48),
+          minimumSize: const Size(0, 48),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),
@@ -88,7 +88,7 @@ class MyApp extends StatelessWidget {
         style: OutlinedButton.styleFrom(
           foregroundColor: AppColors.secondary,
           side: BorderSide(color: AppColors.secondary.withValues(alpha: 0.5)),
-          minimumSize: const Size.fromHeight(44),
+          minimumSize: const Size(0, 44),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(14),
           ),

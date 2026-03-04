@@ -448,10 +448,12 @@ class AdminDashboard extends StatelessWidget {
                       final ch = m.channel.trim().toLowerCase();
                       if (ch != 'sms') continue;
                       final st = m.status.trim().toLowerCase();
-                      if (st == OutboundMessageService.statusQueued)
+                      if (st == OutboundMessageService.statusQueued) {
                         queuedSms++;
-                      if (st == OutboundMessageService.statusFailed)
+                      }
+                      if (st == OutboundMessageService.statusFailed) {
                         failedSms++;
+                      }
                     }
 
                     final show = queuedSms > 0 || failedSms > 0;

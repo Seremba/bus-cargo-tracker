@@ -270,15 +270,20 @@ class ReceiverTrackingService {
         : routeName.trim();
 
     final body = [
-      'Bebeto Cargo update ',
-      'Tracking: $code',
-      'Item: $desc (x${fresh.itemCount})',
-      'In transit now: $loadedForTrip/$total item(s)',
-      'Remaining at station: $remainingAtStation/$total',
-      'Route: $route | Dest: ${fresh.destination}',
-      'Time: $when',
-      'Help: $_supportPhones',
-    ].join('\n');
+  'Bebeto Cargo',
+  '',
+  'Tracking: $code',
+  'Item: $desc (x${fresh.itemCount})',
+  '',
+  '$loadedForTrip of $total item(s) have departed via $route.',
+  if (remainingAtStation > 0)
+    '$remainingAtStation item(s) remain at the station and will follow on the next trip.',
+  '',
+  'Destination: ${fresh.destination}',
+  'Time: $when',
+  '',
+  'Support: $_supportPhones',
+].join('\n');
 
     await OutboundMessageService.queue(
       toPhone: phone,

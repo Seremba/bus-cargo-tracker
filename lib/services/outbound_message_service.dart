@@ -1,6 +1,5 @@
 import 'dart:math';
 
-
 import '../models/outbound_message.dart';
 import 'audit_service.dart';
 import 'hive_service.dart';
@@ -14,7 +13,8 @@ class OutboundMessageService {
 
   // Status values (keep as strings for Hive simplicity)
   static const String statusQueued = 'queued';
-  static const String statusOpened = 'opened'; // opened in WhatsApp/SMS composer
+  static const String statusOpened =
+      'opened'; // opened in WhatsApp/SMS composer
   static const String statusSent = 'sent';
   static const String statusFailed = 'failed';
 
@@ -44,7 +44,8 @@ class OutboundMessageService {
     await AuditService.log(
       action: 'OUTBOUND_MSG_QUEUED',
       propertyKey: propertyKey,
-      details: 'Queued outbound message: channel=${msg.channel} to=${msg.toPhone}',
+      details:
+          'Queued outbound message: channel=${msg.channel} to=${msg.toPhone}',
     );
 
     return msg;
@@ -65,29 +66,27 @@ class OutboundMessageService {
     final filterCh = (channelFilter ?? '').trim().toLowerCase();
     final hasChannelFilter = filterCh.isNotEmpty;
 
-    final candidates = box.values
-        .whereType<OutboundMessage>()
-        .where((m) {
-          final st = (m.status).trim().toLowerCase();
-          final ch = (m.channel).trim().toLowerCase();
+    final candidates = box.values.whereType<OutboundMessage>().where((m) {
+      final st = (m.status).trim().toLowerCase();
+      final ch = (m.channel).trim().toLowerCase();
 
-          final allowedStatus = (st == statusQueued || st == statusFailed);
-          if (!allowedStatus) return false;
+      final allowedStatus = (st == statusQueued || st == statusFailed);
+      if (!allowedStatus) return false;
 
-          if (hasChannelFilter && ch != filterCh) return false;
+      if (hasChannelFilter && ch != filterCh) return false;
 
-          if (m.attempts >= maxAttempts) return false;
+      // Hard stop
+      if (m.attempts >= maxAttempts) return false;
 
-          // Backoff: if lastAttemptAt exists, wait a bit before retrying
-          final wait = _backoffForAttempts(m.attempts);
-          if (m.lastAttemptAt != null) {
-            final dueAt = m.lastAttemptAt!.add(wait);
-            if (now.isBefore(dueAt)) return false;
-          }
+      // Backoff: if lastAttemptAt exists, wait before retry
+      final wait = _backoffForAttempts(m.attempts);
+      if (m.lastAttemptAt != null) {
+        final dueAt = m.lastAttemptAt!.add(wait);
+        if (now.isBefore(dueAt)) return false;
+      }
 
-          return true;
-        })
-        .toList();
+      return true;
+    }).toList();
 
     if (candidates.isEmpty) return null;
 
@@ -96,6 +95,7 @@ class OutboundMessageService {
 
     final msg = candidates.first;
 
+    // Attempt opening
     final ok = await _openComposer(msg);
 
     msg.attempts = msg.attempts + 1;
@@ -109,24 +109,29 @@ class OutboundMessageService {
         action: 'OUTBOUND_MSG_OPENED',
         propertyKey: msg.propertyKey,
         details:
-            'Opened composer for outbound message id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+            'Opened composer id=${msg.id} channel=${msg.channel} to=${msg.toPhone} attempts=${msg.attempts}',
       );
-
-      return msg;
-    } else {
-      msg.status = statusFailed;
-      await msg.save();
-
-      await AuditService.log(
-        action: 'OUTBOUND_MSG_OPEN_FAILED',
-        propertyKey: msg.propertyKey,
-        details:
-            'Failed to open composer for outbound message id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
-      );
-
-      // ✅ return msg so UI can display the failure and allow manual actions
       return msg;
     }
+
+    // ❗If open fails, don’t immediately mark FAILED unless we are out of attempts.
+    if (msg.attempts >= maxAttempts) {
+      msg.status = statusFailed;
+    } else {
+      // Keep it queued so it can retry later after backoff
+      msg.status = statusQueued;
+    }
+
+    await msg.save();
+
+    await AuditService.log(
+      action: 'OUTBOUND_MSG_OPEN_FAILED',
+      propertyKey: msg.propertyKey,
+      details:
+          'Failed to open composer id=${msg.id} channel=${msg.channel} to=${msg.toPhone} attempts=${msg.attempts}',
+    );
+
+    return msg; // return msg so UI can show what happened
   }
 
   /// Mark message as SENT (call this from UI after user confirms it was sent).
@@ -137,7 +142,8 @@ class OutboundMessageService {
     await AuditService.log(
       action: 'OUTBOUND_MSG_SENT',
       propertyKey: msg.propertyKey,
-      details: 'Marked sent: id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+      details:
+          'Marked sent: id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
     );
   }
 
@@ -157,16 +163,25 @@ class OutboundMessageService {
     );
   }
 
-  /// Reset "opened" messages back to queued (useful if app closed before sending).
-  /// You can run this on app start.
   static Future<void> requeueOpenedMessages() async {
     final box = HiveService.outboundMessageBox();
-    final opened = box.values
-        .whereType<OutboundMessage>()
-        .where((m) => m.status.trim().toLowerCase() == statusOpened);
+    final now = DateTime.now();
+
+    const staleAfter = Duration(minutes: 3);
+
+    final opened = box.values.whereType<OutboundMessage>().where(
+      (m) => m.status.trim().toLowerCase() == statusOpened,
+    );
 
     for (final m in opened) {
+      final openedAt = m.lastAttemptAt ?? m.createdAt;
+
+      if (now.difference(openedAt) < staleAfter) continue;
+
       m.status = statusQueued;
+
+      m.lastAttemptAt = now;
+
       await m.save();
     }
   }
@@ -179,8 +194,21 @@ class OutboundMessageService {
     return Duration(seconds: base[idx]);
   }
 
-   static Future<OutboundMessage?> openSpecific(OutboundMessage msg) async {
+  static Future<OutboundMessage?> openSpecific(OutboundMessage msg) async {
     final now = DateTime.now();
+
+    const minCooldown = Duration(seconds: 2);
+    if (msg.lastAttemptAt != null &&
+        now.difference(msg.lastAttemptAt!) < minCooldown) {
+      return msg; // no-op, avoid inflating attempts instantly
+    }
+
+    // Hard stop
+    if (msg.attempts >= maxAttempts) {
+      msg.status = statusFailed;
+      await msg.save();
+      return msg;
+    }
 
     final ok = await _openComposer(msg);
 
@@ -190,24 +218,33 @@ class OutboundMessageService {
     if (ok) {
       msg.status = statusOpened;
       await msg.save();
+
       await AuditService.log(
         action: 'OUTBOUND_MSG_OPENED',
         propertyKey: msg.propertyKey,
         details:
-            'Opened composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
-      );
-      return msg;
-    } else {
-      msg.status = statusFailed;
-      await msg.save();
-      await AuditService.log(
-        action: 'OUTBOUND_MSG_OPEN_FAILED',
-        propertyKey: msg.propertyKey,
-        details:
-            'Failed to open composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone}',
+            'Opened composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone} attempts=${msg.attempts}',
       );
       return msg;
     }
+
+    // Same rule: only fail permanently when attempts exhausted.
+    if (msg.attempts >= maxAttempts) {
+      msg.status = statusFailed;
+    } else {
+      msg.status = statusQueued;
+    }
+
+    await msg.save();
+
+    await AuditService.log(
+      action: 'OUTBOUND_MSG_OPEN_FAILED',
+      propertyKey: msg.propertyKey,
+      details:
+          'Failed to open composer (specific) id=${msg.id} channel=${msg.channel} to=${msg.toPhone} attempts=${msg.attempts}',
+    );
+
+    return msg;
   }
 
   static Future<bool> _openComposer(OutboundMessage msg) async {
@@ -223,13 +260,9 @@ class OutboundMessageService {
     }
 
     if (channel == 'sms') {
-      return SmsService.openSms(
-        toPhone: msg.toPhone,
-        body: msg.body,
-      );
+      return SmsService.openSms(toPhone: msg.toPhone, body: msg.body);
     }
 
     return false;
   }
-
 }

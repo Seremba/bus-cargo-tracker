@@ -47,7 +47,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     _controller = TabController(length: 4, vsync: this);
 
     final initial = (widget.channelFilter ?? '').trim().toLowerCase();
-    _channelMode = (initial == 'sms' || initial == 'whatsapp') ? initial : 'all';
+    _channelMode = (initial == 'sms' || initial == 'whatsapp')
+        ? initial
+        : 'all';
   }
 
   @override
@@ -89,20 +91,22 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     if (_busy) return;
     setState(() => _busy = true);
 
-    final box = HiveService.outboundMessageBox();
-
-    // Compute count from Hive to avoid relying on service return type
-    final beforeOpened = box.values.where((m) {
-      final st = m.status.trim().toLowerCase();
-      if (st != OutboundMessageService.statusOpened) return false;
-      return _passesChannel(m);
-    }).length;
-
     try {
+      final box = HiveService.outboundMessageBox();
+
+      // Count OPENED before
+      final beforeOpened = box.values.where((m) {
+        final st = m.status.trim().toLowerCase();
+        if (st != OutboundMessageService.statusOpened) return false;
+        return _passesChannel(m);
+      }).length;
+
+      // ✅ Actually requeue (manual admin action)
       await OutboundMessageService.requeueOpenedMessages();
 
       if (!mounted) return;
 
+      // Count OPENED after
       final afterOpened = box.values.where((m) {
         final st = m.status.trim().toLowerCase();
         if (st != OutboundMessageService.statusOpened) return false;
@@ -110,6 +114,7 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       }).length;
 
       final n = (beforeOpened - afterOpened);
+
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -124,9 +129,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       _controller.animateTo(0);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -163,22 +168,26 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}')),
+          SnackBar(
+            content: Text('Opened ${ch.toUpperCase()} for: ${msg.toPhone}'),
+          ),
         );
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}'),
+            content: Text(
+              'Failed to open ${ch.toUpperCase()} for: ${msg.toPhone}',
+            ),
           ),
         );
         _controller.animateTo(2); // Failed
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -201,22 +210,26 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Opened ${ch.toUpperCase()} for: ${res.toPhone}')),
+          SnackBar(
+            content: Text('Opened ${ch.toUpperCase()} for: ${res.toPhone}'),
+          ),
         );
         _controller.animateTo(1); // Opened
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed to open ${ch.toUpperCase()} for: ${res.toPhone}'),
+            content: Text(
+              'Failed to open ${ch.toUpperCase()} for: ${res.toPhone}',
+            ),
           ),
         );
         _controller.animateTo(2); // Failed
       }
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -229,16 +242,16 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       await OutboundMessageService.markSent(msg);
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Marked as sent ✅')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Marked as sent ✅')));
 
       _controller.animateTo(3);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -254,16 +267,16 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       );
       if (!mounted) return;
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Marked as failed ⚠️')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Marked as failed ⚠️')));
 
       _controller.animateTo(2);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -272,9 +285,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   Future<void> _copyToClipboard(String text, {String? toast}) async {
     await Clipboard.setData(ClipboardData(text: text));
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(toast ?? 'Copied ✅')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(toast ?? 'Copied ✅')));
   }
 
   @override
@@ -296,9 +309,18 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           child: AnimatedBuilder(
             animation: Listenable.merge([box.listenable(), _controller]),
             builder: (context, _) {
-              final q = _countForStatus(box, OutboundMessageService.statusQueued);
-              final o = _countForStatus(box, OutboundMessageService.statusOpened);
-              final f = _countForStatus(box, OutboundMessageService.statusFailed);
+              final q = _countForStatus(
+                box,
+                OutboundMessageService.statusQueued,
+              );
+              final o = _countForStatus(
+                box,
+                OutboundMessageService.statusOpened,
+              );
+              final f = _countForStatus(
+                box,
+                OutboundMessageService.statusFailed,
+              );
               final s = _countForStatus(box, OutboundMessageService.statusSent);
 
               return TabBar(
@@ -353,22 +375,19 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           final tabIndex = _controller.index;
           final status = _statusForTab(tabIndex);
 
-          final items = box.values
-              .where((m) {
-                final st = m.status.trim().toLowerCase();
-                if (st != status) return false;
-                return _passesChannel(m);
-              })
-              .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          final items = box.values.where((m) {
+            final st = m.status.trim().toLowerCase();
+            if (st != status) return false;
+            return _passesChannel(m);
+          }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
           final label = tabIndex == 0
               ? 'Queued'
               : tabIndex == 1
-                  ? 'Opened'
-                  : tabIndex == 2
-                      ? 'Failed'
-                      : 'Sent';
+              ? 'Opened'
+              : tabIndex == 2
+              ? 'Failed'
+              : 'Sent';
 
           final header = _channelMode == 'all'
               ? label
@@ -429,7 +448,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     final st = m.status.trim().toLowerCase();
     final ch = m.channel.trim().isEmpty ? 'whatsapp' : m.channel.trim();
 
-    final muted = Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.60);
+    final muted = Theme.of(
+      context,
+    ).colorScheme.onSurface.withValues(alpha: 0.60);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -454,7 +475,9 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
                       leading: const Icon(Icons.copy),
                       title: const Text('Copy message'),
                       subtitle: Text(
-                        m.body.length > 60 ? '${m.body.substring(0, 60)}…' : m.body,
+                        m.body.length > 60
+                            ? '${m.body.substring(0, 60)}…'
+                            : m.body,
                       ),
                       onTap: () => Navigator.pop(ctx, 'body'),
                     ),
@@ -477,7 +500,10 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           } else if (choice == 'body') {
             await _copyToClipboard(m.body, toast: 'Message copied ✅');
           } else if (choice == 'property') {
-            await _copyToClipboard(m.propertyKey, toast: 'Property key copied ✅');
+            await _copyToClipboard(
+              m.propertyKey,
+              toast: 'Property key copied ✅',
+            );
           }
         },
         child: Padding(

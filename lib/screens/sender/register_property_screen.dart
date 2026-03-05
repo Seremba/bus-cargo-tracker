@@ -42,14 +42,13 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
   }
 
   // Stable, human-friendly property code.
-  // Example: P-20260213-8F3K
+  // Example: P-20260305-G6KO
   String _generatePropertyCode() {
     final now = DateTime.now();
     final y = now.year.toString().padLeft(4, '0');
     final m = now.month.toString().padLeft(2, '0');
     final d = now.day.toString().padLeft(2, '0');
 
-    // 4-char base36 suffix (from milliseconds) — no extra packages.
     final ms = now.millisecondsSinceEpoch;
     final suffix = (ms % 1679616)
         .toRadixString(36)
@@ -57,84 +56,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         .padLeft(4, '0');
 
     return 'P-$y$m$d-$suffix';
-  }
-
-  /// Returns:
-  /// - 'qr'   => user wants to view QR
-  /// - 'done' => user wants to go to My Properties
-  /// - null   => dialog dismissed (we still treat as 'done')
-  Future<String?> _showPropertyRegisteredDialog(String code) async {
-    return showDialog<String>(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) {
-        return AlertDialog(
-          title: Row(
-            children: const [
-              Icon(Icons.check_circle, color: Colors.green),
-              SizedBox(width: 10),
-              Expanded(child: Text('Property Registered')),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text(
-                'Property Code',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
-              const SizedBox(height: 8),
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: SelectableText(
-                  code,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.w800,
-                    letterSpacing: 0.5,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Use this code for payment + lookup, and it is encoded inside the Property QR.',
-                style: TextStyle(
-                  color: Theme.of(
-                    context,
-                  ).colorScheme.onSurface.withValues(alpha: 0.70),
-                ),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () async {
-                await Clipboard.setData(ClipboardData(text: code));
-                if (!mounted) return;
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Property code copied ✅')),
-                );
-              },
-              child: const Text('Copy'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, 'qr'),
-              child: const Text('View QR'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, 'done'),
-              child: const Text('Done'),
-            ),
-          ],
-        );
-      },
-    );
   }
 
   void _resetForm() {
@@ -146,6 +67,29 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     setState(() => _selectedRoute = null);
   }
 
+  InputDecoration _dec({
+    required String label,
+    required IconData icon,
+    String? hint,
+  }) {
+    return InputDecoration(
+      labelText: label,
+      hintText: hint,
+      border: const OutlineInputBorder(),
+      prefixIcon: Icon(icon),
+    );
+  }
+
+  Widget _section(String title) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6, bottom: 8),
+      child: Text(
+        title,
+        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     FocusScope.of(context).unfocus();
     setState(() => _autoValidate = AutovalidateMode.onUserInteraction);
@@ -154,7 +98,9 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     if (_saving) return;
 
     if (Session.currentUserId == null ||
-        (Session.currentUserId ?? '').isEmpty) {
+        (Session.currentUserId ?? '').trim().isEmpty) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Session expired. Please login again.')),
       );
@@ -193,28 +139,39 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       await box.add(property);
       if (!mounted) return;
 
-      // ✅ Show dialog first (decides where to go next)
-      final choice = await _showPropertyRegisteredDialog(propertyCode);
+      // ✅ CRITICAL: clear any lingering SnackBars before navigation
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+      // ✅ UX: QR screen becomes the "success screen"
+      final goToMyProperties = await Navigator.push<bool>(
+        context,
+        MaterialPageRoute(
+          builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
+        ),
+      );
+
       if (!mounted) return;
 
-      if (choice == 'qr') {
-        await Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
-          ),
-        );
-        if (!mounted) return;
-      }
-
-      // Reset form for next registration
+      // Reset after the success flow
       _resetForm();
 
-      // ✅ Single, clear exit path
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-      );
+      // ✅ If user pressed Done on QR screen => go to My Properties
+      if (goToMyProperties == true) {
+        ScaffoldMessenger.of(context).clearSnackBars();
+        ScaffoldMessenger.of(context).hideCurrentSnackBar();
+
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
+        );
+      } else {
+        // If they backed out unexpectedly, still go to My Properties (safe default)
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
+        );
+      }
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -229,24 +186,22 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         title: const Text('Register Property'),
       ),
       body: Padding(
-        padding: const EdgeInsets.all(16.0),
+        padding: const EdgeInsets.all(16),
         child: Form(
           key: _formKey,
           autovalidateMode: _autoValidate,
           child: ListView(
             children: [
+              _section('Receiver'),
               TextFormField(
                 controller: receiverNameController,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Receiver Name',
-                  border: OutlineInputBorder(),
-                ),
+                decoration: _dec(label: 'Receiver Name', icon: Icons.person),
                 validator: (value) => (value == null || value.trim().isEmpty)
                     ? 'Receiver name required'
                     : null,
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: receiverPhoneController,
                 keyboardType: TextInputType.phone,
@@ -255,10 +210,10 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(15),
                 ],
-                decoration: const InputDecoration(
-                  labelText: 'Receiver Phone',
-                  border: OutlineInputBorder(),
-                  hintText: 'e.g. 0700000000',
+                decoration: _dec(
+                  label: 'Receiver Phone',
+                  icon: Icons.phone,
+                  hint: 'e.g. 0700000000',
                 ),
                 validator: (value) {
                   final v = value?.trim() ?? '';
@@ -267,30 +222,60 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 18),
+              _section('Cargo'),
               TextFormField(
                 controller: descriptionController,
                 textInputAction: TextInputAction.next,
-                decoration: const InputDecoration(
-                  labelText: 'Item Description',
-                  border: OutlineInputBorder(),
+                decoration: _dec(
+                  label: 'Item Description',
+                  icon: Icons.inventory_2_outlined,
+                  hint: 'e.g. Suitcase, TV, Box',
                 ),
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
+
               DropdownButtonFormField<AppRoute>(
-                initialValue: _selectedRoute,
-                decoration: const InputDecoration(
-                  labelText: 'Route',
-                  border: OutlineInputBorder(),
-                ),
+                value: _selectedRoute,
+                isExpanded: true,
+                decoration: _dec(label: 'Route', icon: Icons.alt_route)
+                    .copyWith(
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 14,
+                      ),
+                    ),
                 hint: const Text('Select route'),
                 items: routes
-                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
+                    .map(
+                      (r) => DropdownMenuItem<AppRoute>(
+                        value: r,
+                        child: Text(
+                          r.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    )
                     .toList(),
+                selectedItemBuilder: (context) {
+                  return routes.map((r) {
+                    return Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        r.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontWeight: FontWeight.w800),
+                      ),
+                    );
+                  }).toList();
+                },
                 validator: (v) => v == null ? 'Please select a route' : null,
                 onChanged: (v) => setState(() => _selectedRoute = v),
               ),
-              const SizedBox(height: 16),
+
+              const SizedBox(height: 12),
               TextFormField(
                 controller: itemCountController,
                 keyboardType: TextInputType.number,
@@ -299,9 +284,9 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(3),
                 ],
-                decoration: const InputDecoration(
-                  labelText: 'Number of Items',
-                  border: OutlineInputBorder(),
+                decoration: _dec(
+                  label: 'Number of Items',
+                  icon: Icons.format_list_numbered,
                 ),
                 validator: (value) {
                   final t = value?.trim() ?? '';
@@ -313,25 +298,27 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
+              const SizedBox(height: 12),
               TextFormField(
                 controller: destinationController,
                 textInputAction: TextInputAction.done,
-                decoration: const InputDecoration(
-                  labelText: 'Destination',
-                  border: OutlineInputBorder(),
+                decoration: _dec(
+                  label: 'Destination',
+                  icon: Icons.place_outlined,
+                  hint: 'e.g. Nairobi',
                 ),
                 validator: (value) => (value == null || value.trim().isEmpty)
                     ? 'Destination required'
                     : null,
               ),
-              const SizedBox(height: 24),
-              ElevatedButton(
+              const SizedBox(height: 18),
+              ElevatedButton.icon(
                 style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
+                  minimumSize: const Size.fromHeight(52),
                 ),
                 onPressed: _saving ? null : _submit,
-                child: Text(_saving ? 'Saving...' : 'Submit'),
+                icon: const Icon(Icons.check_circle_outline),
+                label: Text(_saving ? 'Saving...' : 'Submit'),
               ),
             ],
           ),

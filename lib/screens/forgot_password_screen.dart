@@ -37,167 +37,307 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
   void _snack(String msg) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+    final m = ScaffoldMessenger.of(context);
+    m.clearSnackBars();
+    m.hideCurrentSnackBar();
+    m.showSnackBar(SnackBar(content: Text(msg)));
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.65);
+
+    final displayPhone = _phone.text.trim().isEmpty
+        ? ''
+        : PhoneNormalizer.displayUg(_phone.text.trim());
+
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const Text('Reset Password')),
+      appBar: AppBar(
+        elevation: 0,
+        centerTitle: false,
+        titleSpacing: 16,
+        title: const Text(''),
+      ),
       body: SafeArea(
-        child: Padding(
+        child: ListView(
           padding: const EdgeInsets.all(16),
-          child: Form(
-            key: _formKey,
-            child: ListView(
+          children: [
+            // ✅ Brand header (consistent)
+            Row(
               children: [
-                const Text(
-                  'Reset your password',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-                ),
-                const SizedBox(height: 6),
-                Text(
-                  _otpSent
-                      ? 'Enter the OTP you received and set a new password.'
-                      : 'Enter your phone number and we will send you a reset OTP.',
-                ),
-                const SizedBox(height: 14),
-
-                TextFormField(
-                  controller: _phone,
-                  enabled: !_otpSent && !_loading, // ✅ lock phone once OTP sent
-                  keyboardType: TextInputType.phone,
-                  textInputAction:
-                      _otpSent ? TextInputAction.next : TextInputAction.done,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Phone',
-                    hintText: '07XXXXXXXX',
-                    border: OutlineInputBorder(),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  validator: (v) {
-                    final raw = (v ?? '').trim();
-                    if (raw.isEmpty) return 'Phone is required';
-
-                    final digits = PhoneNormalizer.digitsOnly(raw);
-                    if (digits.length < 9) return 'Enter a valid phone number';
-                    if (digits.length > 15) return 'Phone number too long';
-                    if (RegExp(r'^0+$').hasMatch(digits)) {
-                      return 'Enter a valid phone number';
-                    }
-
-                    // Only require "message-ready" when sending OTP
-                    if (!_otpSent) {
-                      final msg = PhoneNormalizer.normalizeForMessaging(raw);
-                      if (msg.isEmpty) {
-                        return 'Enter a message-ready number (07.. or include country code).';
-                      }
-                    }
-                    return null;
-                  },
+                  child: Icon(Icons.lock_reset_outlined, color: cs.primary),
                 ),
-
-                const SizedBox(height: 12),
-
-                if (_otpSent) ...[
-                  TextFormField(
-                    controller: _otp,
-                    focusNode: _otpFocus,
-                    keyboardType: TextInputType.number,
-                    textInputAction: TextInputAction.next,
-                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      labelText: 'OTP',
-                      border: OutlineInputBorder(),
-                    ),
-                    onFieldSubmitted: (_) {
-                      if (_loading) return;
-                      _newPassFocus.requestFocus();
-                    },
-                    validator: (v) {
-                      if (!_otpSent) return null;
-                      final t = (v ?? '').trim();
-                      if (t.isEmpty) return 'OTP is required';
-                      if (t.length < 4) return 'Enter a valid OTP';
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 12),
-
-                  TextFormField(
-                    controller: _newPassword,
-                    focusNode: _newPassFocus,
-                    obscureText: _hidePass,
-                    textInputAction: TextInputAction.done,
-                    onFieldSubmitted: (_) => _loading ? null : _resetPassword(),
-                    decoration: InputDecoration(
-                      labelText: 'New Password',
-                      helperText: 'Minimum 6 characters.',
-                      border: const OutlineInputBorder(),
-                      suffixIcon: IconButton(
-                        tooltip: _hidePass ? 'Show password' : 'Hide password',
-                        icon: Icon(
-                          _hidePass ? Icons.visibility : Icons.visibility_off,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Bebeto Cargo',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
                         ),
-                        onPressed: () => setState(() => _hidePass = !_hidePass),
                       ),
-                    ),
-                    validator: (v) {
-                      if (!_otpSent) return null;
-                      final t = (v ?? '').trim();
-                      if (t.isEmpty) return 'New password is required';
-                      if (t.length < 6) return 'At least 6 characters';
-                      return null;
-                    },
+                      const SizedBox(height: 2),
+                      Text(
+                        'Reset password',
+                        style: TextStyle(color: muted),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                ],
-
-                const SizedBox(height: 16),
-
-                if (!_otpSent) ...[
-                  ElevatedButton(
-                    onPressed: _loading ? null : _sendOtp,
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    child: _loading
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Send OTP'),
-                  ),
-                ] else ...[
-                  ElevatedButton(
-                    onPressed: _loading ? null : _resetPassword,
-                    style: ElevatedButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    child: _loading
-                        ? const SizedBox(
-                            height: 22,
-                            width: 22,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Text('Reset Password'),
-                  ),
-                  const SizedBox(height: 10),
-                  TextButton(
-                    onPressed: _loading
-                        ? null
-                        : () => setState(() {
-                              _otpSent = false;
-                              _otp.clear();
-                              _newPassword.clear();
-                            }),
-                    child: const Text('Back (send OTP again)'),
-                  ),
-                ],
+                ),
               ],
             ),
-          ),
+
+            const SizedBox(height: 18),
+
+            // ✅ Form container
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: cs.outlineVariant.withValues(alpha: 0.60),
+                ),
+              ),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      _otpSent ? 'Enter OTP and new password' : 'Reset your password',
+                      style: const TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      _otpSent
+                          ? 'Enter the OTP you received and choose a new password.'
+                          : 'Enter your phone number and we will send you a reset OTP.',
+                      style: TextStyle(color: muted),
+                    ),
+
+                    // ✅ little hint after OTP sent
+                    if (_otpSent && displayPhone.isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 10,
+                          vertical: 8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: cs.primary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: cs.primary.withValues(alpha: 0.18),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.sms_outlined,
+                                size: 18, color: cs.primary),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'OTP sent to $displayPhone',
+                                style: TextStyle(
+                                  color: cs.onSurface.withValues(alpha: 0.85),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+
+                    const SizedBox(height: 14),
+
+                    TextFormField(
+                      controller: _phone,
+                      enabled: !_otpSent && !_loading, // ✅ lock once OTP sent
+                      keyboardType: TextInputType.phone,
+                      textInputAction:
+                          _otpSent ? TextInputAction.next : TextInputAction.done,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(15),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Phone',
+                        hintText: '07XXXXXXXX or 2567XXXXXXXX',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                      validator: (v) {
+                        final raw = (v ?? '').trim();
+                        if (raw.isEmpty) return 'Phone is required';
+
+                        final digits = PhoneNormalizer.digitsOnly(raw);
+                        if (digits.length < 9) return 'Enter a valid phone number';
+                        if (digits.length > 15) return 'Phone number too long';
+                        if (RegExp(r'^0+$').hasMatch(digits)) {
+                          return 'Enter a valid phone number';
+                        }
+
+                        // Only require "message-ready" when sending OTP
+                        if (!_otpSent) {
+                          final msg = PhoneNormalizer.normalizeForMessaging(raw);
+                          if (msg.isEmpty) {
+                            return 'Enter a message-ready number (07.. or include country code).';
+                          }
+                        }
+                        return null;
+                      },
+                      onFieldSubmitted: (_) => _otpSent
+                          ? _otpFocus.requestFocus()
+                          : (_loading ? null : _sendOtp()),
+                    ),
+
+                    const SizedBox(height: 12),
+
+                    if (_otpSent) ...[
+                      TextFormField(
+                        controller: _otp,
+                        focusNode: _otpFocus,
+                        enabled: !_loading,
+                        keyboardType: TextInputType.number,
+                        textInputAction: TextInputAction.next,
+                        inputFormatters: [
+                          FilteringTextInputFormatter.digitsOnly,
+                          LengthLimitingTextInputFormatter(8),
+                        ],
+                        decoration: const InputDecoration(
+                          labelText: 'OTP',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.password_outlined),
+                        ),
+                        onFieldSubmitted: (_) {
+                          if (_loading) return;
+                          _newPassFocus.requestFocus();
+                        },
+                        validator: (v) {
+                          if (!_otpSent) return null;
+                          final t = (v ?? '').trim();
+                          if (t.isEmpty) return 'OTP is required';
+                          if (t.length < 4) return 'Enter a valid OTP';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+
+                      TextFormField(
+                        controller: _newPassword,
+                        focusNode: _newPassFocus,
+                        enabled: !_loading,
+                        obscureText: _hidePass,
+                        textInputAction: TextInputAction.done,
+                        onFieldSubmitted: (_) =>
+                            _loading ? null : _resetPassword(),
+                        decoration: InputDecoration(
+                          labelText: 'New Password',
+                          helperText: 'Minimum 6 characters.',
+                          border: const OutlineInputBorder(),
+                          prefixIcon: const Icon(Icons.lock_outline),
+                          suffixIcon: IconButton(
+                            tooltip: _hidePass ? 'Show password' : 'Hide password',
+                            icon: Icon(
+                              _hidePass ? Icons.visibility : Icons.visibility_off,
+                            ),
+                            onPressed: _loading
+                                ? null
+                                : () => setState(() => _hidePass = !_hidePass),
+                          ),
+                        ),
+                        validator: (v) {
+                          if (!_otpSent) return null;
+                          final t = (v ?? '').trim();
+                          if (t.isEmpty) return 'New password is required';
+                          if (t.length < 6) return 'At least 6 characters';
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+
+                    const SizedBox(height: 6),
+
+                    // ✅ Buttons
+                    if (!_otpSent) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _loading ? null : _sendOtp,
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: _loading
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.send),
+                          label: Text(_loading ? 'Sending…' : 'Send OTP'),
+                        ),
+                      ),
+                    ] else ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _loading ? null : _resetPassword,
+                          style: ElevatedButton.styleFrom(
+                            minimumSize: const Size.fromHeight(52),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                          ),
+                          icon: _loading
+                              ? const SizedBox(
+                                  height: 18,
+                                  width: 18,
+                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.lock_reset),
+                          label: Text(_loading ? 'Resetting…' : 'Reset Password'),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Center(
+                        child: TextButton(
+                          onPressed: _loading
+                              ? null
+                              : () => setState(() {
+                                    _otpSent = false;
+                                    _otp.clear();
+                                    _newPassword.clear();
+                                  }),
+                          child: const Text('Back (send OTP again)'),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -219,7 +359,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       if (res.ok) {
         setState(() => _otpSent = true);
 
-        // ✅ auto-focus OTP field after UI rebuild
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _otpFocus.requestFocus();
@@ -247,7 +386,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
       if (res.ok) {
         final display = PhoneNormalizer.displayUg(_phone.text.trim());
-        Navigator.pop(context, display); // ✅ return phone to Login
+        Navigator.pop(context, display); // 
       }
     } finally {
       if (mounted) setState(() => _loading = false);

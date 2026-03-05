@@ -33,6 +33,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
     super.dispose();
   }
 
+  void _toast(String msg) {
+    final m = ScaffoldMessenger.of(context);
+    m.clearSnackBars();
+    m.hideCurrentSnackBar();
+    m.showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   String _digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
 
   /// ✅ Normalize Uganda phone to a single canonical format:
@@ -69,151 +76,248 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.65);
+
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const Text('Create Account')),
+      appBar: AppBar(
+        elevation: 0,
+        centerTitle: false,
+        titleSpacing: 16,
+        title: const Text(''),
+      ),
       body: SafeArea(
-        child: Padding(
+        child: ListView(
           padding: const EdgeInsets.all(16),
-          child: Form(
-            key: _formKey,
-            child: ListView(
+          children: [
+            // ✅ Brand header (matches Login)
+            Row(
               children: [
-                const Text(
-                  'Create Sender Account',
-                  style: TextStyle(fontWeight: FontWeight.w800, fontSize: 18),
-                ),
-                const SizedBox(height: 6),
-                const Text(
-                  'Register as a sender to track your cargo and receive updates.',
-                ),
-                const SizedBox(height: 14),
-
-                TextFormField(
-                  controller: _name,
-                  textInputAction: TextInputAction.next,
-                  decoration: const InputDecoration(
-                    labelText: 'Full Name',
-                    border: OutlineInputBorder(),
+                Container(
+                  width: 44,
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(14),
                   ),
-                  validator: (v) {
-                    final t = (v ?? '').trim();
-                    if (t.isEmpty) return 'Name required';
-                    if (t.length < 2) return 'Enter full name';
-                    return null;
-                  },
+                  child: Icon(Icons.person_add_alt_1, color: cs.primary),
                 ),
-                const SizedBox(height: 12),
-
-                TextFormField(
-                  controller: _phone,
-                  keyboardType: TextInputType.phone,
-                  textInputAction: TextInputAction.next,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'Phone',
-                    hintText: '07XXXXXXXX or 2567XXXXXXXX',
-                    helperText: 'We will format your number automatically.',
-                    border: OutlineInputBorder(),
-                  ),
-                  validator: (v) {
-                    final canonical = _normalizePhoneUg(v ?? '');
-                    if (canonical.isEmpty) return 'Phone required';
-                    if (!_isValidUgMobileCanonical(canonical)) {
-                      return 'Enter a valid UG phone (07.. or 2567..)';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-
-                TextFormField(
-                  controller: _password,
-                  obscureText: _hidePass,
-                  textInputAction: TextInputAction.next,
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    helperText: 'Minimum 6 characters.',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      tooltip: _hidePass ? 'Show password' : 'Hide password',
-                      icon: Icon(
-                        _hidePass ? Icons.visibility : Icons.visibility_off,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Bebeto Cargo',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          height: 1.05,
+                        ),
                       ),
-                      onPressed: () => setState(() => _hidePass = !_hidePass),
-                    ),
-                  ),
-                  validator: (v) {
-                    final t = (v ?? '').trim();
-                    if (t.isEmpty) return 'Password required';
-                    if (t.length < 6) return 'At least 6 characters';
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 12),
-
-                TextFormField(
-                  controller: _confirmPassword,
-                  obscureText: _hideConfirmPass,
-                  textInputAction: TextInputAction.done,
-                  onFieldSubmitted: (_) => _loading ? null : _submit(),
-                  decoration: InputDecoration(
-                    labelText: 'Confirm Password',
-                    border: const OutlineInputBorder(),
-                    suffixIcon: IconButton(
-                      tooltip: _hideConfirmPass
-                          ? 'Show password'
-                          : 'Hide password',
-                      icon: Icon(
-                        _hideConfirmPass
-                            ? Icons.visibility
-                            : Icons.visibility_off,
+                      const SizedBox(height: 2),
+                      Text(
+                        'Create a sender account',
+                        style: TextStyle(color: muted),
                       ),
-                      onPressed: () =>
-                          setState(() => _hideConfirmPass = !_hideConfirmPass),
-                    ),
+                    ],
                   ),
-                  validator: (v) {
-                    final t = (v ?? '').trim();
-                    if (t.isEmpty) return 'Confirm your password';
-                    if (t != _password.text.trim()) {
-                      return 'Passwords do not match';
-                    }
-                    return null;
-                  },
-                ),
-                const SizedBox(height: 18),
-
-                ElevatedButton(
-                  onPressed: _loading ? null : _submit,
-                  style: ElevatedButton.styleFrom(
-                    minimumSize: const Size.fromHeight(48),
-                  ),
-                  child: _loading
-                      ? const SizedBox(
-                          height: 22,
-                          width: 22,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Text('Create sender account'),
-                ),
-                const SizedBox(height: 10),
-
-                TextButton(
-                  onPressed: _loading
-                      ? null
-                      : () {
-                          Navigator.pushReplacement(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => const LoginScreen(),
-                            ),
-                          );
-                        },
-                  child: const Text('Already have an account? Login'),
                 ),
               ],
             ),
-          ),
+
+            const SizedBox(height: 18),
+
+            // ✅ Form container (structure + calm)
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: cs.surface,
+                borderRadius: BorderRadius.circular(18),
+                border: Border.all(
+                  color: cs.outlineVariant.withValues(alpha: 0.60),
+                ),
+              ),
+              child: Form(
+                key: _formKey,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'Create Sender Account',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w900,
+                        fontSize: 20,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Track your cargo and receive updates.',
+                      style: TextStyle(color: muted),
+                    ),
+                    const SizedBox(height: 14),
+
+                    TextFormField(
+                      controller: _name,
+                      enabled: !_loading,
+                      textInputAction: TextInputAction.next,
+                      decoration: const InputDecoration(
+                        labelText: 'Full Name',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.badge_outlined),
+                      ),
+                      validator: (v) {
+                        final t = (v ?? '').trim();
+                        if (t.isEmpty) return 'Name required';
+                        if (t.length < 2) return 'Enter full name';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextFormField(
+                      controller: _phone,
+                      enabled: !_loading,
+                      keyboardType: TextInputType.phone,
+                      textInputAction: TextInputAction.next,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                        LengthLimitingTextInputFormatter(15),
+                      ],
+                      decoration: const InputDecoration(
+                        labelText: 'Phone',
+                        hintText: '07XXXXXXXX or 2567XXXXXXXX',
+                        helperText: 'We will format your number automatically.',
+                        border: OutlineInputBorder(),
+                        prefixIcon: Icon(Icons.phone_outlined),
+                      ),
+                      validator: (v) {
+                        final canonical = _normalizePhoneUg(v ?? '');
+                        if (canonical.isEmpty) return 'Phone required';
+                        if (!_isValidUgMobileCanonical(canonical)) {
+                          return 'Enter a valid UG phone (07.. or 2567..)';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextFormField(
+                      controller: _password,
+                      enabled: !_loading,
+                      obscureText: _hidePass,
+                      textInputAction: TextInputAction.next,
+                      decoration: InputDecoration(
+                        labelText: 'Password',
+                        helperText: 'Minimum 6 characters.',
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          tooltip: _hidePass
+                              ? 'Show password'
+                              : 'Hide password',
+                          icon: Icon(
+                            _hidePass ? Icons.visibility : Icons.visibility_off,
+                          ),
+                          onPressed: _loading
+                              ? null
+                              : () => setState(() => _hidePass = !_hidePass),
+                        ),
+                      ),
+                      validator: (v) {
+                        final t = (v ?? '').trim();
+                        if (t.isEmpty) return 'Password required';
+                        if (t.length < 6) return 'At least 6 characters';
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+
+                    TextFormField(
+                      controller: _confirmPassword,
+                      enabled: !_loading,
+                      obscureText: _hideConfirmPass,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => _loading ? null : _submit(),
+                      decoration: InputDecoration(
+                        labelText: 'Confirm Password',
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.lock_reset_outlined),
+                        suffixIcon: IconButton(
+                          tooltip: _hideConfirmPass
+                              ? 'Show password'
+                              : 'Hide password',
+                          icon: Icon(
+                            _hideConfirmPass
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                          ),
+                          onPressed: _loading
+                              ? null
+                              : () => setState(
+                                  () => _hideConfirmPass = !_hideConfirmPass,
+                                ),
+                        ),
+                      ),
+                      validator: (v) {
+                        final t = (v ?? '').trim();
+                        if (t.isEmpty) return 'Confirm your password';
+                        if (t != _password.text.trim()) {
+                          return 'Passwords do not match';
+                        }
+                        return null;
+                      },
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: _loading ? null : _submit,
+                        style: ElevatedButton.styleFrom(
+                          minimumSize: const Size.fromHeight(52),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                        ),
+                        icon: _loading
+                            ? const SizedBox(
+                                height: 18,
+                                width: 18,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                ),
+                              )
+                            : const Icon(Icons.check_circle_outline),
+                        label: Text(
+                          _loading ? 'Creating…' : 'Create sender account',
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Center(
+                      child: TextButton(
+                        onPressed: _loading
+                            ? null
+                            : () {
+                                Navigator.pushReplacement(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (_) => const LoginScreen(),
+                                  ),
+                                );
+                              },
+                        child: const Text('Already have an account? Login'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -225,7 +329,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     final fullName = _name.text.trim();
-    final phone = _phone.text.trim();
+    final rawPhone = _phone.text.trim();
+    final canonical = _normalizePhoneUg(rawPhone);
     final password = _password.text.trim();
 
     setState(() => _loading = true);
@@ -233,26 +338,20 @@ class _RegisterScreenState extends State<RegisterScreen> {
     try {
       final user = await AuthService.registerSender(
         fullName: fullName,
-        phone: phone,
+        phone: canonical, // ✅ store canonical
         password: password,
       );
 
       if (!mounted) return;
 
       if (user == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Registration failed ❌ (phone may already exist)'),
-          ),
-        );
+        _toast('Registration failed ❌ (phone may already exist)');
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Account created ✅ Please login')),
-      );
+      _toast('Account created ✅ Please login');
 
-      final displayPhone = PhoneNormalizer.displayUg(phone);
+      final displayPhone = PhoneNormalizer.displayUg(canonical);
 
       Navigator.pushAndRemoveUntil(
         context,
@@ -263,9 +362,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       );
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Failed to create account ❌')),
-      );
+      _toast('Failed to create account ❌');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

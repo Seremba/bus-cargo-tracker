@@ -5,9 +5,10 @@ import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../services/hive_service.dart';
 import '../../services/session.dart';
-import '../sender/my_properties_screen.dart';
+
 import '../../data/routes.dart';
 import '../common/property_qr_display_screen.dart';
+import '../sender/my_properties_screen.dart';
 
 class RegisterPropertyScreen extends StatefulWidget {
   const RegisterPropertyScreen({super.key});
@@ -58,33 +59,165 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     return 'P-$y$m$d-$suffix';
   }
 
-  Future<void> _showPropertyCodeDialog(String code) async {
-    await showDialog<void>(
+  /// Returns:
+  /// - 'qr'   => user wants to view QR
+  /// - 'done' => user wants to go to My Properties
+  /// - null   => dialog dismissed (we still treat as 'done')
+  Future<String?> _showPropertyRegisteredDialog(String code) async {
+    return showDialog<String>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Property Registered ✅'),
-        content: Text(
-          'Property Code:\n\n$code\n\n'
-          'This code is used for the Property QR (payment + lookup).',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () async {
-              await Clipboard.setData(ClipboardData(text: code));
-              if (!mounted) return;
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('Property code copied ✅')),
-              );
-            },
-            child: const Text('Copy'),
+      barrierDismissible: false,
+      builder: (_) {
+        return AlertDialog(
+          title: Row(
+            children: const [
+              Icon(Icons.check_circle, color: Colors.green),
+              SizedBox(width: 10),
+              Expanded(child: Text('Property Registered')),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Continue'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Property Code',
+                style: TextStyle(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: SelectableText(
+                  code,
+                  style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Text(
+                'Use this code for payment + lookup, and it is encoded inside the Property QR.',
+                style: TextStyle(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurface.withValues(alpha: 0.70),
+                ),
+              ),
+            ],
           ),
-        ],
-      ),
+          actions: [
+            TextButton(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: code));
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Property code copied ✅')),
+                );
+              },
+              child: const Text('Copy'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, 'qr'),
+              child: const Text('View QR'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, 'done'),
+              child: const Text('Done'),
+            ),
+          ],
+        );
+      },
     );
+  }
+
+  void _resetForm() {
+    receiverNameController.clear();
+    receiverPhoneController.clear();
+    descriptionController.clear();
+    destinationController.clear();
+    itemCountController.text = '1';
+    setState(() => _selectedRoute = null);
+  }
+
+  Future<void> _submit() async {
+    FocusScope.of(context).unfocus();
+    setState(() => _autoValidate = AutovalidateMode.onUserInteraction);
+
+    if (!_formKey.currentState!.validate()) return;
+    if (_saving) return;
+
+    if (Session.currentUserId == null ||
+        (Session.currentUserId ?? '').isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Session expired. Please login again.')),
+      );
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    try {
+      final box = HiveService.propertyBox();
+      final count = int.parse(itemCountController.text.trim());
+      final route = _selectedRoute!;
+      final propertyCode = _generatePropertyCode();
+
+      final property = Property(
+        receiverName: receiverNameController.text.trim(),
+        receiverPhone: receiverPhoneController.text.trim(),
+        description: descriptionController.text.trim(),
+        destination: destinationController.text.trim(),
+        itemCount: count,
+        routeId: route.id,
+        routeName: route.name,
+        createdAt: DateTime.now(),
+        status: PropertyStatus.pending,
+        createdByUserId: Session.currentUserId!,
+        propertyCode: propertyCode,
+        amountPaidTotal: 0,
+        currency: 'UGX',
+        lastPaidAt: null,
+        lastPaymentMethod: '',
+        lastPaidByUserId: '',
+        lastPaidAtStation: '',
+        lastTxnRef: '',
+      );
+
+      await box.add(property);
+      if (!mounted) return;
+
+      // ✅ Show dialog first (decides where to go next)
+      final choice = await _showPropertyRegisteredDialog(propertyCode);
+      if (!mounted) return;
+
+      if (choice == 'qr') {
+        await Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
+          ),
+        );
+        if (!mounted) return;
+      }
+
+      // Reset form for next registration
+      _resetForm();
+
+      // ✅ Single, clear exit path
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
+      );
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
   }
 
   @override
@@ -114,7 +247,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                     : null,
               ),
               const SizedBox(height: 16),
-
               TextFormField(
                 controller: receiverPhoneController,
                 keyboardType: TextInputType.phone,
@@ -136,7 +268,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 },
               ),
               const SizedBox(height: 16),
-
               TextFormField(
                 controller: descriptionController,
                 textInputAction: TextInputAction.next,
@@ -146,7 +277,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 ),
               ),
               const SizedBox(height: 16),
-
               DropdownButtonFormField<AppRoute>(
                 initialValue: _selectedRoute,
                 decoration: const InputDecoration(
@@ -161,7 +291,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 onChanged: (v) => setState(() => _selectedRoute = v),
               ),
               const SizedBox(height: 16),
-
               TextFormField(
                 controller: itemCountController,
                 keyboardType: TextInputType.number,
@@ -185,7 +314,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 },
               ),
               const SizedBox(height: 16),
-
               TextFormField(
                 controller: destinationController,
                 textInputAction: TextInputAction.done,
@@ -198,7 +326,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                     : null,
               ),
               const SizedBox(height: 24),
-
               ElevatedButton(
                 style: ElevatedButton.styleFrom(
                   minimumSize: const Size.fromHeight(48),
@@ -211,81 +338,5 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         ),
       ),
     );
-  }
-
-  Future<void> _submit() async {
-    FocusScope.of(context).unfocus();
-    setState(() => _autoValidate = AutovalidateMode.onUserInteraction);
-
-    if (!_formKey.currentState!.validate()) return;
-    if (_saving) return;
-
-    setState(() => _saving = true);
-
-    try {
-      final box = HiveService.propertyBox();
-      final count = int.parse(itemCountController.text.trim());
-      final route = _selectedRoute!;
-
-      final propertyCode = _generatePropertyCode();
-
-      final property = Property(
-        receiverName: receiverNameController.text.trim(),
-        receiverPhone: receiverPhoneController.text.trim(),
-        description: descriptionController.text.trim(),
-        destination: destinationController.text.trim(),
-        itemCount: count,
-        routeId: route.id,
-        routeName: route.name,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: Session.currentUserId!,
-        propertyCode: propertyCode,
-
-        amountPaidTotal: 0,
-        currency: 'UGX',
-        lastPaidAt: null,
-        lastPaymentMethod: '',
-        lastPaidByUserId: '',
-        lastPaidAtStation: '',
-        lastTxnRef: '',
-      );
-
-      await box.add(property);
-
-      if (!mounted) return;
-
-      await Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
-        ),
-      );
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-      );
-
-      receiverNameController.clear();
-      receiverPhoneController.clear();
-      descriptionController.clear();
-      destinationController.clear();
-      itemCountController.text = '1';
-      setState(() => _selectedRoute = null);
-
-      if (!mounted) return;
-
-      await _showPropertyCodeDialog(propertyCode);
-
-      if (!mounted) return;
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-      );
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
   }
 }

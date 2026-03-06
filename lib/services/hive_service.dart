@@ -12,6 +12,7 @@ import '../models/trip.dart';
 import '../models/user.dart';
 
 import 'outbound_message_service.dart';
+import '../models/sync_event.dart';
 
 class HiveService {
   static const String _propertyBoxName = 'properties';
@@ -24,6 +25,7 @@ class HiveService {
   static const String _printerSettingsBoxName = 'printer_settings';
   static const String _outboundMsgBoxName = 'outbound_messages';
   static const String _passwordResetBoxName = 'password_resets';
+  static const String _syncEventBoxName = 'sync_events';
 
   static const String _appSettingsBoxName = 'app_settings';
 
@@ -44,6 +46,7 @@ class HiveService {
     await openPrinterSettingsBox();
     await openOutboundMessageBox();
     await openPasswordResetBox();
+    await openSyncEventBox();
 
     await OutboundMessageService.requeueOpenedMessages();
   }
@@ -214,6 +217,21 @@ class HiveService {
     }
     return Hive.box(_passwordResetBoxName);
   }
+  static Future<void> openSyncEventBox() async {
+  if (!Hive.isBoxOpen(_syncEventBoxName)) {
+    await Hive.openBox<SyncEvent>(_syncEventBoxName);
+  }
+}
+
+static Box<SyncEvent> syncEventBox() {
+  if (!Hive.isBoxOpen(_syncEventBoxName)) {
+    throw HiveError(
+      'SyncEvent box is not open.\nCall HiveService.openSyncEventBox() first.',
+    );
+  }
+
+  return Hive.box<SyncEvent>(_syncEventBoxName);
+}
 
   static Future<void> closeAll() async {
     await Hive.close();

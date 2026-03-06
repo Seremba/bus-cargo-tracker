@@ -14,6 +14,8 @@ import 'models/trip.dart';
 import 'models/trip_status.dart';
 import 'models/user.dart';
 import 'models/user_role.dart';
+import 'models/sync_event.dart';
+import 'models/sync_event_type.dart';
 
 import 'screens/splash/splash_screen.dart';
 
@@ -40,6 +42,8 @@ void main() async {
   Hive.registerAdapter(PaymentRecordAdapter());
   Hive.registerAdapter(PrinterSettingsAdapter());
   Hive.registerAdapter(OutboundMessageAdapter());
+  Hive.registerAdapter(SyncEventTypeAdapter());
+Hive.registerAdapter(SyncEventAdapter());
 
   await HiveService.openAllBoxes();
 

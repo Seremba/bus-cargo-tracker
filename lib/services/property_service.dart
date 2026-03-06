@@ -20,15 +20,17 @@ import 'whatsapp_service.dart';
 import 'phone_normalizer.dart';
 
 class PropertyService {
-    static String _generatePropertyCode() {
+  static String _generatePropertyCode() {
     final now = DateTime.now();
     final y = now.year.toString().padLeft(4, '0');
     final m = now.month.toString().padLeft(2, '0');
     final d = now.day.toString().padLeft(2, '0');
 
     final ms = now.millisecondsSinceEpoch;
-    final suffix =
-        (ms % 1679616).toRadixString(36).toUpperCase().padLeft(4, '0');
+    final suffix = (ms % 1679616)
+        .toRadixString(36)
+        .toUpperCase()
+        .padLeft(4, '0');
 
     return 'P-$y$m$d-$suffix';
   }
@@ -134,6 +136,7 @@ class PropertyService {
 
     return saved;
   }
+
   static String _generateOtp() {
     final ms = DateTime.now().millisecondsSinceEpoch;
     return (100000 + (ms % 900000)).toString();

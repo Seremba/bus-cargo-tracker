@@ -88,16 +88,11 @@ class SyncService {
   static List<SyncEvent> pendingPushEvents() {
     final box = HiveService.syncEventBox();
 
-    return box.values
-        .where((e) => e.pendingPush && !e.pushed)
-        .toList()
+    return box.values.where((e) => e.pendingPush && !e.pushed).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
-  static Future<void> markPushed(
-    String eventId, {
-    String? remoteCursor,
-  }) async {
+  static Future<void> markPushed(String eventId, {String? remoteCursor}) async {
     final event = getById(eventId);
     if (event == null) return;
 
@@ -112,10 +107,7 @@ class SyncService {
     await event.save();
   }
 
-  static Future<void> markPushFailed(
-    String eventId,
-    String error,
-  ) async {
+  static Future<void> markPushFailed(String eventId, String error) async {
     final event = getById(eventId);
     if (event == null) return;
 

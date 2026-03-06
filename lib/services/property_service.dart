@@ -14,11 +14,126 @@ import 'property_item_service.dart';
 import 'receiver_tracking_service.dart';
 import 'role_guard.dart';
 import 'session.dart';
+import 'sync_service.dart';
 import 'trip_service.dart';
 import 'whatsapp_service.dart';
 import 'phone_normalizer.dart';
 
 class PropertyService {
+    static String _generatePropertyCode() {
+    final now = DateTime.now();
+    final y = now.year.toString().padLeft(4, '0');
+    final m = now.month.toString().padLeft(2, '0');
+    final d = now.day.toString().padLeft(2, '0');
+
+    final ms = now.millisecondsSinceEpoch;
+    final suffix =
+        (ms % 1679616).toRadixString(36).toUpperCase().padLeft(4, '0');
+
+    return 'P-$y$m$d-$suffix';
+  }
+
+  static Future<Property> registerProperty({
+    required String receiverName,
+    required String receiverPhone,
+    required String description,
+    required String destination,
+    required int itemCount,
+    required String createdByUserId,
+    required String routeId,
+    required String routeName,
+  }) async {
+    final box = HiveService.propertyBox();
+
+    final cleanReceiverName = receiverName.trim();
+    final cleanReceiverPhone = receiverPhone.trim();
+    final cleanDescription = description.trim();
+    final cleanDestination = destination.trim();
+    final cleanCreatedByUserId = createdByUserId.trim();
+    final cleanRouteId = routeId.trim();
+    final cleanRouteName = routeName.trim();
+
+    if (cleanCreatedByUserId.isEmpty) {
+      throw ArgumentError('Created-by user is required');
+    }
+    if (cleanReceiverName.isEmpty) {
+      throw ArgumentError('Receiver name is required');
+    }
+    if (cleanReceiverPhone.isEmpty) {
+      throw ArgumentError('Receiver phone is required');
+    }
+    if (cleanDescription.isEmpty) {
+      throw ArgumentError('Description is required');
+    }
+    if (cleanDestination.isEmpty) {
+      throw ArgumentError('Destination is required');
+    }
+    if (cleanRouteId.isEmpty || cleanRouteName.isEmpty) {
+      throw ArgumentError('Route is required');
+    }
+    if (itemCount < 1) {
+      throw ArgumentError('Item count must be at least 1');
+    }
+
+    final now = DateTime.now();
+    final propertyCode = _generatePropertyCode();
+
+    final property = Property(
+      receiverName: cleanReceiverName,
+      receiverPhone: cleanReceiverPhone,
+      description: cleanDescription,
+      destination: cleanDestination,
+      itemCount: itemCount,
+      routeId: cleanRouteId,
+      routeName: cleanRouteName,
+      createdAt: now,
+      status: PropertyStatus.pending,
+      createdByUserId: cleanCreatedByUserId,
+      propertyCode: propertyCode,
+      amountPaidTotal: 0,
+      currency: 'UGX',
+      lastPaidAt: null,
+      lastPaymentMethod: '',
+      lastPaidByUserId: '',
+      lastPaidAtStation: '',
+      lastTxnRef: '',
+    );
+
+    final key = await box.add(property);
+    final saved = box.get(key) ?? property;
+
+    await AuditService.log(
+      action: 'PROPERTY_REGISTERED',
+      propertyKey: key.toString(),
+      details:
+          'Receiver=${saved.receiverName}, Phone=${saved.receiverPhone}, '
+          'Destination=${saved.destination}, Route=${saved.routeName}, '
+          'Items=${saved.itemCount}, Code=${saved.propertyCode}',
+    );
+
+    await SyncService.enqueuePropertyCreated(
+      propertyId: key.toString(),
+      actorUserId: cleanCreatedByUserId,
+      payload: {
+        'propertyKey': key.toString(),
+        'propertyCode': saved.propertyCode,
+        'receiverName': saved.receiverName,
+        'receiverPhone': saved.receiverPhone,
+        'description': saved.description,
+        'destination': saved.destination,
+        'itemCount': saved.itemCount,
+        'routeId': saved.routeId,
+        'routeName': saved.routeName,
+        'status': saved.status.name,
+        'createdAt': saved.createdAt.toIso8601String(),
+        'createdByUserId': saved.createdByUserId,
+        'amountPaidTotal': saved.amountPaidTotal,
+        'currency': saved.currency,
+      },
+    );
+
+    return saved;
+  }
   static String _generateOtp() {
     final ms = DateTime.now().millisecondsSinceEpoch;
     return (100000 + (ms % 900000)).toString();

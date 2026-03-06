@@ -43,7 +43,7 @@ void main() async {
   Hive.registerAdapter(PrinterSettingsAdapter());
   Hive.registerAdapter(OutboundMessageAdapter());
   Hive.registerAdapter(SyncEventTypeAdapter());
-Hive.registerAdapter(SyncEventAdapter());
+  Hive.registerAdapter(SyncEventAdapter());
 
   await HiveService.openAllBoxes();
 

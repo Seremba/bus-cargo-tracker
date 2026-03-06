@@ -1,9 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../models/property.dart';
-import '../../models/property_status.dart';
-import '../../services/hive_service.dart';
+import '../../services/property_service.dart';
 import '../../services/session.dart';
 
 import '../../data/routes.dart';
@@ -39,23 +37,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     destinationController.dispose();
     itemCountController.dispose();
     super.dispose();
-  }
-
-  // Stable, human-friendly property code.
-  // Example: P-20260305-G6KO
-  String _generatePropertyCode() {
-    final now = DateTime.now();
-    final y = now.year.toString().padLeft(4, '0');
-    final m = now.month.toString().padLeft(2, '0');
-    final d = now.day.toString().padLeft(2, '0');
-
-    final ms = now.millisecondsSinceEpoch;
-    final suffix = (ms % 1679616)
-        .toRadixString(36)
-        .toUpperCase()
-        .padLeft(4, '0');
-
-    return 'P-$y$m$d-$suffix';
   }
 
   void _resetForm() {
@@ -97,8 +78,8 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     if (!_formKey.currentState!.validate()) return;
     if (_saving) return;
 
-    if (Session.currentUserId == null ||
-        (Session.currentUserId ?? '').trim().isEmpty) {
+    final actorUserId = (Session.currentUserId ?? '').trim();
+    if (actorUserId.isEmpty) {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(
@@ -110,40 +91,27 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     setState(() => _saving = true);
 
     try {
-      final box = HiveService.propertyBox();
       final count = int.parse(itemCountController.text.trim());
       final route = _selectedRoute!;
-      final propertyCode = _generatePropertyCode();
 
-      final property = Property(
-        receiverName: receiverNameController.text.trim(),
-        receiverPhone: receiverPhoneController.text.trim(),
-        description: descriptionController.text.trim(),
-        destination: destinationController.text.trim(),
+      final property = await PropertyService.registerProperty(
+        receiverName: receiverNameController.text,
+        receiverPhone: receiverPhoneController.text,
+        description: descriptionController.text,
+        destination: destinationController.text,
         itemCount: count,
+        createdByUserId: actorUserId,
         routeId: route.id,
         routeName: route.name,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: Session.currentUserId!,
-        propertyCode: propertyCode,
-        amountPaidTotal: 0,
-        currency: 'UGX',
-        lastPaidAt: null,
-        lastPaymentMethod: '',
-        lastPaidByUserId: '',
-        lastPaidAtStation: '',
-        lastTxnRef: '',
       );
 
-      await box.add(property);
       if (!mounted) return;
 
-      // ✅ CRITICAL: clear any lingering SnackBars before navigation
+      final propertyCode = property.propertyCode;
+
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      // ✅ UX: QR screen becomes the "success screen"
       final goToMyProperties = await Navigator.push<bool>(
         context,
         MaterialPageRoute(
@@ -153,10 +121,8 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
       if (!mounted) return;
 
-      // Reset after the success flow
       _resetForm();
 
-      // ✅ If user pressed Done on QR screen => go to My Properties
       if (goToMyProperties == true) {
         ScaffoldMessenger.of(context).clearSnackBars();
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
@@ -166,14 +132,27 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
           MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
         );
       } else {
-        // If they backed out unexpectedly, still go to My Properties (safe default)
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
         );
       }
+    } on FormatException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid number of items.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to register property: $e')),
+      );
     } finally {
-      if (mounted) setState(() => _saving = false);
+      if (mounted) {
+        setState(() => _saving = false);
+      }
     }
   }
 
@@ -222,59 +201,30 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 18),
-              _section('Cargo'),
+              const SizedBox(height: 16),
+              _section('Property'),
               TextFormField(
                 controller: descriptionController,
                 textInputAction: TextInputAction.next,
                 decoration: _dec(
                   label: 'Item Description',
                   icon: Icons.inventory_2_outlined,
-                  hint: 'e.g. Suitcase, TV, Box',
                 ),
+                validator: (value) => (value == null || value.trim().isEmpty)
+                    ? 'Description required'
+                    : null,
               ),
               const SizedBox(height: 12),
-
               DropdownButtonFormField<AppRoute>(
-                value: _selectedRoute,
-                isExpanded: true,
-                decoration: _dec(label: 'Route', icon: Icons.alt_route)
-                    .copyWith(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 14,
-                      ),
-                    ),
+                initialValue: _selectedRoute,
+                decoration: _dec(label: 'Route', icon: Icons.route),
                 hint: const Text('Select route'),
                 items: routes
-                    .map(
-                      (r) => DropdownMenuItem<AppRoute>(
-                        value: r,
-                        child: Text(
-                          r.name,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    )
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
                     .toList(),
-                selectedItemBuilder: (context) {
-                  return routes.map((r) {
-                    return Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        r.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                    );
-                  }).toList();
-                },
                 validator: (v) => v == null ? 'Please select a route' : null,
                 onChanged: (v) => setState(() => _selectedRoute = v),
               ),
-
               const SizedBox(height: 12),
               TextFormField(
                 controller: itemCountController,
@@ -304,21 +254,19 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 textInputAction: TextInputAction.done,
                 decoration: _dec(
                   label: 'Destination',
-                  icon: Icons.place_outlined,
-                  hint: 'e.g. Nairobi',
+                  icon: Icons.location_on_outlined,
                 ),
                 validator: (value) => (value == null || value.trim().isEmpty)
                     ? 'Destination required'
                     : null,
               ),
-              const SizedBox(height: 18),
-              ElevatedButton.icon(
+              const SizedBox(height: 24),
+              ElevatedButton(
                 style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(52),
+                  minimumSize: const Size.fromHeight(48),
                 ),
                 onPressed: _saving ? null : _submit,
-                icon: const Icon(Icons.check_circle_outline),
-                label: Text(_saving ? 'Saving...' : 'Submit'),
+                child: Text(_saving ? 'Saving...' : 'Submit'),
               ),
             ],
           ),

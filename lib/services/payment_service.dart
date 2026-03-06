@@ -4,13 +4,14 @@ import 'audit_service.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
 import 'session.dart';
+import 'sync_service.dart';
 
 class PaymentService {
   static String _id() => DateTime.now().millisecondsSinceEpoch.toString();
 
   static Future<PaymentRecord> recordPayment({
     required Property property,
-    required int amount, // can be negative for refund/adjustment
+    required int amount, 
     String currency = 'UGX',
     required String method,
     String txnRef = '',
@@ -49,12 +50,11 @@ class PaymentService {
       throw ArgumentError('Invalid kind: $cleanKind');
     }
 
-    // Prevent total from going below 0 (clamp negative ops)
     final currentTotal = fresh.amountPaidTotal;
     int appliedAmount = amount;
 
     if (currentTotal + appliedAmount < 0) {
-      appliedAmount = -currentTotal; // clamp to zero
+      appliedAmount = -currentTotal;
     }
     if (appliedAmount == 0) {
       throw StateError(
@@ -75,9 +75,9 @@ class PaymentService {
       kind: cleanKind,
       note: cleanNote,
     );
+
     await payBox.add(rec);
 
-    // Update property totals
     fresh.amountPaidTotal = currentTotal + appliedAmount;
     fresh.currency = cleanCurrency;
     fresh.lastPaidAt = rec.createdAt;
@@ -88,11 +88,33 @@ class PaymentService {
 
     await fresh.save();
 
+    await SyncService.enqueuePaymentRecorded(
+      paymentId: rec.paymentId,
+      actorUserId: rec.recordedByUserId.trim().isEmpty
+          ? 'system'
+          : rec.recordedByUserId,
+      payload: {
+        'paymentId': rec.paymentId,
+        'propertyKey': rec.propertyKey,
+        'amount': rec.amount,
+        'currency': rec.currency,
+        'method': rec.method,
+        'txnRef': rec.txnRef,
+        'station': rec.station,
+        'createdAt': rec.createdAt.toIso8601String(),
+        'recordedByUserId': rec.recordedByUserId,
+        'kind': rec.kind,
+        'note': rec.note,
+      },
+    );
+
     await AuditService.log(
       action: 'PAYMENT_RECORDED',
       propertyKey: fresh.key.toString(),
       details:
-          'Kind=$cleanKind Amount=$cleanCurrency ${appliedAmount.abs()} Method=$cleanMethod Station=$cleanStation TxnRef=$cleanTxnRef Note=$cleanNote',
+          'Kind=$cleanKind Amount=$cleanCurrency ${appliedAmount.abs()} '
+          'Method=$cleanMethod Station=$cleanStation TxnRef=$cleanTxnRef '
+          'Note=$cleanNote',
     );
 
     final prettyKind = cleanKind == 'refund'
@@ -103,7 +125,8 @@ class PaymentService {
       targetUserId: fresh.createdByUserId,
       title: '$prettyKind recorded',
       message:
-          '$prettyKind: $cleanCurrency ${appliedAmount.abs()} at $cleanStation via ${cleanMethod.isEmpty ? '—' : cleanMethod}.',
+          '$prettyKind: $cleanCurrency ${appliedAmount.abs()} at '
+          '$cleanStation via ${cleanMethod.isEmpty ? '—' : cleanMethod}.',
     );
 
     return rec;

@@ -1,5 +1,6 @@
 import '../models/payment_record.dart';
 import '../models/property.dart';
+import '../models/sync_event.dart';
 import 'audit_service.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
@@ -11,7 +12,7 @@ class PaymentService {
 
   static Future<PaymentRecord> recordPayment({
     required Property property,
-    required int amount, 
+    required int amount,
     String currency = 'UGX',
     required String method,
     String txnRef = '',
@@ -95,7 +96,7 @@ class PaymentService {
           : rec.recordedByUserId,
       payload: {
         'paymentId': rec.paymentId,
-        'propertyKey': rec.propertyKey,
+        'propertyCode': fresh.propertyCode,
         'amount': rec.amount,
         'currency': rec.currency,
         'method': rec.method,
@@ -130,5 +131,65 @@ class PaymentService {
     );
 
     return rec;
+  }
+
+  static Future<void> applyPaymentRecordedFromSync(SyncEvent event) async {
+    final payload = event.payload;
+
+    final payBox = HiveService.paymentBox();
+    final propertyBox = HiveService.propertyBox();
+
+    final paymentId = (payload['paymentId'] ?? '').toString().trim();
+    if (paymentId.isEmpty) {
+      throw StateError('paymentRecorded sync event missing paymentId');
+    }
+
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) {
+      throw StateError('paymentRecorded sync event missing propertyCode');
+    }
+
+    final exists = payBox.values.any((p) => p.paymentId == paymentId);
+    if (exists) return;
+
+    Property? property;
+    for (final p in propertyBox.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        property = p;
+        break;
+      }
+    }
+
+    if (property == null) {
+      throw StateError(
+        'Cannot apply paymentRecorded: property with code $propertyCode not found',
+      );
+    }
+
+    final rec = PaymentRecord(
+      paymentId: paymentId,
+      propertyKey: property.key.toString(),
+      amount: payload['amount'] as int,
+      currency: (payload['currency'] ?? 'UGX').toString(),
+      method: (payload['method'] ?? '').toString(),
+      txnRef: (payload['txnRef'] ?? '').toString(),
+      station: (payload['station'] ?? '').toString(),
+      createdAt: DateTime.parse(payload['createdAt'] as String),
+      recordedByUserId: (payload['recordedByUserId'] ?? '').toString(),
+      kind: (payload['kind'] ?? 'payment').toString(),
+      note: (payload['note'] ?? '').toString(),
+    );
+
+    await payBox.add(rec);
+
+    property.amountPaidTotal += rec.amount;
+    property.currency = rec.currency;
+    property.lastPaidAt = rec.createdAt;
+    property.lastPaymentMethod = rec.method;
+    property.lastPaidByUserId = rec.recordedByUserId;
+    property.lastPaidAtStation = rec.station;
+    property.lastTxnRef = rec.txnRef;
+
+    await property.save();
   }
 }

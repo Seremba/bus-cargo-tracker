@@ -4,6 +4,9 @@ import '../models/sync_event.dart';
 import '../models/sync_event_type.dart';
 import 'hive_service.dart';
 
+import 'property_service.dart';
+import 'payment_service.dart';
+
 class SyncService {
   static final _uuid = const Uuid();
 
@@ -137,5 +140,26 @@ class SyncService {
 
     event.appliedLocally = true;
     await event.save();
+  }
+
+  static Future<void> applyEvent(SyncEvent event) async {
+    if (event.appliedLocally) return;
+
+    switch (event.type) {
+      case SyncEventType.propertyCreated:
+        await PropertyService.applyPropertyCreatedFromSync(event);
+        break;
+
+      case SyncEventType.paymentRecorded:
+        await PaymentService.applyPaymentRecordedFromSync(event);
+        break;
+
+      default:
+        throw UnsupportedError(
+          'Sync event type not supported yet: ${event.type}',
+        );
+    }
+
+    await markAppliedLocally(event.eventId);
   }
 }

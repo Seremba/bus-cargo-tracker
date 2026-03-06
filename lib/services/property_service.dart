@@ -2,6 +2,7 @@ import '../data/routes_helpers.dart';
 import '../models/property.dart';
 import '../models/property_item_status.dart';
 import '../models/property_status.dart';
+import '../models/sync_event.dart';
 import '../models/trip.dart';
 import '../models/user_role.dart';
 
@@ -114,10 +115,9 @@ class PropertyService {
     );
 
     await SyncService.enqueuePropertyCreated(
-      propertyId: key.toString(),
+      propertyId: saved.propertyCode.trim(),
       actorUserId: cleanCreatedByUserId,
       payload: {
-        'propertyKey': key.toString(),
         'propertyCode': saved.propertyCode,
         'receiverName': saved.receiverName,
         'receiverPhone': saved.receiverPhone,
@@ -135,6 +135,42 @@ class PropertyService {
     );
 
     return saved;
+  }
+
+  static Future<void> applyPropertyCreatedFromSync(SyncEvent event) async {
+    final box = HiveService.propertyBox();
+    final payload = event.payload;
+
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) {
+      throw StateError('propertyCreated sync event missing propertyCode');
+    }
+
+    final alreadyExists = box.values.any(
+      (p) => p.propertyCode.trim() == propertyCode,
+    );
+
+    if (alreadyExists) {
+      return;
+    }
+
+    final property = Property(
+      receiverName: (payload['receiverName'] ?? '').toString(),
+      receiverPhone: (payload['receiverPhone'] ?? '').toString(),
+      description: (payload['description'] ?? '').toString(),
+      destination: (payload['destination'] ?? '').toString(),
+      itemCount: payload['itemCount'] as int,
+      routeId: (payload['routeId'] ?? '').toString(),
+      routeName: (payload['routeName'] ?? '').toString(),
+      createdAt: DateTime.parse(payload['createdAt'] as String),
+      status: PropertyStatus.values.byName(payload['status'] as String),
+      createdByUserId: (payload['createdByUserId'] ?? '').toString(),
+      propertyCode: propertyCode,
+      amountPaidTotal: payload['amountPaidTotal'] as int,
+      currency: (payload['currency'] ?? 'UGX').toString(),
+    );
+
+    await box.add(property);
   }
 
   static String _generateOtp() {

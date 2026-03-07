@@ -71,4 +71,36 @@ class SyncEvent extends HiveObject {
   }) : payload = Map<String, dynamic>.from(payload),
        lastError = (lastError ?? '').trim(),
        sourceDeviceId = (sourceDeviceId ?? '').trim();
+  Map<String, dynamic> toJson() {
+    return {
+      'eventId': eventId,
+      'type': type.name,
+      'aggregateType': aggregateType,
+      'aggregateId': aggregateId,
+      'actorUserId': actorUserId,
+      'payload': Map<String, dynamic>.from(payload),
+      'createdAt': createdAt.toIso8601String(),
+      'remoteCursor': remoteCursor,
+      'sourceDeviceId': sourceDeviceId,
+    };
+  }
+
+  static SyncEvent fromJson(Map<String, dynamic> json) {
+    return SyncEvent(
+      eventId: (json['eventId'] ?? '').toString(),
+      type: SyncEventType.values.byName((json['type'] ?? '').toString()),
+      aggregateType: (json['aggregateType'] ?? '').toString(),
+      aggregateId: (json['aggregateId'] ?? '').toString(),
+      actorUserId: (json['actorUserId'] ?? '').toString(),
+      payload: Map<String, dynamic>.from(
+        (json['payload'] as Map?) ?? const <String, dynamic>{},
+      ),
+      createdAt: DateTime.parse((json['createdAt'] ?? '').toString()),
+      pendingPush: false,
+      pushed: true,
+      appliedLocally: false,
+      remoteCursor: json['remoteCursor']?.toString(),
+      sourceDeviceId: (json['sourceDeviceId'] ?? '').toString(),
+    );
+  }
 }

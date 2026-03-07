@@ -10,6 +10,7 @@ import '../../services/notification_service.dart';
 import '../../services/outbound_message_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
+import '../../services/sync_service.dart';
 
 import '../../widgets/logout_button.dart';
 
@@ -29,8 +30,51 @@ import '../common/outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
 import '../common/tracking_lookup_screen.dart';
 
-class AdminDashboard extends StatelessWidget {
+class AdminDashboard extends StatefulWidget {
   const AdminDashboard({super.key});
+
+  @override
+  State<AdminDashboard> createState() => _AdminDashboardState();
+}
+
+class _AdminDashboardState extends State<AdminDashboard> {
+  bool _syncing = false;
+
+  Future<void> _runSync() async {
+    if (_syncing) return;
+
+    setState(() => _syncing = true);
+
+    try {
+      final result = await SyncService.syncNow();
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Sync complete. '
+            'Pushed: ${result.pushed}, '
+            'Pulled: ${result.pulled}, '
+            'Applied: ${result.applied}, '
+            'Failed: ${result.failed}',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Sync failed: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _syncing = false);
+      }
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -174,7 +218,17 @@ class AdminDashboard extends StatelessWidget {
             ],
           ),
           actions: [
-            // Notifications with unread badge (theme-safe)
+            IconButton(
+              tooltip: _syncing ? 'Syncing...' : 'Sync Now',
+              onPressed: _syncing ? null : _runSync,
+              icon: _syncing
+                  ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.sync),
+            ),
             ValueListenableBuilder(
               valueListenable: HiveService.notificationBox().listenable(),
               builder: (context, Box box, _) {
@@ -400,8 +454,7 @@ class AdminDashboard extends StatelessWidget {
               icon: Icons.outbox_outlined,
               children: [
                 ValueListenableBuilder(
-                  valueListenable: HiveService.outboundMessageBox()
-                      .listenable(),
+                  valueListenable: HiveService.outboundMessageBox().listenable(),
                   builder: (context, Box box, _) {
                     final pendingSms = box.values
                         .whereType<OutboundMessage>()
@@ -438,8 +491,7 @@ class AdminDashboard extends StatelessWidget {
                   },
                 ),
                 ValueListenableBuilder(
-                  valueListenable: HiveService.outboundMessageBox()
-                      .listenable(),
+                  valueListenable: HiveService.outboundMessageBox().listenable(),
                   builder: (context, Box b, _) {
                     int queuedSms = 0;
                     int failedSms = 0;

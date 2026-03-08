@@ -13,7 +13,7 @@ import 'package:http/http.dart' as http;
 import '../models/sync_run_result.dart';
 
 class SyncService {
-  static const String _baseUrl = 'https://YOUR-CLOUDFLARE-WORKER-DOMAIN';
+  static const String _baseUrl = 'https://bus-cargo-sync.pserembae.workers.dev';
   static const String _eventsBatchPath = '/events/batch';
   static const String _eventsPullPath = '/events';
   static final _uuid = const Uuid();
@@ -223,13 +223,16 @@ class SyncService {
   static String? latestRemoteCursor() {
     final box = HiveService.syncEventBox();
 
-    String? latest;
+    int? latest;
     for (final e in box.values) {
-      final c = e.remoteCursor?.trim();
-      if (c == null || c.isEmpty) continue;
-      latest = c;
+      final c = int.tryParse(e.remoteCursor?.trim() ?? '');
+      if (c == null) continue;
+      if (latest == null || c > latest) {
+        latest = c;
+      }
     }
-    return latest;
+
+    return latest?.toString();
   }
 
   static Future<Map<String, int>> pullRemoteEvents() async {

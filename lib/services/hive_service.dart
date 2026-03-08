@@ -217,21 +217,22 @@ class HiveService {
     }
     return Hive.box(_passwordResetBoxName);
   }
+
   static Future<void> openSyncEventBox() async {
-  if (!Hive.isBoxOpen(_syncEventBoxName)) {
-    await Hive.openBox<SyncEvent>(_syncEventBoxName);
-  }
-}
-
-static Box<SyncEvent> syncEventBox() {
-  if (!Hive.isBoxOpen(_syncEventBoxName)) {
-    throw HiveError(
-      'SyncEvent box is not open.\nCall HiveService.openSyncEventBox() first.',
-    );
+    if (!Hive.isBoxOpen(_syncEventBoxName)) {
+      await Hive.openBox<SyncEvent>(_syncEventBoxName);
+    }
   }
 
-  return Hive.box<SyncEvent>(_syncEventBoxName);
-}
+  static Box<SyncEvent> syncEventBox() {
+    if (!Hive.isBoxOpen(_syncEventBoxName)) {
+      throw HiveError(
+        'SyncEvent box is not open.\nCall HiveService.openSyncEventBox() first.',
+      );
+    }
+
+    return Hive.box<SyncEvent>(_syncEventBoxName);
+  }
 
   static Future<void> closeAll() async {
     await Hive.close();

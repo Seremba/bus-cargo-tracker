@@ -1,18 +1,22 @@
 import 'dart:async';
+
 import 'package:hive/hive.dart';
 
+import '../models/checkpoint.dart';
+import '../models/sync_event.dart';
 import '../models/trip.dart';
 import '../models/trip_status.dart';
-import '../models/checkpoint.dart';
-import '../services/session.dart';
+import '../models/user_role.dart';
 import '../services/hive_service.dart';
+import '../services/session.dart';
+import 'geo_service.dart';
 import 'notification_service.dart';
 import 'role_guard.dart';
-import '../models/user_role.dart';
-import 'geo_service.dart'; // use shared geo logic
+import 'sync_service.dart';
 
 class TripService {
   static Box<Trip> tripBox() => HiveService.tripBox();
+
   static Completer<void>? _checkpointLock;
 
   // -----------------------------
@@ -23,8 +27,7 @@ class TripService {
   static const double _exitPaddingMeters = 200; // hysteresis buffer
   static const int _minSecondsBetweenSamples = 2; // avoid spam writes
 
-  static bool _canTrackTrips() =>
-      RoleGuard.hasAny({UserRole.driver, UserRole.admin});
+  static bool _canTrackTrips() => RoleGuard.hasAny({UserRole.driver, UserRole.admin});
 
   static Future<T> _runWithCheckpointLock<T>(
     Future<T> Function() action,
@@ -41,10 +44,9 @@ class TripService {
     }
   }
 
-  static String _newTripId() =>
-      DateTime.now().millisecondsSinceEpoch.toString();
+  static String _newTripId() => DateTime.now().millisecondsSinceEpoch.toString();
 
-  ///  Returns the active trip for THIS driver + THIS route, or creates one if none exists.
+  /// Returns the active trip for THIS driver + THIS route, or creates one if none exists.
   static Future<Trip> ensureActiveTrip({
     required String routeId,
     required String routeName,
@@ -58,6 +60,7 @@ class TripService {
     if (driverId == null || driverId.trim().isEmpty) {
       throw StateError('No active session userId (cannot start trip)');
     }
+
     final box = tripBox();
 
     final existing = box.values.where(
@@ -79,7 +82,8 @@ class TripService {
         targetUserId: NotificationService.adminInbox,
         title: 'Driver already has active trip',
         message:
-            'Driver $driverId tried to start "$routeName" while another trip is active (${otherActive.first.routeName}). Blocked to avoid mixing routes.',
+            'Driver $driverId tried to start "$routeName" while another trip is active '
+            '(${otherActive.first.routeName}).\nBlocked to avoid mixing routes.',
       );
       return otherActive.first;
     }
@@ -96,7 +100,85 @@ class TripService {
     );
 
     await box.add(trip);
+
+    await SyncService.enqueueTripStarted(
+      tripId: trip.tripId,
+      actorUserId: driverId,
+      payload: {
+        'tripId': trip.tripId,
+        'routeId': trip.routeId,
+        'routeName': trip.routeName,
+        'driverUserId': trip.driverUserId,
+        'startedAt': trip.startedAt.toIso8601String(),
+        'status': trip.status.name,
+        'lastCheckpointIndex': trip.lastCheckpointIndex,
+        'checkpoints': trip.checkpoints
+            .map(
+              (cp) => {
+                'name': cp.name,
+                'lat': cp.lat,
+                'lng': cp.lng,
+                'radiusMeters': cp.radiusMeters,
+                'reachedAt': cp.reachedAt?.toIso8601String(),
+              },
+            )
+            .toList(),
+      },
+    );
+
     return trip;
+  }
+
+  static Future<void> applyTripStartedFromSync(SyncEvent event) async {
+    final payload = event.payload;
+    final box = tripBox();
+
+    final tripId = (payload['tripId'] ?? '').toString().trim();
+    if (tripId.isEmpty) {
+      throw StateError('tripStarted sync event missing tripId');
+    }
+
+    for (final t in box.values) {
+      if (t.tripId.trim() == tripId) {
+        return;
+      }
+    }
+
+    final rawCheckpoints = (payload['checkpoints'] as List?) ?? const [];
+    final checkpoints = <Checkpoint>[];
+
+    for (final raw in rawCheckpoints) {
+      final map = Map<String, dynamic>.from(raw as Map);
+
+      checkpoints.add(
+        Checkpoint(
+          name: (map['name'] ?? '').toString(),
+          lat: (map['lat'] as num).toDouble(),
+          lng: (map['lng'] as num).toDouble(),
+          radiusMeters: (map['radiusMeters'] as num?)?.toDouble() ?? 500,
+          reachedAt: (map['reachedAt'] == null ||
+                  (map['reachedAt'] as String).trim().isEmpty)
+              ? null
+              : DateTime.parse(map['reachedAt'] as String),
+        ),
+      );
+    }
+
+    final trip = Trip(
+      tripId: tripId,
+      routeId: (payload['routeId'] ?? '').toString(),
+      routeName: (payload['routeName'] ?? '').toString(),
+      driverUserId: (payload['driverUserId'] ?? '').toString(),
+      startedAt: DateTime.parse((payload['startedAt'] ?? '').toString()),
+      status: TripStatus.values.byName(
+        (payload['status'] ?? 'active').toString(),
+      ),
+      checkpoints: checkpoints,
+      lastCheckpointIndex:
+          (payload['lastCheckpointIndex'] as num?)?.toInt() ?? -1,
+    );
+
+    await box.add(trip);
   }
 
   static Trip? getActiveTripForCurrentDriver({String? routeId}) {
@@ -104,7 +186,6 @@ class TripService {
     if (driverId == null) return null;
 
     final box = tripBox();
-
     try {
       return box.values.firstWhere((t) {
         final matchesDriver =
@@ -118,7 +199,7 @@ class TripService {
     }
   }
 
-  /// ✅ Robust checkpoint detection:
+  ///  Robust checkpoint detection:
   /// - accuracy gate
   /// - debounce (dwell time)
   /// - hysteresis (enter vs exit boundary)
@@ -141,14 +222,15 @@ class TripService {
       if (driverId == null || driverId.trim().isEmpty) return false;
 
       final box = tripBox();
-
       final activeTrips = box.values.where(
         (t) => t.driverUserId == driverId && t.status == TripStatus.active,
       );
+
       if (activeTrips.isEmpty) return false;
 
       final trips = activeTrips.toList()
         ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
+
       final currentTrip = trips.first;
 
       // Throttle very frequent calls (reduces Hive writes + jitter)
@@ -180,7 +262,8 @@ class TripService {
       }
 
       final dist = GeoService.distanceMeters(lat, lng, nextCp.lat, nextCp.lng);
-      final acc = (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
+      final acc =
+          (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
 
       // Accuracy-aware boundaries
       final enterRadius = nextCp.radiusMeters + acc;
@@ -194,11 +277,9 @@ class TripService {
 
       // Not inside: clear candidate to avoid false triggers
       if (!insideNow) {
-        // If clearly outside, always clear
         if (outsideNow) {
           _clearCandidate(currentTrip);
         } else {
-          // borderline zone: also clear (simpler + safer)
           _clearCandidate(currentTrip);
         }
         await currentTrip.save();
@@ -221,22 +302,21 @@ class TripService {
       }
 
       if (DateTime.now().difference(since) < _enterDwell) {
-        // Still dwelling inside radius; do not confirm yet.
-        await currentTrip.save(); // persist lastGpsAt etc.
+        await currentTrip.save();
         return false;
       }
 
-      // ✅ Confirm reached checkpoint
+      //  Confirm reached checkpoint
       nextCp.reachedAt = DateTime.now();
       currentTrip.lastCheckpointIndex = nextIndex;
       _clearCandidate(currentTrip);
 
       await currentTrip.save();
-
       await _notifyCheckpointReached(trip: currentTrip, checkpoint: nextCp);
 
       final isFinalCheckpoint =
           nextIndex == (currentTrip.checkpoints.length - 1);
+
       if (isFinalCheckpoint && currentTrip.status == TripStatus.active) {
         await _autoEndTrip(currentTrip);
       }
@@ -260,7 +340,6 @@ class TripService {
     final prevLat = trip.lastGpsLat;
     final prevLng = trip.lastGpsLng;
     final prevAt = trip.lastGpsAt;
-
     final now = DateTime.now();
 
     // Update stored fields
@@ -274,9 +353,7 @@ class TripService {
     if (dt <= 0) return true;
 
     final d = GeoService.distanceMeters(prevLat, prevLng, lat, lng);
-
     if (dt < 5 && d > 1000) {
-      // Likely a bad GPS spike; ignore this sample.
       return false;
     }
 
@@ -291,11 +368,14 @@ class TripService {
       targetUserId: NotificationService.adminInbox,
       title: 'Trip checkpoint reached',
       message:
-          '${trip.routeName}: Reached ${checkpoint.name} at ${checkpoint.reachedAt!.toLocal().toString().substring(0, 16)} (Driver: ${trip.driverUserId}).',
+          '${trip.routeName}: Reached ${checkpoint.name} at '
+          '${checkpoint.reachedAt!.toLocal().toString().substring(0, 16)} '
+          '(Driver: ${trip.driverUserId}).',
     );
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
+
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {
@@ -303,7 +383,8 @@ class TripService {
         targetUserId: senderId,
         title: 'Bus reached ${checkpoint.name}',
         message:
-            'Your cargo is progressing on ${trip.routeName}. Latest checkpoint: ${checkpoint.name}.',
+            'Your cargo is progressing on ${trip.routeName}.\n'
+            'Latest checkpoint: ${checkpoint.name}.',
       );
     }
   }
@@ -314,11 +395,10 @@ class TripService {
     trip.status = TripStatus.ended;
     trip.endedAt ??= DateTime.now();
     await trip.save();
-
     await _notifyTripEnded(trip);
   }
 
-  // ✅ Manual end (admin button)
+  //  Manual end (admin button)
   static Future<void> endTrip(Trip trip) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
     if (trip.status != TripStatus.active) return;
@@ -326,7 +406,6 @@ class TripService {
     trip.status = TripStatus.ended;
     trip.endedAt ??= DateTime.now();
     await trip.save();
-
     await _notifyTripEnded(trip);
   }
 
@@ -335,11 +414,14 @@ class TripService {
       targetUserId: NotificationService.adminInbox,
       title: 'Trip ended',
       message:
-          '${trip.routeName} ended at ${trip.endedAt!.toLocal().toString().substring(0, 16)} (Driver: ${trip.driverUserId}).',
+          '${trip.routeName} ended at '
+          '${trip.endedAt!.toLocal().toString().substring(0, 16)} '
+          '(Driver: ${trip.driverUserId}).',
     );
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
+
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {
@@ -347,12 +429,13 @@ class TripService {
         targetUserId: senderId,
         title: 'Trip ended',
         message:
-            'Trip ${trip.routeName} has ended. Your cargo should be arriving at the destination station.',
+            'Trip ${trip.routeName} has ended.\n'
+            'Your cargo should be arriving at the destination station.',
       );
     }
   }
 
-  // ✅ Manual cancel (admin only)
+  //  Manual cancel (admin only)
   static Future<void> cancelTrip(Trip trip, {String? reason}) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
     if (trip.status != TripStatus.active) return;
@@ -370,11 +453,13 @@ class TripService {
       targetUserId: NotificationService.adminInbox,
       title: 'Trip cancelled',
       message:
-          '${trip.routeName} was cancelled at $when (Driver: ${trip.driverUserId}).$why',
+          '${trip.routeName} was cancelled at $when '
+          '(Driver: ${trip.driverUserId}).$why',
     );
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
+
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {
@@ -382,7 +467,8 @@ class TripService {
         targetUserId: senderId,
         title: 'Trip cancelled',
         message:
-            'Trip ${trip.routeName} was cancelled.$why Please contact support or wait for an update.',
+            'Trip ${trip.routeName} was cancelled.$why '
+            'Please contact support or wait for an update.',
       );
     }
   }

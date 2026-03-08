@@ -20,9 +20,11 @@ import 'models/sync_event_type.dart';
 import 'screens/splash/splash_screen.dart';
 
 import 'services/auth_service.dart';
+import 'services/auto_sync_service.dart';
 import 'services/hive_service.dart';
 import 'services/route_decider_service.dart';
 
+import 'services/sync_service.dart';
 import 'ui/app_colors.dart';
 
 void main() async {
@@ -46,6 +48,10 @@ void main() async {
   Hive.registerAdapter(SyncEventAdapter());
 
   await HiveService.openAllBoxes();
+
+  await SyncService.ensureDeviceId();
+
+  await AutoSyncService.instance.start();
 
   if (kDebugMode) {
     await AuthService.seedAdminIfMissing(

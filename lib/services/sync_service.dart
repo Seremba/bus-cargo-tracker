@@ -1,16 +1,16 @@
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
 import '../models/sync_event.dart';
 import '../models/sync_event_type.dart';
-import 'hive_service.dart';
-
-import 'property_service.dart';
-import 'payment_service.dart';
-
-import 'dart:convert';
-import 'package:http/http.dart' as http;
-
 import '../models/sync_run_result.dart';
+import 'hive_service.dart';
+import 'payment_service.dart';
+import 'property_service.dart';
+import 'trip_service.dart';
 
 class SyncService {
   static const String _baseUrl = 'https://bus-cargo-sync.pserembae.workers.dev';
@@ -22,6 +22,47 @@ class SyncService {
 
   static Map<String, dynamic> _jsonSafePayload(Map<String, dynamic> payload) {
     return Map<String, dynamic>.from(payload);
+  }
+
+  static String? getLastCursor() {
+    final box = HiveService.appSettingsBox();
+    return box.get('lastSyncCursor') as String?;
+  }
+
+  static Future<void> setLastCursor(String cursor) async {
+    final box = HiveService.appSettingsBox();
+    await box.put('lastSyncCursor', cursor);
+  }
+
+  static String? getDeviceId() {
+    final box = HiveService.appSettingsBox();
+    return box.get('deviceId') as String?;
+  }
+
+  static Future<String> ensureDeviceId() async {
+    final box = HiveService.appSettingsBox();
+
+    final existing = (box.get('deviceId') as String?)?.trim();
+    if (existing != null && existing.isNotEmpty) {
+      return existing;
+    }
+
+    final random = Random.secure();
+    final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    final entropy = List.generate(
+      12,
+      (_) => random.nextInt(36).toRadixString(36),
+    ).join().toUpperCase();
+
+    final deviceId = 'DEV-$timestamp-$entropy';
+
+    await box.put('deviceId', deviceId);
+    return deviceId;
+  }
+
+  static Future<bool> isThisDeviceEvent(SyncEvent event) async {
+    final current = await ensureDeviceId();
+    return event.sourceDeviceId.trim() == current.trim();
   }
 
   static Future<SyncEvent> enqueue({
@@ -44,6 +85,8 @@ class SyncService {
       throw ArgumentError('aggregateId cannot be empty');
     }
 
+    final deviceId = await ensureDeviceId();
+
     final event = SyncEvent(
       eventId: newEventId(),
       type: type,
@@ -52,6 +95,7 @@ class SyncService {
       actorUserId: cleanActorUserId,
       payload: _jsonSafePayload(payload),
       createdAt: DateTime.now(),
+      sourceDeviceId: deviceId,
     );
 
     await box.put(event.eventId, event);
@@ -81,6 +125,20 @@ class SyncService {
       type: SyncEventType.paymentRecorded,
       aggregateType: 'payment',
       aggregateId: paymentId,
+      actorUserId: actorUserId,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripStarted({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripStarted,
+      aggregateType: 'trip',
+      aggregateId: tripId,
       actorUserId: actorUserId,
       payload: payload,
     );
@@ -131,17 +189,6 @@ class SyncService {
     await event.save();
   }
 
-  static Future<void> resetForRetry(String eventId) async {
-    final event = getById(eventId);
-    if (event == null) return;
-
-    event.pendingPush = true;
-    event.pushed = false;
-    event.lastError = '';
-
-    await event.save();
-  }
-
   static Future<void> markAppliedLocally(String eventId) async {
     final event = getById(eventId);
     if (event == null) return;
@@ -160,6 +207,10 @@ class SyncService {
 
       case SyncEventType.paymentRecorded:
         await PaymentService.applyPaymentRecordedFromSync(event);
+        break;
+
+      case SyncEventType.tripStarted:
+        await TripService.applyTripStartedFromSync(event);
         break;
 
       default:
@@ -209,34 +260,12 @@ class SyncService {
       pushedCount += 1;
     }
 
-    final acceptedSet = accepted.map((e) => e.toString()).toSet();
-
-    for (final event in pending) {
-      if (!acceptedSet.contains(event.eventId)) {
-        await markPushFailed(event.eventId, 'Server did not acknowledge event');
-      }
-    }
-
     return pushedCount;
   }
 
-  static String? latestRemoteCursor() {
-    final box = HiveService.syncEventBox();
-
-    int? latest;
-    for (final e in box.values) {
-      final c = int.tryParse(e.remoteCursor?.trim() ?? '');
-      if (c == null) continue;
-      if (latest == null || c > latest) {
-        latest = c;
-      }
-    }
-
-    return latest?.toString();
-  }
-
   static Future<Map<String, int>> pullRemoteEvents() async {
-    final after = latestRemoteCursor();
+    final after = getLastCursor();
+
     final uri = Uri.parse(
       after == null || after.isEmpty
           ? '$_baseUrl$_eventsPullPath'
@@ -265,7 +294,17 @@ class SyncService {
       try {
         final event = SyncEvent.fromJson(Map<String, dynamic>.from(raw as Map));
 
+        // Step 9.5: skip self-originated events during replay
+        if (await isThisDeviceEvent(event)) {
+          final existingSelf = getById(event.eventId);
+          if (existingSelf != null && !existingSelf.appliedLocally) {
+            await markAppliedLocally(existingSelf.eventId);
+          }
+          continue;
+        }
+
         final existing = getById(event.eventId);
+
         if (existing != null) {
           if (!existing.appliedLocally) {
             await applyEvent(existing);
@@ -282,6 +321,11 @@ class SyncService {
       }
     }
 
+    final nextCursor = decoded['nextCursor']?.toString();
+    if (nextCursor != null && nextCursor.isNotEmpty) {
+      await setLastCursor(nextCursor);
+    }
+
     return {'pulled': pulled, 'applied': applied, 'failed': failed};
   }
 
@@ -294,6 +338,7 @@ class SyncService {
     pushed = await pushPendingEvents();
 
     final pull = await pullRemoteEvents();
+
     pulled = pull['pulled'] ?? 0;
     applied = pull['applied'] ?? 0;
     failed = pull['failed'] ?? 0;

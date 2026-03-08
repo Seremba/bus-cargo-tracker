@@ -71,6 +71,7 @@ class SyncService {
     required String aggregateId,
     required String actorUserId,
     required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
   }) async {
     final box = HiveService.syncEventBox();
 
@@ -96,6 +97,7 @@ class SyncService {
       payload: _jsonSafePayload(payload),
       createdAt: DateTime.now(),
       sourceDeviceId: deviceId,
+      aggregateVersion: aggregateVersion,
     );
 
     await box.put(event.eventId, event);
@@ -106,6 +108,7 @@ class SyncService {
     required String propertyId,
     required String actorUserId,
     required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
   }) {
     return enqueue(
       type: SyncEventType.propertyCreated,
@@ -113,6 +116,7 @@ class SyncService {
       aggregateId: propertyId,
       actorUserId: actorUserId,
       payload: payload,
+      aggregateVersion: aggregateVersion,
     );
   }
 
@@ -120,6 +124,7 @@ class SyncService {
     required String paymentId,
     required String actorUserId,
     required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
   }) {
     return enqueue(
       type: SyncEventType.paymentRecorded,
@@ -127,6 +132,7 @@ class SyncService {
       aggregateId: paymentId,
       actorUserId: actorUserId,
       payload: payload,
+      aggregateVersion: aggregateVersion,
     );
   }
 
@@ -134,6 +140,7 @@ class SyncService {
     required String tripId,
     required String actorUserId,
     required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
   }) {
     return enqueue(
       type: SyncEventType.tripStarted,
@@ -141,6 +148,55 @@ class SyncService {
       aggregateId: tripId,
       actorUserId: actorUserId,
       payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripCheckpointReached({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripCheckpointReached,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripEnded({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripEnded,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripCancelled({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripCancelled,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
     );
   }
 
@@ -211,6 +267,18 @@ class SyncService {
 
       case SyncEventType.tripStarted:
         await TripService.applyTripStartedFromSync(event);
+        break;
+
+      case SyncEventType.tripCheckpointReached:
+        await TripService.applyTripCheckpointReachedFromSync(event);
+        break;
+
+      case SyncEventType.tripEnded:
+        await TripService.applyTripEndedFromSync(event);
+        break;
+
+      case SyncEventType.tripCancelled:
+        await TripService.applyTripCancelledFromSync(event);
         break;
 
       default:
@@ -294,7 +362,6 @@ class SyncService {
       try {
         final event = SyncEvent.fromJson(Map<String, dynamic>.from(raw as Map));
 
-        // Step 9.5: skip self-originated events during replay
         if (await isThisDeviceEvent(event)) {
           final existingSelf = getById(event.eventId);
           if (existingSelf != null && !existingSelf.appliedLocally) {

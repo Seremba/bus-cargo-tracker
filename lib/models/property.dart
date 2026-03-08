@@ -130,6 +130,9 @@ class Property extends HiveObject {
   @HiveField(39, defaultValue: 'whatsapp')
   String receiverNotifyChannel;
 
+  @HiveField(40)
+int aggregateVersion;
+
   Property({
     required this.receiverName,
     required this.receiverPhone,
@@ -170,6 +173,7 @@ class Property extends HiveObject {
     this.receiverNotifyEnabledAt,
     String? receiverNotifyEnabledByUserId,
     this.lastReceiverNotifiedAt,
+    this.aggregateVersion = 1,
 
     String? receiverNotifyChannel,
   })  : loadedAtStation = (loadedAtStation ?? '').trim(),

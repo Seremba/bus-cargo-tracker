@@ -32,13 +32,14 @@ class SyncEventAdapter extends TypeAdapter<SyncEvent> {
       lastPushAttemptAt: fields[12] as DateTime?,
       lastError: fields[13] == null ? '' : fields[13] as String?,
       sourceDeviceId: fields[14] == null ? '' : fields[14] as String?,
+      aggregateVersion: fields[15] == null ? 1 : fields[15] as int,
     );
   }
 
   @override
   void write(BinaryWriter writer, SyncEvent obj) {
     writer
-      ..writeByte(15)
+      ..writeByte(16)
       ..writeByte(0)
       ..write(obj.eventId)
       ..writeByte(1)
@@ -68,7 +69,9 @@ class SyncEventAdapter extends TypeAdapter<SyncEvent> {
       ..writeByte(13)
       ..write(obj.lastError)
       ..writeByte(14)
-      ..write(obj.sourceDeviceId);
+      ..write(obj.sourceDeviceId)
+      ..writeByte(15)
+      ..write(obj.aggregateVersion);
   }
 
   @override

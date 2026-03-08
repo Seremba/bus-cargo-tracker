@@ -52,6 +52,9 @@ class SyncEvent extends HiveObject {
   @HiveField(14, defaultValue: '')
   String sourceDeviceId;
 
+  @HiveField(15, defaultValue: 1)
+  final int aggregateVersion;
+
   SyncEvent({
     required this.eventId,
     required this.type,
@@ -68,9 +71,11 @@ class SyncEvent extends HiveObject {
     this.lastPushAttemptAt,
     String? lastError,
     String? sourceDeviceId,
+    this.aggregateVersion = 1,
   }) : payload = Map<String, dynamic>.from(payload),
        lastError = (lastError ?? '').trim(),
        sourceDeviceId = (sourceDeviceId ?? '').trim();
+
   Map<String, dynamic> toJson() {
     return {
       'eventId': eventId,
@@ -82,6 +87,7 @@ class SyncEvent extends HiveObject {
       'createdAt': createdAt.toIso8601String(),
       'remoteCursor': remoteCursor,
       'sourceDeviceId': sourceDeviceId,
+      'aggregateVersion': aggregateVersion,
     };
   }
 
@@ -101,6 +107,7 @@ class SyncEvent extends HiveObject {
       appliedLocally: false,
       remoteCursor: json['remoteCursor']?.toString(),
       sourceDeviceId: (json['sourceDeviceId'] ?? '').toString(),
+      aggregateVersion: (json['aggregateVersion'] as num?)?.toInt() ?? 1,
     );
   }
 }

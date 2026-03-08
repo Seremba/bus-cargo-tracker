@@ -87,6 +87,9 @@ class PaymentService {
     fresh.lastPaidAtStation = cleanStation;
     fresh.lastTxnRef = cleanTxnRef;
 
+    // Step 11: payment changes property aggregate state
+    fresh.aggregateVersion += 1;
+
     await fresh.save();
 
     await SyncService.enqueuePaymentRecorded(
@@ -94,6 +97,7 @@ class PaymentService {
       actorUserId: rec.recordedByUserId.trim().isEmpty
           ? 'system'
           : rec.recordedByUserId,
+      aggregateVersion: fresh.aggregateVersion,
       payload: {
         'paymentId': rec.paymentId,
         'propertyCode': fresh.propertyCode,
@@ -106,6 +110,7 @@ class PaymentService {
         'recordedByUserId': rec.recordedByUserId,
         'kind': rec.kind,
         'note': rec.note,
+        'aggregateVersion': fresh.aggregateVersion,
       },
     );
 
@@ -166,15 +171,24 @@ class PaymentService {
       );
     }
 
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    // Step 11: ignore stale payment replay against newer property state
+    if (property.aggregateVersion >= incomingVersion) {
+      return;
+    }
+
     final rec = PaymentRecord(
       paymentId: paymentId,
       propertyKey: property.key.toString(),
-      amount: payload['amount'] as int,
+      amount: (payload['amount'] as num).toInt(),
       currency: (payload['currency'] ?? 'UGX').toString(),
       method: (payload['method'] ?? '').toString(),
       txnRef: (payload['txnRef'] ?? '').toString(),
       station: (payload['station'] ?? '').toString(),
-      createdAt: DateTime.parse(payload['createdAt'] as String),
+      createdAt: DateTime.parse((payload['createdAt'] ?? '').toString()),
       recordedByUserId: (payload['recordedByUserId'] ?? '').toString(),
       kind: (payload['kind'] ?? 'payment').toString(),
       note: (payload['note'] ?? '').toString(),
@@ -189,6 +203,7 @@ class PaymentService {
     property.lastPaidByUserId = rec.recordedByUserId;
     property.lastPaidAtStation = rec.station;
     property.lastTxnRef = rec.txnRef;
+    property.aggregateVersion = incomingVersion;
 
     await property.save();
   }

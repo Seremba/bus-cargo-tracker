@@ -31,13 +31,14 @@ class TripAdapter extends TypeAdapter<Trip> {
       lastGpsLat: fields[11] as double?,
       lastGpsLng: fields[12] as double?,
       lastGpsAt: fields[13] as DateTime?,
+      aggregateVersion: fields[14] == null ? 1 : fields[14] as int,
     );
   }
 
   @override
   void write(BinaryWriter writer, Trip obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.tripId)
       ..writeByte(1)
@@ -65,7 +66,9 @@ class TripAdapter extends TypeAdapter<Trip> {
       ..writeByte(12)
       ..write(obj.lastGpsLng)
       ..writeByte(13)
-      ..write(obj.lastGpsAt);
+      ..write(obj.lastGpsAt)
+      ..writeByte(14)
+      ..write(obj.aggregateVersion);
   }
 
   @override

@@ -45,4 +45,13 @@ enum SyncEventType {
 
   @HiveField(13)
   pickupOtpVerified,
+
+  @HiveField(14)
+  tripCheckpointReached,
+
+  @HiveField(15)
+  tripEnded,
+
+  @HiveField(16)
+  tripCancelled,
 }

@@ -28,13 +28,14 @@ class PaymentRecordAdapter extends TypeAdapter<PaymentRecord> {
       recordedByUserId: fields[8] == null ? '' : fields[8] as String,
       kind: fields[9] == null ? 'payment' : fields[9] as String,
       note: fields[10] == null ? '' : fields[10] as String,
+      aggregateVersion: fields[11] as int,
     );
   }
 
   @override
   void write(BinaryWriter writer, PaymentRecord obj) {
     writer
-      ..writeByte(11)
+      ..writeByte(12)
       ..writeByte(0)
       ..write(obj.paymentId)
       ..writeByte(1)
@@ -56,7 +57,9 @@ class PaymentRecordAdapter extends TypeAdapter<PaymentRecord> {
       ..writeByte(9)
       ..write(obj.kind)
       ..writeByte(10)
-      ..write(obj.note);
+      ..write(obj.note)
+      ..writeByte(11)
+      ..write(obj.aggregateVersion);
   }
 
   @override

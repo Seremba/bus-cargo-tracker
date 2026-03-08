@@ -48,6 +48,9 @@ class Trip extends HiveObject {
   @HiveField(13)
   DateTime? lastGpsAt;
 
+  @HiveField(14, defaultValue: 1)
+  int aggregateVersion;
+
   Trip({
     required this.tripId,
     required this.routeName,
@@ -63,5 +66,6 @@ class Trip extends HiveObject {
     this.lastGpsLat,
     this.lastGpsLng,
     this.lastGpsAt,
+    this.aggregateVersion = 1,
   });
 }

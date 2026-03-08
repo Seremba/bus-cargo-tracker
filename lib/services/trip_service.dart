@@ -19,15 +19,13 @@ class TripService {
 
   static Completer<void>? _checkpointLock;
 
-  // -----------------------------
-  // Detection tuning knobs
-  // -----------------------------
-  static const double _maxAccuracyMeters = 60; // ignore worse samples
-  static const Duration _enterDwell = Duration(seconds: 25); // debounce
-  static const double _exitPaddingMeters = 200; // hysteresis buffer
-  static const int _minSecondsBetweenSamples = 2; // avoid spam writes
+  static const double _maxAccuracyMeters = 60;
+  static const Duration _enterDwell = Duration(seconds: 25);
+  static const double _exitPaddingMeters = 200;
+  static const int _minSecondsBetweenSamples = 2;
 
-  static bool _canTrackTrips() => RoleGuard.hasAny({UserRole.driver, UserRole.admin});
+  static bool _canTrackTrips() =>
+      RoleGuard.hasAny({UserRole.driver, UserRole.admin});
 
   static Future<T> _runWithCheckpointLock<T>(
     Future<T> Function() action,
@@ -46,7 +44,6 @@ class TripService {
 
   static String _newTripId() => DateTime.now().millisecondsSinceEpoch.toString();
 
-  /// Returns the active trip for THIS driver + THIS route, or creates one if none exists.
   static Future<Trip> ensureActiveTrip({
     required String routeId,
     required String routeName,
@@ -72,7 +69,6 @@ class TripService {
 
     if (existing.isNotEmpty) return existing.first;
 
-    // Safety: prevent >1 active trip per driver
     final otherActive = box.values.where(
       (t) => t.driverUserId == driverId && t.status == TripStatus.active,
     );
@@ -97,6 +93,7 @@ class TripService {
       status: TripStatus.active,
       checkpoints: checkpoints,
       lastCheckpointIndex: -1,
+      aggregateVersion: 1,
     );
 
     await box.add(trip);
@@ -104,6 +101,7 @@ class TripService {
     await SyncService.enqueueTripStarted(
       tripId: trip.tripId,
       actorUserId: driverId,
+      aggregateVersion: trip.aggregateVersion,
       payload: {
         'tripId': trip.tripId,
         'routeId': trip.routeId,
@@ -112,6 +110,7 @@ class TripService {
         'startedAt': trip.startedAt.toIso8601String(),
         'status': trip.status.name,
         'lastCheckpointIndex': trip.lastCheckpointIndex,
+        'aggregateVersion': trip.aggregateVersion,
         'checkpoints': trip.checkpoints
             .map(
               (cp) => {
@@ -138,8 +137,12 @@ class TripService {
       throw StateError('tripStarted sync event missing tripId');
     }
 
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
     for (final t in box.values) {
-      if (t.tripId.trim() == tripId) {
+      if (t.tripId.trim() == tripId && t.aggregateVersion >= incomingVersion) {
         return;
       }
     }
@@ -149,7 +152,6 @@ class TripService {
 
     for (final raw in rawCheckpoints) {
       final map = Map<String, dynamic>.from(raw as Map);
-
       checkpoints.add(
         Checkpoint(
           name: (map['name'] ?? '').toString(),
@@ -176,9 +178,127 @@ class TripService {
       checkpoints: checkpoints,
       lastCheckpointIndex:
           (payload['lastCheckpointIndex'] as num?)?.toInt() ?? -1,
+      aggregateVersion: incomingVersion,
     );
 
     await box.add(trip);
+  }
+
+  static Future<void> applyTripCheckpointReachedFromSync(
+    SyncEvent event,
+  ) async {
+    final payload = event.payload;
+    final tripId = (payload['tripId'] ?? '').toString().trim();
+    if (tripId.isEmpty) {
+      throw StateError('tripCheckpointReached event missing tripId');
+    }
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    final box = tripBox();
+    Trip? trip;
+
+    for (final t in box.values) {
+      if (t.tripId.trim() == tripId) {
+        trip = t;
+        break;
+      }
+    }
+
+    if (trip == null) {
+      throw StateError('Trip $tripId not found for checkpoint replay');
+    }
+
+    if (trip.aggregateVersion >= incomingVersion) {
+      return;
+    }
+
+    final checkpointIndex = (payload['checkpointIndex'] as num).toInt();
+    final reachedAt = DateTime.parse((payload['reachedAt'] ?? '').toString());
+
+    if (checkpointIndex < 0 || checkpointIndex >= trip.checkpoints.length) {
+      throw StateError('Invalid checkpointIndex for trip $tripId');
+    }
+
+    trip.checkpoints[checkpointIndex].reachedAt = reachedAt;
+    trip.lastCheckpointIndex = checkpointIndex;
+    trip.aggregateVersion = incomingVersion;
+
+    await trip.save();
+  }
+
+  static Future<void> applyTripEndedFromSync(SyncEvent event) async {
+    final payload = event.payload;
+    final tripId = (payload['tripId'] ?? '').toString().trim();
+    if (tripId.isEmpty) {
+      throw StateError('tripEnded event missing tripId');
+    }
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    final box = tripBox();
+    Trip? trip;
+
+    for (final t in box.values) {
+      if (t.tripId.trim() == tripId) {
+        trip = t;
+        break;
+      }
+    }
+
+    if (trip == null) {
+      throw StateError('Trip $tripId not found for tripEnded replay');
+    }
+
+    if (trip.aggregateVersion >= incomingVersion) {
+      return;
+    }
+
+    trip.status = TripStatus.ended;
+    trip.endedAt = DateTime.parse((payload['endedAt'] ?? '').toString());
+    trip.aggregateVersion = incomingVersion;
+
+    await trip.save();
+  }
+
+  static Future<void> applyTripCancelledFromSync(SyncEvent event) async {
+    final payload = event.payload;
+    final tripId = (payload['tripId'] ?? '').toString().trim();
+    if (tripId.isEmpty) {
+      throw StateError('tripCancelled event missing tripId');
+    }
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    final box = tripBox();
+    Trip? trip;
+
+    for (final t in box.values) {
+      if (t.tripId.trim() == tripId) {
+        trip = t;
+        break;
+      }
+    }
+
+    if (trip == null) {
+      throw StateError('Trip $tripId not found for tripCancelled replay');
+    }
+
+    if (trip.aggregateVersion >= incomingVersion) {
+      return;
+    }
+
+    trip.status = TripStatus.cancelled;
+    trip.endedAt = DateTime.parse((payload['endedAt'] ?? '').toString());
+    trip.aggregateVersion = incomingVersion;
+
+    await trip.save();
   }
 
   static Trip? getActiveTripForCurrentDriver({String? routeId}) {
@@ -199,11 +319,6 @@ class TripService {
     }
   }
 
-  ///  Robust checkpoint detection:
-  /// - accuracy gate
-  /// - debounce (dwell time)
-  /// - hysteresis (enter vs exit boundary)
-  /// - outlier rejection
   static Future<bool> updateCheckpointFromLocation({
     required double lat,
     required double lng,
@@ -211,7 +326,6 @@ class TripService {
   }) async {
     if (!_canTrackTrips()) return false;
 
-    // Accuracy gate (if provided)
     if (accuracyMeters != null &&
         (accuracyMeters.isNaN || accuracyMeters > _maxAccuracyMeters)) {
       return false;
@@ -233,7 +347,6 @@ class TripService {
 
       final currentTrip = trips.first;
 
-      // Throttle very frequent calls (reduces Hive writes + jitter)
       if (currentTrip.lastGpsAt != null) {
         final dt = DateTime.now().difference(currentTrip.lastGpsAt!).inSeconds;
         if (dt >= 0 && dt < _minSecondsBetweenSamples) {
@@ -241,9 +354,8 @@ class TripService {
         }
       }
 
-      // Outlier rejection + store last GPS
       if (!_acceptSample(currentTrip, lat: lat, lng: lng)) {
-        await currentTrip.save(); // save lastGpsAt updates
+        await currentTrip.save();
         return false;
       }
 
@@ -262,10 +374,8 @@ class TripService {
       }
 
       final dist = GeoService.distanceMeters(lat, lng, nextCp.lat, nextCp.lng);
-      final acc =
-          (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
+      final acc = (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
 
-      // Accuracy-aware boundaries
       final enterRadius = nextCp.radiusMeters + acc;
       final exitRadius = nextCp.radiusMeters + _exitPaddingMeters + acc;
 
@@ -275,7 +385,6 @@ class TripService {
       final isCandidateForThis =
           currentTrip.candidateCheckpointIndex == nextIndex;
 
-      // Not inside: clear candidate to avoid false triggers
       if (!insideNow) {
         if (outsideNow) {
           _clearCandidate(currentTrip);
@@ -286,7 +395,6 @@ class TripService {
         return false;
       }
 
-      // Inside now: start or continue dwell timer
       if (!isCandidateForThis) {
         currentTrip.candidateCheckpointIndex = nextIndex;
         currentTrip.candidateSince = DateTime.now();
@@ -306,12 +414,26 @@ class TripService {
         return false;
       }
 
-      //  Confirm reached checkpoint
       nextCp.reachedAt = DateTime.now();
       currentTrip.lastCheckpointIndex = nextIndex;
+      currentTrip.aggregateVersion += 1;
       _clearCandidate(currentTrip);
 
       await currentTrip.save();
+
+      await SyncService.enqueueTripCheckpointReached(
+        tripId: currentTrip.tripId,
+        actorUserId: currentTrip.driverUserId,
+        aggregateVersion: currentTrip.aggregateVersion,
+        payload: {
+          'tripId': currentTrip.tripId,
+          'checkpointIndex': nextIndex,
+          'checkpointName': nextCp.name,
+          'reachedAt': nextCp.reachedAt!.toIso8601String(),
+          'aggregateVersion': currentTrip.aggregateVersion,
+        },
+      );
+
       await _notifyCheckpointReached(trip: currentTrip, checkpoint: nextCp);
 
       final isFinalCheckpoint =
@@ -330,8 +452,6 @@ class TripService {
     trip.candidateSince = null;
   }
 
-  /// Reject impossible jumps and persist last sample fields.
-  /// Conservative rules: if it jumps >1000m in <5 seconds, ignore it.
   static bool _acceptSample(
     Trip trip, {
     required double lat,
@@ -342,7 +462,6 @@ class TripService {
     final prevAt = trip.lastGpsAt;
     final now = DateTime.now();
 
-    // Update stored fields
     trip.lastGpsLat = lat;
     trip.lastGpsLng = lng;
     trip.lastGpsAt = now;
@@ -394,18 +513,45 @@ class TripService {
 
     trip.status = TripStatus.ended;
     trip.endedAt ??= DateTime.now();
+    trip.aggregateVersion += 1;
     await trip.save();
+
+    await SyncService.enqueueTripEnded(
+      tripId: trip.tripId,
+      actorUserId: trip.driverUserId,
+      aggregateVersion: trip.aggregateVersion,
+      payload: {
+        'tripId': trip.tripId,
+        'endedAt': trip.endedAt!.toIso8601String(),
+        'status': trip.status.name,
+        'aggregateVersion': trip.aggregateVersion,
+      },
+    );
+
     await _notifyTripEnded(trip);
   }
 
-  //  Manual end (admin button)
   static Future<void> endTrip(Trip trip) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
     if (trip.status != TripStatus.active) return;
 
     trip.status = TripStatus.ended;
     trip.endedAt ??= DateTime.now();
+    trip.aggregateVersion += 1;
     await trip.save();
+
+    await SyncService.enqueueTripEnded(
+      tripId: trip.tripId,
+      actorUserId: trip.driverUserId,
+      aggregateVersion: trip.aggregateVersion,
+      payload: {
+        'tripId': trip.tripId,
+        'endedAt': trip.endedAt!.toIso8601String(),
+        'status': trip.status.name,
+        'aggregateVersion': trip.aggregateVersion,
+      },
+    );
+
     await _notifyTripEnded(trip);
   }
 
@@ -435,14 +581,29 @@ class TripService {
     }
   }
 
-  //  Manual cancel (admin only)
   static Future<void> cancelTrip(Trip trip, {String? reason}) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
     if (trip.status != TripStatus.active) return;
 
     trip.status = TripStatus.cancelled;
     trip.endedAt ??= DateTime.now();
+    trip.aggregateVersion += 1;
     await trip.save();
+
+    await SyncService.enqueueTripCancelled(
+      tripId: trip.tripId,
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? 'system'
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: trip.aggregateVersion,
+      payload: {
+        'tripId': trip.tripId,
+        'endedAt': trip.endedAt!.toIso8601String(),
+        'status': trip.status.name,
+        'reason': reason?.trim() ?? '',
+        'aggregateVersion': trip.aggregateVersion,
+      },
+    );
 
     final when = trip.endedAt!.toLocal().toString().substring(0, 16);
     final why = (reason != null && reason.trim().isNotEmpty)

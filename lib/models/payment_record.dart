@@ -37,6 +37,9 @@ class PaymentRecord extends HiveObject {
   @HiveField(10, defaultValue: '')
   final String note;
 
+  @HiveField(11)
+int aggregateVersion;
+
   PaymentRecord({
     required this.paymentId,
     required this.propertyKey,
@@ -49,5 +52,6 @@ class PaymentRecord extends HiveObject {
     this.recordedByUserId = '',
     this.kind = 'payment',
     this.note = '',
+    this.aggregateVersion = 1,
   });
 }

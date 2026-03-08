@@ -100,6 +100,7 @@ class PropertyService {
       lastPaidByUserId: '',
       lastPaidAtStation: '',
       lastTxnRef: '',
+      aggregateVersion: 1,
     );
 
     final key = await box.add(property);
@@ -117,6 +118,7 @@ class PropertyService {
     await SyncService.enqueuePropertyCreated(
       propertyId: saved.propertyCode.trim(),
       actorUserId: cleanCreatedByUserId,
+      aggregateVersion: saved.aggregateVersion,
       payload: {
         'propertyCode': saved.propertyCode,
         'receiverName': saved.receiverName,
@@ -131,6 +133,7 @@ class PropertyService {
         'createdByUserId': saved.createdByUserId,
         'amountPaidTotal': saved.amountPaidTotal,
         'currency': saved.currency,
+        'aggregateVersion': saved.aggregateVersion,
       },
     );
 
@@ -146,11 +149,21 @@ class PropertyService {
       throw StateError('propertyCreated sync event missing propertyCode');
     }
 
-    final alreadyExists = box.values.any(
-      (p) => p.propertyCode.trim() == propertyCode,
-    );
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
 
-    if (alreadyExists) {
+    Property? existing;
+    for (final p in box.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        existing = p;
+        break;
+      }
+    }
+
+    // Creation replay rule:
+    // if it already exists locally, do not recreate or mutate it.
+    if (existing != null) {
       return;
     }
 
@@ -159,15 +172,18 @@ class PropertyService {
       receiverPhone: (payload['receiverPhone'] ?? '').toString(),
       description: (payload['description'] ?? '').toString(),
       destination: (payload['destination'] ?? '').toString(),
-      itemCount: payload['itemCount'] as int,
+      itemCount: (payload['itemCount'] as num).toInt(),
       routeId: (payload['routeId'] ?? '').toString(),
       routeName: (payload['routeName'] ?? '').toString(),
-      createdAt: DateTime.parse(payload['createdAt'] as String),
-      status: PropertyStatus.values.byName(payload['status'] as String),
+      createdAt: DateTime.parse((payload['createdAt'] ?? '').toString()),
+      status: PropertyStatus.values.byName(
+        (payload['status'] ?? 'pending').toString(),
+      ),
       createdByUserId: (payload['createdByUserId'] ?? '').toString(),
       propertyCode: propertyCode,
-      amountPaidTotal: payload['amountPaidTotal'] as int,
+      amountPaidTotal: (payload['amountPaidTotal'] as num?)?.toInt() ?? 0,
       currency: (payload['currency'] ?? 'UGX').toString(),
+      aggregateVersion: incomingVersion,
     );
 
     await box.add(property);

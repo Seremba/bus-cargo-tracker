@@ -57,6 +57,7 @@ class PropertyAdapter extends TypeAdapter<Property> {
       receiverNotifyEnabledByUserId:
           fields[37] == null ? '' : fields[37] as String?,
       lastReceiverNotifiedAt: fields[38] as DateTime?,
+      aggregateVersion: fields[40] as int,
       receiverNotifyChannel:
           fields[39] == null ? 'whatsapp' : fields[39] as String?,
     );
@@ -65,7 +66,7 @@ class PropertyAdapter extends TypeAdapter<Property> {
   @override
   void write(BinaryWriter writer, Property obj) {
     writer
-      ..writeByte(40)
+      ..writeByte(41)
       ..writeByte(0)
       ..write(obj.receiverName)
       ..writeByte(1)
@@ -145,7 +146,9 @@ class PropertyAdapter extends TypeAdapter<Property> {
       ..writeByte(38)
       ..write(obj.lastReceiverNotifiedAt)
       ..writeByte(39)
-      ..write(obj.receiverNotifyChannel);
+      ..write(obj.receiverNotifyChannel)
+      ..writeByte(40)
+      ..write(obj.aggregateVersion);
   }
 
   @override

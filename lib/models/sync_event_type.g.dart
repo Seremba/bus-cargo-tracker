@@ -41,6 +41,12 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         return SyncEventType.pickupOtpGenerated;
       case 13:
         return SyncEventType.pickupOtpVerified;
+      case 14:
+        return SyncEventType.tripCheckpointReached;
+      case 15:
+        return SyncEventType.tripEnded;
+      case 16:
+        return SyncEventType.tripCancelled;
       default:
         return SyncEventType.propertyCreated;
     }
@@ -90,6 +96,15 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         break;
       case SyncEventType.pickupOtpVerified:
         writer.writeByte(13);
+        break;
+      case SyncEventType.tripCheckpointReached:
+        writer.writeByte(14);
+        break;
+      case SyncEventType.tripEnded:
+        writer.writeByte(15);
+        break;
+      case SyncEventType.tripCancelled:
+        writer.writeByte(16);
         break;
     }
   }

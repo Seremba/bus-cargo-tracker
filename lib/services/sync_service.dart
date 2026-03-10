@@ -217,20 +217,36 @@ class SyncService {
   }
 
   static Future<SyncEvent> enqueuePropertyInTransit({
-  required String propertyId,
-  required String actorUserId,
-  required Map<String, dynamic> payload,
-  required int aggregateVersion,
-}) {
-  return enqueue(
-    type: SyncEventType.propertyInTransit,
-    aggregateType: 'property',
-    aggregateId: propertyId,
-    actorUserId: actorUserId,
-    payload: payload,
-    aggregateVersion: aggregateVersion,
-  );
-}
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyInTransit,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyDelivered({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyDelivered,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
 
   static bool exists(String eventId) {
     final box = HiveService.syncEventBox();
@@ -314,6 +330,12 @@ class SyncService {
         break;
       case SyncEventType.itemsLoadedPartial:
         await PropertyService.applyItemsLoadedPartialFromSync(event);
+        break;
+      case SyncEventType.propertyInTransit:
+        await PropertyService.applyPropertyInTransitFromSync(event);
+        break;
+      case SyncEventType.propertyDelivered:
+        await PropertyService.applyPropertyDeliveredFromSync(event);
         break;
 
       default:

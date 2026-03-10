@@ -135,7 +135,8 @@ class PropertyItemService {
   /// Keeps your existing Property strict status consistent with item reality.
   /// Call this after load, trip start, delivered, picked up, etc.
   Future<void> recomputePropertyAggregate({required Property property}) async {
-    final items = getItemsForProperty(property.key);
+    final propertyKey = property.key.toString();
+    final items = getItemsForProperty(propertyKey);
     if (items.isEmpty) return;
 
     final bool anyInTransit = items.any(
@@ -161,7 +162,7 @@ class PropertyItemService {
     } else if (anyInTransit) {
       newStatus = PropertyStatus.inTransit;
     } else {
-      // IMPORTANT: property stays pending until trip starts
+      // property stays pending until trip actually starts
       newStatus = PropertyStatus.pending;
     }
 

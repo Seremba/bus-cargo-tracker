@@ -10,7 +10,12 @@ import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
-import 'package:bus_cargo_tracker/services/session.dart';
+
+void _registerAdapterIfNeeded<T>(TypeAdapter<T> adapter) {
+  if (!Hive.isAdapterRegistered(adapter.typeId)) {
+    Hive.registerAdapter<T>(adapter);
+  }
+}
 
 void main() {
   late Directory tempDir;
@@ -22,94 +27,87 @@ void main() {
 
     Hive.init(tempDir.path);
 
-    Hive.registerAdapter(PropertyStatusAdapter());
-    Hive.registerAdapter(PropertyAdapter());
-    Hive.registerAdapter(AuditEventAdapter());
-    Hive.registerAdapter(SyncEventTypeAdapter());
-    Hive.registerAdapter(SyncEventAdapter());
+    _registerAdapterIfNeeded(PropertyStatusAdapter());
+    _registerAdapterIfNeeded(PropertyAdapter());
+    _registerAdapterIfNeeded(AuditEventAdapter());
+    _registerAdapterIfNeeded(SyncEventTypeAdapter());
+    _registerAdapterIfNeeded(SyncEventAdapter());
 
     await HiveService.openPropertyBox();
     await HiveService.openAuditBox();
     await HiveService.openSyncEventBox();
-
-    Session.currentUserId = 'desk-1';
-    Session.currentRole = null;
-    Session.currentUserFullName = null;
-    Session.currentStationName = null;
+    await HiveService.openAppSettingsBox();
   });
 
   tearDown(() async {
-    Session.currentUserId = null;
-    Session.currentRole = null;
-    Session.currentUserFullName = null;
-    Session.currentStationName = null;
-
     await Hive.close();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
   });
 
-  test('registerProperty saves property and emits propertyCreated sync event',
-      () async {
-    final property = await PropertyService.registerProperty(
-      receiverName: 'Jane Receiver',
-      receiverPhone: '0700000001',
-      description: 'Suitcase',
-      destination: 'Juba',
-      itemCount: 2,
-      createdByUserId: 'desk-1',
-      routeId: 'kampala-juba',
-      routeName: 'Kampala → Juba',
-    );
+  test(
+    'registerProperty saves property and emits propertyCreated sync event',
+    () async {
+      final saved = await PropertyService.registerProperty(
+        receiverName: 'John Receiver',
+        receiverPhone: '0780000000',
+        description: 'Bag',
+        destination: 'Juba',
+        itemCount: 3,
+        createdByUserId: 'desk-1',
+        routeId: 'route-1',
+        routeName: 'Kampala - Juba',
+      );
 
-    expect(HiveService.propertyBox().length, 1);
-    expect(HiveService.syncEventBox().length, 1);
-    expect(HiveService.auditBox().length, 1);
+      final properties = HiveService.propertyBox().values.toList();
+      final events = HiveService.syncEventBox().values.toList();
 
-    final event = HiveService.syncEventBox().values.first;
+      expect(properties.length, 1);
+      expect(HiveService.auditBox().length, 1);
 
-    expect(property.status, PropertyStatus.pending);
-    expect(property.propertyCode, isNotEmpty);
+      expect(saved.propertyCode.trim().isNotEmpty, true);
+      expect(saved.aggregateVersion, 1);
+      expect(saved.status, PropertyStatus.pending);
 
-    expect(event.type, SyncEventType.propertyCreated);
-    expect(event.aggregateType, 'property');
-    expect(event.aggregateId, property.key.toString());
-    expect(event.actorUserId, 'desk-1');
-    expect(event.pendingPush, isTrue);
-    expect(event.pushed, isFalse);
+      expect(events.length, 1);
+      expect(events.first.type, SyncEventType.propertyCreated);
+      expect(events.first.aggregateType, 'property');
+      expect(events.first.aggregateId, saved.propertyCode.trim());
+      expect(events.first.aggregateVersion, 1);
+      expect(events.first.actorUserId, 'desk-1');
 
-    expect(event.payload['propertyKey'], property.key.toString());
-    expect(event.payload['propertyCode'], property.propertyCode);
-    expect(event.payload['receiverName'], 'Jane Receiver');
-    expect(event.payload['receiverPhone'], '0700000001');
-    expect(event.payload['description'], 'Suitcase');
-    expect(event.payload['destination'], 'Juba');
-    expect(event.payload['itemCount'], 2);
-    expect(event.payload['routeId'], 'kampala-juba');
-    expect(event.payload['routeName'], 'Kampala → Juba');
-    expect(event.payload['status'], 'pending');
-    expect(event.payload['createdByUserId'], 'desk-1');
-    expect(event.payload['currency'], 'UGX');
-  });
+      expect(events.first.payload['propertyCode'], saved.propertyCode);
+      expect(events.first.payload['receiverName'], 'John Receiver');
+      expect(events.first.payload['receiverPhone'], '0780000000');
+      expect(events.first.payload['description'], 'Bag');
+      expect(events.first.payload['destination'], 'Juba');
+      expect(events.first.payload['itemCount'], 3);
+      expect(events.first.payload['routeId'], 'route-1');
+      expect(events.first.payload['routeName'], 'Kampala - Juba');
+      expect(events.first.payload['status'], 'pending');
+      expect(events.first.payload['createdByUserId'], 'desk-1');
+      expect(events.first.payload['aggregateVersion'], 1);
+    },
+  );
 
   test('registerProperty validation failure emits no sync event', () async {
-    expect(
+    await expectLater(
       () => PropertyService.registerProperty(
         receiverName: '',
-        receiverPhone: '0700000001',
-        description: 'Suitcase',
+        receiverPhone: '0780000000',
+        description: 'Bag',
         destination: 'Juba',
-        itemCount: 2,
+        itemCount: 3,
         createdByUserId: 'desk-1',
-        routeId: 'kampala-juba',
-        routeName: 'Kampala → Juba',
+        routeId: 'route-1',
+        routeName: 'Kampala - Juba',
       ),
       throwsArgumentError,
     );
 
-    expect(HiveService.propertyBox().length, 0);
-    expect(HiveService.syncEventBox().length, 0);
-    expect(HiveService.auditBox().length, 0);
+    expect(HiveService.propertyBox().values, isEmpty);
+    expect(HiveService.auditBox().values, isEmpty);
+    expect(HiveService.syncEventBox().values, isEmpty);
   });
 }

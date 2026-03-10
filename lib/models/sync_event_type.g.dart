@@ -47,6 +47,8 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         return SyncEventType.tripEnded;
       case 16:
         return SyncEventType.tripCancelled;
+      case 17:
+        return SyncEventType.propertyInTransit;
       default:
         return SyncEventType.propertyCreated;
     }
@@ -105,6 +107,9 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         break;
       case SyncEventType.tripCancelled:
         writer.writeByte(16);
+        break;
+      case SyncEventType.propertyInTransit:
+        writer.writeByte(17);
         break;
     }
   }

@@ -537,7 +537,22 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
+    // IMPORTANT: version increment must happen BEFORE save
+    fresh.aggregateVersion += 1;
     await fresh.save();
+
+    await SyncService.enqueuePropertyDelivered(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? fresh.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'deliveredAt': now.toIso8601String(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
 
     await PickupQrService.issueForDelivered(fresh, otp: otp);
 
@@ -767,20 +782,38 @@ class PropertyService {
       now: now,
     );
 
-    // Refresh counts after move
     final counts = itemSvc.computeTripCounts(
       propertyKey: fresh.key.toString(),
       tripId: trip.tripId,
     );
 
-    // Update property
     fresh.routeId = route.id;
     fresh.routeName = route.name;
-    fresh.status = PropertyStatus
-        .inTransit; // aggregate: if ANY item inTransit -> inTransit
+    fresh.status = PropertyStatus.inTransit;
     fresh.inTransitAt = now;
+    fresh.loadedAt ??= now;
     fresh.tripId = trip.tripId;
+    fresh.aggregateVersion += 1;
     await fresh.save();
+
+    await SyncService.enqueuePropertyInTransit(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? fresh.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'tripId': trip.tripId,
+        'routeId': fresh.routeId,
+        'routeName': fresh.routeName,
+        'inTransitAt': now.toIso8601String(),
+        'loadedForTrip': counts.loadedForTrip,
+        'remainingAtStation': counts.remainingAtStation,
+        'total': counts.total,
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
 
     final msg =
         'Departed today: ${counts.loadedForTrip}/${counts.total}\n'
@@ -799,7 +832,6 @@ class PropertyService {
       message: 'Property for ${fresh.receiverName} is in transit.\n$msg',
     );
 
-    // ✅ Receiver notification: choose ONE path (partial OR normal)
     if (counts.remainingAtStation > 0) {
       await _safeNotifyReceiverPartialLoad(
         fresh: fresh,
@@ -809,6 +841,101 @@ class PropertyService {
     } else {
       await _safeNotifyReceiver(fresh: fresh, eventLabel: 'IN TRANSIT');
     }
+  }
+
+  static Future<void> applyPropertyInTransitFromSync(SyncEvent event) async {
+    final pBox = HiveService.propertyBox();
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    final payload = event.payload;
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) return;
+
+    Property? property;
+    for (final p in pBox.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        property = p;
+        break;
+      }
+    }
+
+    if (property == null) return;
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    if (property.aggregateVersion >= incomingVersion) return;
+
+    final tripId = (payload['tripId'] ?? '').toString().trim();
+    final routeId = (payload['routeId'] ?? '').toString().trim();
+    final routeName = (payload['routeName'] ?? '').toString().trim();
+    final inTransitAtRaw = (payload['inTransitAt'] ?? '').toString().trim();
+    final inTransitAt = DateTime.tryParse(inTransitAtRaw);
+
+    if (tripId.isEmpty || inTransitAt == null) return;
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: property.key.toString(),
+      trackingCode: property.trackingCode,
+      itemCount: property.itemCount,
+    );
+
+    await itemSvc.onTripStartedMoveLoadedToInTransitForProperty(
+      propertyKey: property.key.toString(),
+      tripId: tripId,
+      now: inTransitAt,
+    );
+
+    property.tripId = tripId;
+    if (routeId.isNotEmpty) property.routeId = routeId;
+    if (routeName.isNotEmpty) property.routeName = routeName;
+    property.inTransitAt ??= inTransitAt;
+    property.loadedAt ??= inTransitAt;
+    property.aggregateVersion = incomingVersion;
+
+    await property.save();
+    await itemSvc.recomputePropertyAggregate(property: property);
+  }
+
+  static Future<void> applyPropertyDeliveredFromSync(SyncEvent event) async {
+    final box = HiveService.propertyBox();
+    final payload = event.payload;
+
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) return;
+
+    Property? property;
+    for (final p in box.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        property = p;
+        break;
+      }
+    }
+
+    if (property == null) return;
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    if (property.aggregateVersion >= incomingVersion) return;
+
+    final deliveredAtRaw = (payload['deliveredAt'] ?? '').toString().trim();
+    final deliveredAt = DateTime.tryParse(deliveredAtRaw);
+    if (deliveredAt == null) return;
+
+    // forward-only state progression
+    if (property.status == PropertyStatus.inTransit) {
+      property.status = PropertyStatus.delivered;
+      property.deliveredAt ??= deliveredAt;
+      property.inTransitAt ??= deliveredAt;
+      property.loadedAt ??= property.inTransitAt;
+    }
+
+    property.aggregateVersion = incomingVersion;
+    await property.save();
   }
 
   static Future<bool> markLoaded(

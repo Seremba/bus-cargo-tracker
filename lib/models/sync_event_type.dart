@@ -54,7 +54,7 @@ enum SyncEventType {
 
   @HiveField(16)
   tripCancelled,
-  
+
   @HiveField(17)
   propertyInTransit,
 }

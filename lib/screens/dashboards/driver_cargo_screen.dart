@@ -55,7 +55,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     super.initState();
 
     if (_canUseDriverTools) {
-      // ✅ Start GPS AFTER first frame to avoid init-time layout / permission side effects
+      // Start GPS AFTER first frame to avoid init-time layout / permission side effects
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _startGps();
@@ -146,7 +146,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
             ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
           }
         },
-        // ✅ MUST handle errors so UI never becomes blank
+        // MUST handle errors so UI never becomes blank
         onError: (e, st) {
           if (!mounted) return;
           setState(() => _gpsStatus = 'GPS error: $e');
@@ -405,7 +405,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   ),
                 ),
 
-                // ✅ FIX: constrain the button width to prevent “infinite width” issues
+                // FIX: constrain the button width to prevent “infinite width” issues
                 ConstrainedBox(
                   constraints: const BoxConstraints(minWidth: 90),
                   child: ElevatedButton(

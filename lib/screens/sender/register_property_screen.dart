@@ -5,6 +5,7 @@ import '../../services/property_service.dart';
 import '../../services/session.dart';
 
 import '../../data/routes.dart';
+import '../../data/routes_helpers.dart';
 import '../common/property_qr_display_screen.dart';
 import '../sender/my_properties_screen.dart';
 
@@ -24,13 +25,25 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
   final destinationController = TextEditingController();
   final itemCountController = TextEditingController(text: '1');
 
-  AppRoute? _selectedRoute;
-
   bool _saving = false;
   AutovalidateMode _autoValidate = AutovalidateMode.disabled;
 
+  AppRoute? get _resolvedRoute =>
+      findRouteByDestination(destinationController.text);
+
+  @override
+  void initState() {
+    super.initState();
+    destinationController.addListener(_onDestinationChanged);
+  }
+
+  void _onDestinationChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    destinationController.removeListener(_onDestinationChanged);
     receiverNameController.dispose();
     receiverPhoneController.dispose();
     descriptionController.dispose();
@@ -45,7 +58,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     descriptionController.clear();
     destinationController.clear();
     itemCountController.text = '1';
-    setState(() => _selectedRoute = null);
   }
 
   InputDecoration _dec({
@@ -88,11 +100,21 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       return;
     }
 
+    final route = _resolvedRoute;
+    if (route == null) {
+      ScaffoldMessenger.of(context).clearSnackBars();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No valid transport route found for this destination.'),
+        ),
+      );
+      return;
+    }
+
     setState(() => _saving = true);
 
     try {
       final count = int.parse(itemCountController.text.trim());
-      final route = _selectedRoute!;
 
       final property = await PropertyService.registerProperty(
         receiverName: receiverNameController.text,
@@ -124,9 +146,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       _resetForm();
 
       if (goToMyProperties == true) {
-        ScaffoldMessenger.of(context).clearSnackBars();
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
@@ -158,6 +177,8 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final resolvedRoute = _resolvedRoute;
+
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
@@ -215,17 +236,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                     : null,
               ),
               const SizedBox(height: 12),
-              DropdownButtonFormField<AppRoute>(
-                initialValue: _selectedRoute,
-                decoration: _dec(label: 'Route', icon: Icons.route),
-                hint: const Text('Select route'),
-                items: routes
-                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
-                    .toList(),
-                validator: (v) => v == null ? 'Please select a route' : null,
-                onChanged: (v) => setState(() => _selectedRoute = v),
-              ),
-              const SizedBox(height: 12),
               TextFormField(
                 controller: itemCountController,
                 keyboardType: TextInputType.number,
@@ -255,10 +265,26 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 decoration: _dec(
                   label: 'Destination',
                   icon: Icons.location_on_outlined,
+                  hint: 'e.g. Nairobi, Juba, Kigali, Goma',
                 ),
-                validator: (value) => (value == null || value.trim().isEmpty)
-                    ? 'Destination required'
-                    : null,
+                validator: (value) {
+                  final v = value?.trim() ?? '';
+                  if (v.isEmpty) return 'Destination required';
+                  if (findRouteByDestination(v) == null) {
+                    return 'No transport route configured for this destination';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 12),
+              Card(
+                child: ListTile(
+                  leading: const Icon(Icons.route),
+                  title: const Text('Assigned Route'),
+                  subtitle: Text(
+                    resolvedRoute?.name ?? 'No matching route found yet',
+                  ),
+                ),
               ),
               const SizedBox(height: 24),
               ElevatedButton(

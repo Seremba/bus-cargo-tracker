@@ -1352,4 +1352,112 @@ class PropertyService {
     fresh.qrNonce = _newNonce();
     await fresh.save();
   }
+
+  static Future<Trip?> startRouteTrip({required String routeId}) async {
+    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return null;
+
+    final route = findRouteById(routeId);
+    if (route == null) {
+      throw StateError('Route not found');
+    }
+
+    final cps = validatedCheckpoints(route);
+    if (cps.isEmpty) {
+      throw StateError('Route has invalid checkpoints');
+    }
+
+    final itemBox = HiveService.propertyItemBox();
+    final pBox = HiveService.propertyBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    final now = DateTime.now();
+
+    final trip = await TripService.ensureActiveTrip(
+      routeId: route.id,
+      routeName: route.name,
+      checkpoints: cps,
+    );
+
+    final candidates = pBox.values.where((p) {
+      if (p.routeId != route.id) return false;
+      if (p.status != PropertyStatus.pending) return false;
+      return true;
+    }).toList();
+
+    for (final property in candidates) {
+      await itemSvc.ensureItemsForProperty(
+        propertyKey: property.key.toString(),
+        trackingCode: property.trackingCode,
+        itemCount: property.itemCount,
+      );
+
+      final items = itemSvc.getItemsForProperty(property.key.toString());
+
+      final hasLoadedReady = items.any(
+        (x) => x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
+      );
+
+      if (!hasLoadedReady) continue;
+
+      await itemSvc.onTripStartedMoveLoadedToInTransitForProperty(
+        propertyKey: property.key.toString(),
+        tripId: trip.tripId,
+        now: now,
+      );
+
+      final counts = itemSvc.computeTripCounts(
+        propertyKey: property.key.toString(),
+        tripId: trip.tripId,
+      );
+
+      property.status = PropertyStatus.inTransit;
+      property.inTransitAt = now;
+      property.loadedAt ??= now;
+      property.tripId = trip.tripId;
+      property.aggregateVersion += 1;
+      await property.save();
+
+      await SyncService.enqueuePropertyInTransit(
+        propertyId: property.propertyCode.trim(),
+        actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+            ? property.createdByUserId
+            : (Session.currentUserId ?? '').trim(),
+        aggregateVersion: property.aggregateVersion,
+        payload: {
+          'propertyCode': property.propertyCode,
+          'tripId': trip.tripId,
+          'routeId': property.routeId,
+          'routeName': property.routeName,
+          'inTransitAt': now.toIso8601String(),
+          'loadedForTrip': counts.loadedForTrip,
+          'remainingAtStation': counts.remainingAtStation,
+          'total': counts.total,
+          'aggregateVersion': property.aggregateVersion,
+        },
+      );
+
+      final msg =
+          'Departed today: ${counts.loadedForTrip}/${counts.total}\n'
+          'Remaining at station: ${counts.remainingAtStation}/${counts.total}\n'
+          'Route: ${route.name}';
+
+      await NotificationService.notify(
+        targetUserId: property.createdByUserId,
+        title: 'Property in transit',
+        message: 'Your property is now in transit.\n$msg',
+      );
+
+      if (counts.remainingAtStation > 0) {
+        await _safeNotifyReceiverPartialLoad(
+          fresh: property,
+          counts: counts,
+          routeName: route.name,
+        );
+      } else {
+        await _safeNotifyReceiver(fresh: property, eventLabel: 'IN TRANSIT');
+      }
+    }
+
+    return trip;
+  }
 }

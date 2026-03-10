@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../data/routes.dart';
 import '../../models/user_role.dart';
 import '../../services/auth_service.dart';
 import '../../services/role_guard.dart';
@@ -21,6 +22,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
   bool _loading = false;
   UserRole _role = UserRole.staff;
+  AppRoute? _selectedRoute;
 
   @override
   void dispose() {
@@ -35,6 +37,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
       _role == UserRole.staff || _role == UserRole.deskCargoOfficer;
 
   bool get _stationRequired => _role == UserRole.staff;
+
+  bool get _routeEnabled => _role == UserRole.driver;
 
   Widget _notAuthorized() =>
       const Scaffold(body: Center(child: Text('Not authorized')));
@@ -124,11 +128,11 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                     child: Text('Desk Cargo Officer'),
                   ),
                 ],
-
                 onChanged: (v) {
                   setState(() {
                     _role = v ?? UserRole.staff;
                     if (!_stationEnabled) _station.clear();
+                    if (!_routeEnabled) _selectedRoute = null;
                   });
                 },
               ),
@@ -150,6 +154,28 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   final t = v?.trim() ?? '';
                   if (t.isEmpty) return 'Station required for staff';
                   return null;
+                },
+              ),
+
+              const SizedBox(height: 12),
+
+              DropdownButtonFormField<AppRoute>(
+                initialValue: _selectedRoute,
+                decoration: const InputDecoration(
+                  labelText: 'Assigned Route (drivers only)',
+                  border: OutlineInputBorder(),
+                ),
+                items: routes
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
+                    .toList(),
+                onChanged: _routeEnabled
+                    ? (v) => setState(() => _selectedRoute = v)
+                    : null,
+                validator: (v) {
+                  if (_role != UserRole.driver) return null;
+                  return v == null
+                      ? 'Assigned route required for driver'
+                      : null;
                 },
               ),
 
@@ -175,13 +201,17 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
     setState(() => _loading = true);
     try {
-      final user = await AuthService.register(
+      final user = await AuthService.adminCreateUser(
         fullName: _name.text,
         phone: _phone.text,
         password: _password.text,
         role: _role,
         stationName: _stationEnabled && _station.text.trim().isNotEmpty
             ? _station.text.trim()
+            : null,
+        assignedRouteId: _role == UserRole.driver ? _selectedRoute?.id : null,
+        assignedRouteName: _role == UserRole.driver
+            ? _selectedRoute?.name
             : null,
       );
 
@@ -202,7 +232,6 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
         ),
       );
 
-      //  Route back after success
       Navigator.of(context).pop(user);
     } finally {
       if (mounted) setState(() => _loading = false);

@@ -17,7 +17,6 @@ import '../../services/role_guard.dart';
 import '../../services/session.dart';
 import '../../services/trip_service.dart';
 
-import '../../data/routes_helpers.dart';
 import '../admin/driver_load_overview_screen.dart';
 
 import '../../theme/status_colors.dart';
@@ -40,6 +39,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   DateTime? _lastGpsAt;
 
   DateTime _lastCheckpointCheck = DateTime.fromMillisecondsSinceEpoch(0);
+  bool _startingTrip = false;
 
   bool get _canUseDriverTools =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
@@ -50,12 +50,14 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     return t.isEmpty ? '—' : t;
   }
 
+  String? get _assignedRouteId => Session.currentAssignedRouteId?.trim();
+  String? get _assignedRouteName => Session.currentAssignedRouteName?.trim();
+
   @override
   void initState() {
     super.initState();
 
     if (_canUseDriverTools) {
-      // Start GPS AFTER first frame to avoid init-time layout / permission side effects
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _startGps();
@@ -74,8 +76,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
   Future<void> _startGps() async {
     if (!_canUseDriverTools) return;
-
-    // Prevent double-start
     if (_sub != null) return;
 
     try {
@@ -115,7 +115,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
           if (activeTrip == null) return;
 
-          // Screen-side throttle (battery + UI stability)
           final now = DateTime.now();
           if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
           _lastCheckpointCheck = now;
@@ -146,7 +145,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
             ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
           }
         },
-        // MUST handle errors so UI never becomes blank
         onError: (e, st) {
           if (!mounted) return;
           setState(() => _gpsStatus = 'GPS error: $e');
@@ -244,6 +242,42 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
+  Future<void> _startAssignedRouteTrip() async {
+    final routeId = _assignedRouteId;
+    if (routeId == null || routeId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No assigned route for this driver.')),
+      );
+      return;
+    }
+
+    if (_startingTrip) return;
+    setState(() => _startingTrip = true);
+
+    try {
+      final trip = await PropertyService.startRouteTrip(routeId: routeId);
+
+      if (!mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            trip == null
+                ? 'No trip started.'
+                : 'Trip started for ${trip.routeName} ✅',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+    } finally {
+      if (mounted) setState(() => _startingTrip = false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (Session.currentUserId == null ||
@@ -254,6 +288,17 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     }
     if (!_canUseDriverTools) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
+    }
+
+    final assignedRouteId = _assignedRouteId;
+    final assignedRouteName = _assignedRouteName;
+
+    if (assignedRouteId == null || assignedRouteId.isEmpty) {
+      return const Scaffold(
+        body: Center(
+          child: Text('No route assigned to this driver. Contact admin.'),
+        ),
+      );
     }
 
     final pBox = HiveService.propertyBox();
@@ -274,11 +319,36 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         builder: (context, _) {
           final itemSvc = PropertyItemService(iBox);
 
-          final pending =
-              pBox.values
-                  .where((p) => p.status == PropertyStatus.pending)
-                  .toList()
+          final routeProperties =
+              pBox.values.where((p) => p.routeId == assignedRouteId).toList()
                 ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+          int readyProperties = 0;
+          int readyItems = 0;
+          int remainingItems = 0;
+
+          for (final p in routeProperties) {
+            final items = itemSvc.getItemsForProperty(p.key.toString());
+
+            final loadedReady = items
+                .where(
+                  (x) =>
+                      x.status == PropertyItemStatus.loaded &&
+                      x.tripId.trim().isEmpty,
+                )
+                .length;
+
+            final remaining = items
+                .where((x) => x.status == PropertyItemStatus.pending)
+                .length;
+
+            if (loadedReady > 0) {
+              readyProperties += 1;
+              readyItems += loadedReady;
+            }
+
+            remainingItems += remaining;
+          }
 
           return ListView(
             padding: const EdgeInsets.all(12),
@@ -306,25 +376,62 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               _gpsPanel(context),
 
               const SizedBox(height: 14),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'Assigned Route',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(_dashIfEmpty(assignedRouteName)),
+                      const SizedBox(height: 8),
+                      Text('Ready properties: $readyProperties'),
+                      Text('Ready loaded items: $readyItems'),
+                      Text('Remaining at station: $remainingItems'),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: (_startingTrip || readyItems <= 0)
+                              ? null
+                              : _startAssignedRouteTrip,
+                          child: Text(
+                            _startingTrip ? 'Starting...' : 'Start Trip',
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 14),
               const Text(
-                'Pending (Ready to Load)',
+                'Route Manifest',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 4),
               Text(
-                'Rule: Desk must mark items LOADED first before you can start a trip.',
+                'Showing cargo for your assigned route only.',
                 style: TextStyle(fontSize: 12, color: muted),
               ),
               const SizedBox(height: 10),
 
-              if (pending.isEmpty)
+              if (routeProperties.isEmpty)
                 _emptyHint(
                   context,
-                  'No pending cargo to load right now. If you already loaded cargo, check the Active Trip above.',
+                  'No cargo found yet for your assigned route.',
                 ),
 
-              for (final p in pending)
-                _pendingCard(context, p, itemSvc: itemSvc),
+              for (final p in routeProperties)
+                _manifestCard(context, p, itemSvc: itemSvc),
             ],
           );
         },
@@ -332,7 +439,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  Widget _pendingCard(
+  Widget _manifestCard(
     BuildContext context,
     Property p, {
     required PropertyItemService itemSvc,
@@ -340,15 +447,27 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     final muted = Theme.of(
       context,
     ).colorScheme.onSurface.withValues(alpha: 0.60);
-    final ok = Theme.of(context).colorScheme.primary;
 
     final items = itemSvc.getItemsForProperty(p.key.toString());
 
     final loadedReady = items
-        .where((x) => x.status == PropertyItemStatus.loaded)
+        .where(
+          (x) =>
+              x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
+        )
         .length;
 
-    final loadedOk = loadedReady > 0 || p.loadedAt != null;
+    final inTransitCount = items
+        .where((x) => x.status == PropertyItemStatus.inTransit)
+        .length;
+
+    final deliveredCount = items
+        .where((x) => x.status == PropertyItemStatus.delivered)
+        .length;
+
+    final pickedUpCount = items
+        .where((x) => x.status == PropertyItemStatus.pickedUp)
+        .length;
 
     final bg = PropertyStatusColors.background(p.status);
     final fg = PropertyStatusColors.foreground(p.status);
@@ -387,76 +506,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                 style: TextStyle(fontSize: 12, color: muted),
               ),
             ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Icon(
-                  loadedOk ? Icons.check_circle : Icons.warning_amber_rounded,
-                  size: 18,
-                  color: loadedOk ? ok : muted,
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    loadedOk
-                        ? 'Loaded: $loadedReady/${p.itemCount}'
-                        : 'Not loaded yet (Desk must mark LOADED)',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-
-                // FIX: constrain the button width to prevent “infinite width” issues
-                ConstrainedBox(
-                  constraints: const BoxConstraints(minWidth: 90),
-                  child: ElevatedButton(
-                    onPressed: loadedOk
-                        ? () async {
-                            final route = findRouteById(p.routeId);
-                            if (route == null) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                    'Route missing ❌ Ask admin/staff',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            final cps = validatedCheckpoints(route);
-                            if (cps.isEmpty) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(
-                                  content: Text(
-                                    'Route "${route.name}" has invalid checkpoints ❌',
-                                  ),
-                                ),
-                              );
-                              return;
-                            }
-
-                            try {
-                              await PropertyService.markInTransit(p);
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('Marked In Transit ✅'),
-                                ),
-                              );
-                            } catch (e) {
-                              if (!context.mounted) return;
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                SnackBar(content: Text('Failed: $e')),
-                              );
-                            }
-                          }
-                        : null,
-                    child: Text(loadedOk ? 'Load' : 'Blocked'),
-                  ),
-                ),
-              ],
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Ready: $loadedReady • In transit: $inTransitCount • Delivered: $deliveredCount • Picked up: $pickedUpCount',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
             ),
           ],
         ),
@@ -482,7 +538,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               Icon(Icons.info_outline, size: 18, color: muted),
               const SizedBox(width: 8),
               const Expanded(
-                child: Text('No active trip yet. Load cargo to start a trip.'),
+                child: Text(
+                  'No active trip yet. Start your assigned route trip.',
+                ),
               ),
             ],
           ),

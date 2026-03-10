@@ -25,13 +25,15 @@ class UserAdapter extends TypeAdapter<User> {
       stationName: fields[5] as String?,
       createdAt: fields[6] as DateTime,
       photoPath: fields[7] as String?,
+      assignedRouteId: fields[8] as String?,
+      assignedRouteName: fields[9] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, User obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(10)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -47,7 +49,11 @@ class UserAdapter extends TypeAdapter<User> {
       ..writeByte(6)
       ..write(obj.createdAt)
       ..writeByte(7)
-      ..write(obj.photoPath);
+      ..write(obj.photoPath)
+      ..writeByte(8)
+      ..write(obj.assignedRouteId)
+      ..writeByte(9)
+      ..write(obj.assignedRouteName);
   }
 
   @override

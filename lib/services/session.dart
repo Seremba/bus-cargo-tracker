@@ -6,4 +6,6 @@ class Session {
   static String? currentUserFullName;
   static String? currentStationName;
 
+  static String? currentAssignedRouteId;
+  static String? currentAssignedRouteName;
 }

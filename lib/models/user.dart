@@ -21,12 +21,19 @@ class User extends HiveObject {
   final UserRole role;
 
   @HiveField(5)
-  String? stationName; // for staff/driver later
+  String? stationName;
 
   @HiveField(6)
   final DateTime createdAt;
+
   @HiveField(7)
   String? photoPath;
+
+  @HiveField(8)
+  String? assignedRouteId;
+
+  @HiveField(9)
+  String? assignedRouteName;
 
   User({
     required this.id,
@@ -37,5 +44,7 @@ class User extends HiveObject {
     this.stationName,
     required this.createdAt,
     this.photoPath,
+    this.assignedRouteId,
+    this.assignedRouteName,
   });
 }

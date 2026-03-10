@@ -34,7 +34,6 @@ class AuthService {
     if (cleanName.isEmpty) return;
     if (cleanPhone.isEmpty) return;
 
-    // Prevent duplicate by digits-only identity
     final phoneTaken = box.values.any(
       (u) =>
           PhoneNormalizer.digitsOnly(u.phone) ==
@@ -47,11 +46,13 @@ class AuthService {
     final admin = User(
       id: id,
       fullName: cleanName,
-      phone: cleanPhone, // ✅ store digits-only as typed (no forced 256)
+      phone: cleanPhone,
       passwordHash: hashPassword(password),
       role: UserRole.admin,
       stationName: null,
       createdAt: DateTime.now(),
+      assignedRouteId: null,
+      assignedRouteName: null,
     );
 
     await box.put(id, admin);
@@ -59,6 +60,10 @@ class AuthService {
 
   static bool _requiresStation(UserRole role) {
     return role == UserRole.staff || role == UserRole.deskCargoOfficer;
+  }
+
+  static bool _requiresAssignedRoute(UserRole role) {
+    return role == UserRole.driver;
   }
 
   static Future<User?> registerSender({
@@ -72,6 +77,8 @@ class AuthService {
       password: password,
       role: UserRole.sender,
       stationName: null,
+      assignedRouteId: null,
+      assignedRouteName: null,
       requireAdminForNonSender: false,
       allowAdminCreation: false,
     );
@@ -83,10 +90,10 @@ class AuthService {
     required String password,
     required UserRole role,
     String? stationName,
+    String? assignedRouteId,
+    String? assignedRouteName,
   }) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return null;
-
-    // block creating admin from UI
     if (role == UserRole.admin) return null;
 
     return register(
@@ -95,6 +102,8 @@ class AuthService {
       password: password,
       role: role,
       stationName: stationName,
+      assignedRouteId: assignedRouteId,
+      assignedRouteName: assignedRouteName,
       requireAdminForNonSender: false,
       allowAdminCreation: false,
     );
@@ -106,6 +115,8 @@ class AuthService {
     required String password,
     required UserRole role,
     String? stationName,
+    String? assignedRouteId,
+    String? assignedRouteName,
     bool requireAdminForNonSender = false,
 
     /// Never allow creating admin through regular registration.
@@ -116,24 +127,31 @@ class AuthService {
     final cleanName = fullName.trim();
     final cleanPhone = PhoneNormalizer.normalizeForStorage(phone);
     final cleanStation = stationName?.trim();
+    final cleanAssignedRouteId = assignedRouteId?.trim();
+    final cleanAssignedRouteName = assignedRouteName?.trim();
 
     if (cleanName.isEmpty) return null;
     if (cleanPhone.isEmpty) return null;
 
-    // Block creating admin via this method by default
     if (role == UserRole.admin && !allowAdminCreation) return null;
 
-    // Optional backward-compat guard (prefer adminCreateUser)
     if (requireAdminForNonSender && role != UserRole.sender) {
       if (!RoleGuard.hasRole(UserRole.admin)) return null;
     }
 
-    // Station rule: required for staff + deskCargoOfficer only
     if (_requiresStation(role)) {
       if (cleanStation == null || cleanStation.isEmpty) return null;
     }
 
-    // Prevent duplicates by digits-only identity
+    if (_requiresAssignedRoute(role)) {
+      if (cleanAssignedRouteId == null || cleanAssignedRouteId.isEmpty) {
+        return null;
+      }
+      if (cleanAssignedRouteName == null || cleanAssignedRouteName.isEmpty) {
+        return null;
+      }
+    }
+
     final exists = box.values.any(
       (u) =>
           PhoneNormalizer.digitsOnly(u.phone) ==
@@ -146,11 +164,17 @@ class AuthService {
     final user = User(
       id: id,
       fullName: cleanName,
-      phone: cleanPhone, // ✅ digits-only stored
+      phone: cleanPhone,
       passwordHash: hashPassword(password),
       role: role,
       stationName: _requiresStation(role) ? cleanStation : null,
       createdAt: DateTime.now(),
+      assignedRouteId: _requiresAssignedRoute(role)
+          ? cleanAssignedRouteId
+          : null,
+      assignedRouteName: _requiresAssignedRoute(role)
+          ? cleanAssignedRouteName
+          : null,
     );
 
     await box.put(id, user);
@@ -224,6 +248,9 @@ class AuthService {
       role: user.role,
       stationName: user.stationName,
       createdAt: user.createdAt,
+      photoPath: user.photoPath,
+      assignedRouteId: user.assignedRouteId,
+      assignedRouteName: user.assignedRouteName,
     );
 
     await box.put(userId, updated);
@@ -240,7 +267,6 @@ class AuthService {
     final user = box.get(userId);
     if (user == null) return false;
 
-    // Allow station for staff + desk cargo officer only
     if (user.role != UserRole.staff && user.role != UserRole.deskCargoOfficer) {
       return false;
     }
@@ -256,6 +282,9 @@ class AuthService {
       role: user.role,
       stationName: clean,
       createdAt: user.createdAt,
+      photoPath: user.photoPath,
+      assignedRouteId: user.assignedRouteId,
+      assignedRouteName: user.assignedRouteName,
     );
 
     await box.put(userId, updated);

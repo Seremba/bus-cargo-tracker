@@ -15,11 +15,12 @@ class SessionService {
     final box = HiveService.appSettingsBox();
     await box.put(_kUserId, user.id);
 
-    // hydrate in-memory session
     Session.currentUserId = user.id;
     Session.currentUserFullName = user.fullName;
     Session.currentRole = user.role;
     Session.currentStationName = user.stationName;
+    Session.currentAssignedRouteId = user.assignedRouteId;
+    Session.currentAssignedRouteName = user.assignedRouteName;
   }
 
   static Future<User?> restore() async {
@@ -28,16 +29,16 @@ class SessionService {
 
     final user = HiveService.userBox().get(userId);
     if (user == null) {
-      // stale session (user deleted) -> clean
       await clear();
       return null;
     }
 
-    // hydrate in-memory session
     Session.currentUserId = user.id;
     Session.currentUserFullName = user.fullName;
     Session.currentRole = user.role;
     Session.currentStationName = user.stationName;
+    Session.currentAssignedRouteId = user.assignedRouteId;
+    Session.currentAssignedRouteName = user.assignedRouteName;
 
     return user;
   }
@@ -50,5 +51,7 @@ class SessionService {
     Session.currentUserFullName = null;
     Session.currentRole = null;
     Session.currentStationName = null;
+    Session.currentAssignedRouteId = null;
+    Session.currentAssignedRouteName = null;
   }
 }

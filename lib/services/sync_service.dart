@@ -200,6 +200,38 @@ class SyncService {
     );
   }
 
+  static Future<void> enqueueItemsLoadedPartial({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) async {
+    await enqueue(
+      type: SyncEventType.itemsLoadedPartial,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyInTransit({
+  required String propertyId,
+  required String actorUserId,
+  required Map<String, dynamic> payload,
+  required int aggregateVersion,
+}) {
+  return enqueue(
+    type: SyncEventType.propertyInTransit,
+    aggregateType: 'property',
+    aggregateId: propertyId,
+    actorUserId: actorUserId,
+    payload: payload,
+    aggregateVersion: aggregateVersion,
+  );
+}
+
   static bool exists(String eventId) {
     final box = HiveService.syncEventBox();
     return box.containsKey(eventId.trim());
@@ -279,6 +311,9 @@ class SyncService {
 
       case SyncEventType.tripCancelled:
         await TripService.applyTripCancelledFromSync(event);
+        break;
+      case SyncEventType.itemsLoadedPartial:
+        await PropertyService.applyItemsLoadedPartialFromSync(event);
         break;
 
       default:

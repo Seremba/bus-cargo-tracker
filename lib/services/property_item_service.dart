@@ -66,6 +66,15 @@ class PropertyItemService {
   }) async {
     final items = getItemsForProperty(propertyKey);
 
+    final validNos = items.map((x) => x.itemNo).toSet();
+    for (final no in itemNos) {
+      if (!validNos.contains(no)) {
+        throw StateError(
+          'Item number $no does not exist for property $propertyKey',
+        );
+      }
+    }
+
     for (final no in itemNos) {
       final item = items.firstWhere((x) => x.itemNo == no);
 

@@ -1,4 +1,5 @@
 import 'package:hive/hive.dart';
+
 import 'checkpoint.dart';
 import 'trip_status.dart';
 
@@ -48,8 +49,14 @@ class Trip extends HiveObject {
   @HiveField(13)
   DateTime? lastGpsAt;
 
-  @HiveField(14, defaultValue: 1)
+  @HiveField(14)
   int aggregateVersion;
+
+  @HiveField(15)
+  String? lastCheckpointId;
+
+  @HiveField(16)
+  DateTime? lastCheckpointReachedAt;
 
   Trip({
     required this.tripId,
@@ -66,6 +73,8 @@ class Trip extends HiveObject {
     this.lastGpsLat,
     this.lastGpsLng,
     this.lastGpsAt,
-    this.aggregateVersion = 1,
+    this.aggregateVersion = 0,
+    this.lastCheckpointId,
+    this.lastCheckpointReachedAt,
   });
 }

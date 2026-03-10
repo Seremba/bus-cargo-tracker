@@ -189,6 +189,80 @@ class PropertyService {
     await box.add(property);
   }
 
+  static Future<void> applyItemsLoadedPartialFromSync(SyncEvent event) async {
+    final pBox = HiveService.propertyBox();
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    final payload = event.payload;
+
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) return;
+
+    Property? property;
+    for (final p in pBox.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        property = p;
+        break;
+      }
+    }
+
+    if (property == null) return;
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    if (property.aggregateVersion >= incomingVersion) return;
+
+    final rawItemNos = (payload['itemNos'] as List?) ?? const [];
+    final itemNos =
+        rawItemNos
+            .map((e) => int.tryParse(e.toString()))
+            .whereType<int>()
+            .toSet()
+            .toList()
+          ..sort();
+
+    if (itemNos.isEmpty) return;
+
+    final loadedAtRaw = (payload['loadedAt'] ?? '').toString().trim();
+    final loadedAt = DateTime.tryParse(loadedAtRaw);
+    if (loadedAt == null) return;
+
+    final loadedAtStation = (payload['loadedAtStation'] ?? '')
+        .toString()
+        .trim();
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: property.key.toString(),
+      trackingCode: property.trackingCode,
+      itemCount: property.itemCount,
+    );
+
+    final items = itemSvc.getItemsForProperty(property.key.toString());
+
+    for (final item in items) {
+      if (!itemNos.contains(item.itemNo)) continue;
+
+      // Forward-only replay: pending -> loaded
+      if (item.status == PropertyItemStatus.pending) {
+        item.status = PropertyItemStatus.loaded;
+        item.loadedAt ??= loadedAt;
+        await item.save();
+      }
+    }
+
+    property.loadedAt ??= loadedAt;
+    if (property.loadedAtStation.trim().isEmpty && loadedAtStation.isNotEmpty) {
+      property.loadedAtStation = loadedAtStation;
+    }
+    property.aggregateVersion = incomingVersion;
+    await property.save();
+
+    await itemSvc.recomputePropertyAggregate(property: property);
+  }
+
   static String _generateOtp() {
     final ms = DateTime.now().millisecondsSinceEpoch;
     return (100000 + (ms % 900000)).toString();
@@ -760,9 +834,11 @@ class PropertyService {
       itemCount: fresh.itemCount,
     );
 
-    final selectedNos = (itemNos == null || itemNos.isEmpty)
-        ? List<int>.generate(fresh.itemCount, (i) => i + 1)
-        : itemNos;
+    final selectedNos =
+        (itemNos == null || itemNos.isEmpty)
+              ? List<int>.generate(fresh.itemCount, (i) => i + 1)
+              : itemNos.toSet().toList()
+          ..sort();
 
     final now = DateTime.now();
 
@@ -775,13 +851,42 @@ class PropertyService {
     fresh.loadedAt ??= now;
     fresh.loadedAtStation = station.trim();
     fresh.loadedByUserId = (Session.currentUserId ?? '').trim();
+    fresh.aggregateVersion += 1;
     await fresh.save();
+
+    await itemSvc.recomputePropertyAggregate(property: fresh);
+
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+    final loadedCount = items
+        .where((x) => x.status == PropertyItemStatus.loaded)
+        .length;
+    final remainingCount = items
+        .where((x) => x.status == PropertyItemStatus.pending)
+        .length;
 
     await AuditService.log(
       action: 'desk_mark_loaded_items',
       propertyKey: fresh.key.toString(),
       details:
           'Loaded items: ${selectedNos.join(",")} at station: ${fresh.loadedAtStation}',
+    );
+
+    await SyncService.enqueueItemsLoadedPartial(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? fresh.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'propertyKey': fresh.key.toString(),
+        'itemNos': selectedNos,
+        'loadedCount': loadedCount,
+        'remainingCount': remainingCount,
+        'loadedAt': now.toIso8601String(),
+        'loadedAtStation': fresh.loadedAtStation,
+        'aggregateVersion': fresh.aggregateVersion,
+      },
     );
 
     return true;

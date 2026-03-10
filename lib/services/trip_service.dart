@@ -42,7 +42,8 @@ class TripService {
     }
   }
 
-  static String _newTripId() => DateTime.now().millisecondsSinceEpoch.toString();
+  static String _newTripId() =>
+      DateTime.now().millisecondsSinceEpoch.toString();
 
   static Future<Trip> ensureActiveTrip({
     required String routeId,
@@ -94,6 +95,8 @@ class TripService {
       checkpoints: checkpoints,
       lastCheckpointIndex: -1,
       aggregateVersion: 1,
+      lastCheckpointId: null,
+      lastCheckpointReachedAt: null,
     );
 
     await box.add(trip);
@@ -134,17 +137,23 @@ class TripService {
 
     final tripId = (payload['tripId'] ?? '').toString().trim();
     if (tripId.isEmpty) {
-      throw StateError('tripStarted sync event missing tripId');
+      return;
     }
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
         event.aggregateVersion;
 
+    Trip? existing;
     for (final t in box.values) {
-      if (t.tripId.trim() == tripId && t.aggregateVersion >= incomingVersion) {
-        return;
+      if (t.tripId.trim() == tripId) {
+        existing = t;
+        break;
       }
+    }
+
+    if (existing != null && existing.aggregateVersion >= incomingVersion) {
+      return;
     }
 
     final rawCheckpoints = (payload['checkpoints'] as List?) ?? const [];
@@ -158,12 +167,58 @@ class TripService {
           lat: (map['lat'] as num).toDouble(),
           lng: (map['lng'] as num).toDouble(),
           radiusMeters: (map['radiusMeters'] as num?)?.toDouble() ?? 500,
-          reachedAt: (map['reachedAt'] == null ||
+          reachedAt:
+              (map['reachedAt'] == null ||
                   (map['reachedAt'] as String).trim().isEmpty)
               ? null
-              : DateTime.parse(map['reachedAt'] as String),
+              : DateTime.tryParse(map['reachedAt'] as String),
         ),
       );
+    }
+
+    final lastCheckpointIndex =
+        (payload['lastCheckpointIndex'] as num?)?.toInt() ?? -1;
+
+    final lastCheckpointReachedAt =
+        (lastCheckpointIndex >= 0 && lastCheckpointIndex < checkpoints.length)
+        ? checkpoints[lastCheckpointIndex].reachedAt
+        : null;
+
+    if (existing != null) {
+      existing.endedAt =
+          (payload['endedAt'] == null ||
+              (payload['endedAt'] ?? '').toString().trim().isEmpty)
+          ? null
+          : DateTime.tryParse((payload['endedAt'] ?? '').toString());
+
+      existing.status = TripStatus.values.byName(
+        (payload['status'] ?? 'active').toString(),
+      );
+      existing.lastCheckpointIndex = lastCheckpointIndex;
+      existing.aggregateVersion = incomingVersion;
+      existing.lastCheckpointId = lastCheckpointIndex >= 0
+          ? lastCheckpointIndex.toString()
+          : null;
+      existing.lastCheckpointReachedAt = lastCheckpointReachedAt;
+
+      existing.candidateCheckpointIndex = null;
+      existing.candidateSince = null;
+      existing.lastGpsLat = null;
+      existing.lastGpsLng = null;
+      existing.lastGpsAt = null;
+
+      existing.checkpoints
+        ..clear()
+        ..addAll(checkpoints);
+
+      await existing.save();
+      return;
+    }
+
+    final startedAtRaw = (payload['startedAt'] ?? '').toString().trim();
+    final startedAt = DateTime.tryParse(startedAtRaw);
+    if (startedAt == null) {
+      return;
     }
 
     final trip = Trip(
@@ -171,14 +226,17 @@ class TripService {
       routeId: (payload['routeId'] ?? '').toString(),
       routeName: (payload['routeName'] ?? '').toString(),
       driverUserId: (payload['driverUserId'] ?? '').toString(),
-      startedAt: DateTime.parse((payload['startedAt'] ?? '').toString()),
+      startedAt: startedAt,
       status: TripStatus.values.byName(
         (payload['status'] ?? 'active').toString(),
       ),
       checkpoints: checkpoints,
-      lastCheckpointIndex:
-          (payload['lastCheckpointIndex'] as num?)?.toInt() ?? -1,
+      lastCheckpointIndex: lastCheckpointIndex,
       aggregateVersion: incomingVersion,
+      lastCheckpointId: lastCheckpointIndex >= 0
+          ? lastCheckpointIndex.toString()
+          : null,
+      lastCheckpointReachedAt: lastCheckpointReachedAt,
     );
 
     await box.add(trip);
@@ -190,12 +248,25 @@ class TripService {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
     if (tripId.isEmpty) {
-      throw StateError('tripCheckpointReached event missing tripId');
+      return;
     }
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
         event.aggregateVersion;
+
+    final checkpointIndexRaw = payload['checkpointIndex'];
+    final reachedAtRaw = (payload['reachedAt'] ?? '').toString().trim();
+
+    if (checkpointIndexRaw == null || reachedAtRaw.isEmpty) {
+      return;
+    }
+
+    final checkpointIndex = (checkpointIndexRaw as num).toInt();
+    final reachedAt = DateTime.tryParse(reachedAtRaw);
+    if (reachedAt == null) {
+      return;
+    }
 
     final box = tripBox();
     Trip? trip;
@@ -208,22 +279,26 @@ class TripService {
     }
 
     if (trip == null) {
-      throw StateError('Trip $tripId not found for checkpoint replay');
+      return;
     }
 
     if (trip.aggregateVersion >= incomingVersion) {
       return;
     }
 
-    final checkpointIndex = (payload['checkpointIndex'] as num).toInt();
-    final reachedAt = DateTime.parse((payload['reachedAt'] ?? '').toString());
-
     if (checkpointIndex < 0 || checkpointIndex >= trip.checkpoints.length) {
-      throw StateError('Invalid checkpointIndex for trip $tripId');
+      return;
+    }
+
+    // Never allow replay to move checkpoint progress backward or sideways.
+    if (checkpointIndex <= trip.lastCheckpointIndex) {
+      return;
     }
 
     trip.checkpoints[checkpointIndex].reachedAt = reachedAt;
     trip.lastCheckpointIndex = checkpointIndex;
+    trip.lastCheckpointId = checkpointIndex.toString();
+    trip.lastCheckpointReachedAt = reachedAt;
     trip.aggregateVersion = incomingVersion;
 
     await trip.save();
@@ -233,7 +308,7 @@ class TripService {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
     if (tripId.isEmpty) {
-      throw StateError('tripEnded event missing tripId');
+      return;
     }
 
     final incomingVersion =
@@ -251,15 +326,21 @@ class TripService {
     }
 
     if (trip == null) {
-      throw StateError('Trip $tripId not found for tripEnded replay');
+      return;
     }
 
     if (trip.aggregateVersion >= incomingVersion) {
       return;
     }
 
+    final endedAtRaw = (payload['endedAt'] ?? '').toString().trim();
+    final endedAt = DateTime.tryParse(endedAtRaw);
+    if (endedAt == null) {
+      return;
+    }
+
     trip.status = TripStatus.ended;
-    trip.endedAt = DateTime.parse((payload['endedAt'] ?? '').toString());
+    trip.endedAt = endedAt;
     trip.aggregateVersion = incomingVersion;
 
     await trip.save();
@@ -269,7 +350,7 @@ class TripService {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
     if (tripId.isEmpty) {
-      throw StateError('tripCancelled event missing tripId');
+      return;
     }
 
     final incomingVersion =
@@ -287,15 +368,21 @@ class TripService {
     }
 
     if (trip == null) {
-      throw StateError('Trip $tripId not found for tripCancelled replay');
+      return;
     }
 
     if (trip.aggregateVersion >= incomingVersion) {
       return;
     }
 
+    final endedAtRaw = (payload['endedAt'] ?? '').toString().trim();
+    final endedAt = DateTime.tryParse(endedAtRaw);
+    if (endedAt == null) {
+      return;
+    }
+
     trip.status = TripStatus.cancelled;
-    trip.endedAt = DateTime.parse((payload['endedAt'] ?? '').toString());
+    trip.endedAt = endedAt;
     trip.aggregateVersion = incomingVersion;
 
     await trip.save();
@@ -386,11 +473,7 @@ class TripService {
           currentTrip.candidateCheckpointIndex == nextIndex;
 
       if (!insideNow) {
-        if (outsideNow) {
-          _clearCandidate(currentTrip);
-        } else {
-          _clearCandidate(currentTrip);
-        }
+        _clearCandidate(currentTrip);
         await currentTrip.save();
         return false;
       }
@@ -416,6 +499,8 @@ class TripService {
 
       nextCp.reachedAt = DateTime.now();
       currentTrip.lastCheckpointIndex = nextIndex;
+      currentTrip.lastCheckpointId = nextIndex.toString();
+      currentTrip.lastCheckpointReachedAt = nextCp.reachedAt;
       currentTrip.aggregateVersion += 1;
       _clearCandidate(currentTrip);
 

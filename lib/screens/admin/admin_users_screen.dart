@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../data/routes.dart';
 import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/auth_service.dart';
@@ -86,8 +87,14 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     final station = u.stationName?.trim();
     final stationText = (station == null || station.isEmpty) ? '—' : station;
 
+    final assignedRoute = u.assignedRouteName?.trim();
+    final assignedRouteText = (assignedRoute == null || assignedRoute.isEmpty)
+        ? '—'
+        : assignedRoute;
+
     final canSetStation =
         u.role == UserRole.staff || u.role == UserRole.deskCargoOfficer;
+    final canEditDriverRoute = u.role == UserRole.driver;
 
     return Card(
       child: ListTile(
@@ -97,7 +104,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           children: [
             Text('${u.phone} • $roleLabel'),
             const SizedBox(height: 4),
-            Text('Station: $stationText', style: const TextStyle(fontSize: 12)),
+            if (u.role == UserRole.driver)
+              Text(
+                'Assigned Route: $assignedRouteText',
+                style: const TextStyle(fontSize: 12),
+              )
+            else
+              Text(
+                'Station: $stationText',
+                style: const TextStyle(fontSize: 12),
+              ),
             Text(
               'Created: ${u.createdAt.toLocal().toString().substring(0, 16)}',
               style: const TextStyle(fontSize: 12),
@@ -112,6 +128,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
             if (v == 'reset_pw') _resetPasswordFlow(u);
             if (v == 'set_station') _setStationFlow(u);
+            if (v == 'edit_route') _editDriverRoute(u);
           },
           itemBuilder: (_) => [
             const PopupMenuItem(
@@ -123,6 +140,15 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               enabled: canSetStation,
               child: Text(
                 canSetStation ? 'Set station' : 'Set station (staff/desk only)',
+              ),
+            ),
+            PopupMenuItem(
+              value: 'edit_route',
+              enabled: canEditDriverRoute,
+              child: Text(
+                canEditDriverRoute
+                    ? 'Edit assigned route'
+                    : 'Edit route (drivers only)',
               ),
             ),
           ],
@@ -205,7 +231,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   Future<void> _setStationFlow(User u) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
-    // allow staff + desk officer
     if (u.role != UserRole.staff && u.role != UserRole.deskCargoOfficer) return;
 
     final c = TextEditingController(text: u.stationName ?? '');
@@ -257,5 +282,72 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     } finally {
       c.dispose();
     }
+  }
+
+  Future<void> _editDriverRoute(User user) async {
+    if (user.role != UserRole.driver) return;
+
+    AppRoute? selectedRoute = routes.firstWhere(
+      (r) => r.id == user.assignedRouteId,
+      orElse: () => routes.first,
+    );
+
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setLocalState) {
+            return AlertDialog(
+              title: Text('Edit Route • ${user.fullName}'),
+              content: DropdownButtonFormField<AppRoute>(
+                initialValue: selectedRoute,
+                decoration: const InputDecoration(
+                  labelText: 'Assigned Route',
+                  border: OutlineInputBorder(),
+                ),
+                items: routes
+                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
+                    .toList(),
+                onChanged: (v) {
+                  setLocalState(() {
+                    selectedRoute = v;
+                  });
+                },
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: selectedRoute == null
+                      ? null
+                      : () => Navigator.pop(context, true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (saved != true || selectedRoute == null) return;
+
+    final ok = await AuthService.adminUpdateDriverAssignedRoute(
+      userId: user.id,
+      assignedRouteId: selectedRoute!.id,
+      assignedRouteName: selectedRoute!.name,
+    );
+
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'Driver route updated ✅' : 'Failed to update driver route ❌',
+        ),
+      ),
+    );
   }
 }

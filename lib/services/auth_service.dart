@@ -290,4 +290,40 @@ class AuthService {
     await box.put(userId, updated);
     return true;
   }
+
+  static Future<bool> adminUpdateDriverAssignedRoute({
+    required String userId,
+    required String? assignedRouteId,
+    required String? assignedRouteName,
+  }) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return false;
+
+    final box = HiveService.userBox();
+    final user = box.get(userId);
+    if (user == null) return false;
+
+    if (user.role != UserRole.driver) return false;
+
+    final cleanRouteId = assignedRouteId?.trim();
+    final cleanRouteName = assignedRouteName?.trim();
+
+    if (cleanRouteId == null || cleanRouteId.isEmpty) return false;
+    if (cleanRouteName == null || cleanRouteName.isEmpty) return false;
+
+    final updated = User(
+      id: user.id,
+      fullName: user.fullName,
+      phone: user.phone,
+      passwordHash: user.passwordHash,
+      role: user.role,
+      stationName: user.stationName,
+      createdAt: user.createdAt,
+      photoPath: user.photoPath,
+      assignedRouteId: cleanRouteId,
+      assignedRouteName: cleanRouteName,
+    );
+
+    await box.put(userId, updated);
+    return true;
+  }
 }

@@ -597,22 +597,39 @@ class PropertyService {
       return false;
     }
 
-    fresh.deliveredAt ??= DateTime.now();
+    final now = DateTime.now();
+
+    fresh.deliveredAt ??= now;
     fresh.inTransitAt ??= fresh.deliveredAt;
     fresh.loadedAt ??= fresh.inTransitAt;
 
     fresh.status = PropertyStatus.pickedUp;
-    fresh.pickedUpAt = DateTime.now();
+    fresh.pickedUpAt = now;
     fresh.staffPickupConfirmed = true;
+    fresh.receiverPickupConfirmed = true;
 
     fresh.pickupOtp = null;
     fresh.otpGeneratedAt = null;
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    fresh.qrConsumedAt = DateTime.now();
+    fresh.qrConsumedAt = now;
 
+    fresh.aggregateVersion += 1;
     await fresh.save();
+
+    await SyncService.enqueuePropertyPickedUp(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? fresh.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'pickedUpAt': now.toIso8601String(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
 
     await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PICKED UP');
 
@@ -630,6 +647,55 @@ class PropertyService {
     );
 
     return true;
+  }
+
+  static Future<void> applyPropertyPickedUpFromSync(SyncEvent event) async {
+    final box = HiveService.propertyBox();
+    final payload = event.payload;
+
+    final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
+    if (propertyCode.isEmpty) return;
+
+    Property? property;
+    for (final p in box.values) {
+      if (p.propertyCode.trim() == propertyCode) {
+        property = p;
+        break;
+      }
+    }
+
+    if (property == null) return;
+
+    final incomingVersion =
+        (payload['aggregateVersion'] as num?)?.toInt() ??
+        event.aggregateVersion;
+
+    if (property.aggregateVersion >= incomingVersion) return;
+
+    final pickedUpAtRaw = (payload['pickedUpAt'] ?? '').toString().trim();
+    final pickedUpAt = DateTime.tryParse(pickedUpAtRaw);
+    if (pickedUpAt == null) return;
+
+    // forward-only progression
+    if (property.status == PropertyStatus.delivered) {
+      property.status = PropertyStatus.pickedUp;
+      property.pickedUpAt ??= pickedUpAt;
+      property.deliveredAt ??= pickedUpAt;
+      property.inTransitAt ??= property.deliveredAt;
+      property.loadedAt ??= property.inTransitAt;
+
+      property.staffPickupConfirmed = true;
+      property.receiverPickupConfirmed = true;
+      property.qrConsumedAt ??= pickedUpAt;
+
+      property.pickupOtp = null;
+      property.otpGeneratedAt = null;
+      property.otpAttempts = 0;
+      property.otpLockedUntil = null;
+    }
+
+    property.aggregateVersion = incomingVersion;
+    await property.save();
   }
 
   static Future<void> adminUnlockOtp(Property p) async {

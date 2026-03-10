@@ -248,6 +248,22 @@ class SyncService {
     );
   }
 
+  static Future<SyncEvent> enqueuePropertyPickedUp({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyPickedUp,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
   static bool exists(String eventId) {
     final box = HiveService.syncEventBox();
     return box.containsKey(eventId.trim());
@@ -336,6 +352,9 @@ class SyncService {
         break;
       case SyncEventType.propertyDelivered:
         await PropertyService.applyPropertyDeliveredFromSync(event);
+        break;
+      case SyncEventType.propertyPickedUp:
+        await PropertyService.applyPropertyPickedUpFromSync(event);
         break;
 
       default:

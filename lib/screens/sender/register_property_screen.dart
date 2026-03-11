@@ -141,7 +141,7 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
 
-      final goToMyProperties = await Navigator.push<bool>(
+      await Navigator.push<bool>(
         context,
         MaterialPageRoute(
           builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
@@ -152,17 +152,10 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
       _resetForm();
 
-      if (goToMyProperties == true) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-        );
-      } else {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-        );
-      }
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
+      );
     } on FormatException {
       if (!mounted) return;
       ScaffoldMessenger.of(context).clearSnackBars();
@@ -277,21 +270,57 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 },
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: destinationController,
-                textInputAction: TextInputAction.done,
-                decoration: _dec(
-                  label: 'Destination',
-                  icon: Icons.location_on_outlined,
-                  hint: 'Enter a valid operational stop',
-                ),
-                validator: (value) {
-                  final v = value?.trim() ?? '';
-                  if (v.isEmpty) return 'Destination required';
-                  if (findRoutesByDestination(v).isEmpty) {
-                    return 'No transport route configured for this destination';
+              Autocomplete<String>(
+                optionsBuilder: (TextEditingValue textEditingValue) {
+                  return searchCheckpointNames(
+                    textEditingValue.text,
+                    limit: 10,
+                  );
+                },
+                onSelected: (value) {
+                  destinationController.text = value;
+                  setState(() {});
+                },
+                fieldViewBuilder: (
+                  context,
+                  textEditingController,
+                  focusNode,
+                  onFieldSubmitted,
+                ) {
+                  if (textEditingController.text !=
+                      destinationController.text) {
+                    textEditingController.value = TextEditingValue(
+                      text: destinationController.text,
+                      selection: TextSelection.collapsed(
+                        offset: destinationController.text.length,
+                      ),
+                    );
                   }
-                  return null;
+
+                  return TextFormField(
+                    controller: textEditingController,
+                    focusNode: focusNode,
+                    textInputAction: TextInputAction.done,
+                    decoration: _dec(
+                      label: 'Destination',
+                      icon: Icons.location_on_outlined,
+                      hint: 'Start typing destination...',
+                    ),
+                    onChanged: (v) {
+                      destinationController.text = v;
+                      setState(() {});
+                    },
+                    validator: (value) {
+                      final v = value?.trim() ?? '';
+                      if (v.isEmpty) return 'Destination required';
+
+                      if (findRoutesByDestination(v).isEmpty) {
+                        return 'No transport route configured for this destination';
+                      }
+
+                      return null;
+                    },
+                  );
                 },
               ),
               const SizedBox(height: 12),

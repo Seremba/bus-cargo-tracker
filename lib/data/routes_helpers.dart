@@ -54,3 +54,46 @@ List<Checkpoint> validatedCheckpoints(AppRoute route) {
   if (valid.length < 2) return [];
   return valid;
 }
+
+List<String> getAllCheckpointNames() {
+  final names = <String>{};
+
+  for (final route in routes) {
+    for (final cp in route.checkpoints) {
+      final clean = cp.name.trim();
+      if (clean.isNotEmpty) {
+        names.add(clean);
+      }
+    }
+  }
+
+  final list = names.toList()..sort();
+  return list;
+}
+
+List<String> searchCheckpointNames(String query, {int limit = 10}) {
+  final all = getAllCheckpointNames();
+  final q = normalizePlaceName(query);
+
+  if (q.isEmpty) {
+    return all.take(limit).toList();
+  }
+
+  final startsWith = <String>[];
+  final contains = <String>[];
+
+  for (final name in all) {
+    final clean = normalizePlaceName(name);
+
+    if (clean.startsWith(q)) {
+      startsWith.add(name);
+    } else if (clean.contains(q)) {
+      contains.add(name);
+    }
+  }
+
+  startsWith.sort();
+  contains.sort();
+
+  return [...startsWith, ...contains].take(limit).toList();
+}

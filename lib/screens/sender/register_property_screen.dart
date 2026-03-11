@@ -4,7 +4,6 @@ import 'package:flutter/services.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
 
-import '../../data/routes.dart';
 import '../../data/routes_helpers.dart';
 import '../common/property_qr_display_screen.dart';
 import '../sender/my_properties_screen.dart';
@@ -28,8 +27,11 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
   bool _saving = false;
   AutovalidateMode _autoValidate = AutovalidateMode.disabled;
 
-  AppRoute? get _resolvedRoute =>
-      findRouteByDestination(destinationController.text);
+  List<RouteMatch> get _routeMatches =>
+      findRoutesByDestination(destinationController.text);
+
+  RouteMatch? get _singleMatch =>
+      _routeMatches.length == 1 ? _routeMatches.first : null;
 
   @override
   void initState() {
@@ -100,8 +102,8 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       return;
     }
 
-    final route = _resolvedRoute;
-    if (route == null) {
+    final matches = _routeMatches;
+    if (matches.isEmpty) {
       ScaffoldMessenger.of(context).clearSnackBars();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -116,6 +118,10 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     try {
       final count = int.parse(itemCountController.text.trim());
 
+      final bool routeConfirmed = matches.length == 1;
+      final String routeId = routeConfirmed ? matches.first.route.id : '';
+      final String routeName = routeConfirmed ? matches.first.route.name : '';
+
       final property = await PropertyService.registerProperty(
         receiverName: receiverNameController.text,
         receiverPhone: receiverPhoneController.text,
@@ -123,8 +129,9 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         destination: destinationController.text,
         itemCount: count,
         createdByUserId: actorUserId,
-        routeId: route.id,
-        routeName: route.name,
+        routeId: routeId,
+        routeName: routeName,
+        routeConfirmed: routeConfirmed,
       );
 
       if (!mounted) return;
@@ -177,7 +184,18 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final resolvedRoute = _resolvedRoute;
+    final matches = _routeMatches;
+    final singleMatch = _singleMatch;
+
+    String routeMessage;
+    if (matches.isEmpty) {
+      routeMessage = 'No matching operational route found yet';
+    } else if (matches.length == 1) {
+      routeMessage = singleMatch!.route.name;
+    } else {
+      routeMessage =
+          'Multiple operational routes match this destination. Desk officer will confirm the route.';
+    }
 
     return Scaffold(
       appBar: AppBar(
@@ -265,12 +283,12 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 decoration: _dec(
                   label: 'Destination',
                   icon: Icons.location_on_outlined,
-                  hint: 'e.g. Nairobi, Juba, Kigali, Goma',
+                  hint: 'Enter a valid operational stop',
                 ),
                 validator: (value) {
                   final v = value?.trim() ?? '';
                   if (v.isEmpty) return 'Destination required';
-                  if (findRouteByDestination(v) == null) {
+                  if (findRoutesByDestination(v).isEmpty) {
                     return 'No transport route configured for this destination';
                   }
                   return null;
@@ -280,10 +298,8 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
               Card(
                 child: ListTile(
                   leading: const Icon(Icons.route),
-                  title: const Text('Assigned Route'),
-                  subtitle: Text(
-                    resolvedRoute?.name ?? 'No matching route found yet',
-                  ),
+                  title: const Text('Route Resolution'),
+                  subtitle: Text(routeMessage),
                 ),
               ),
               const SizedBox(height: 24),

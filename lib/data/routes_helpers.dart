@@ -1,6 +1,16 @@
 import '../models/checkpoint.dart';
-import 'destination_route_map.dart';
 import 'routes.dart';
+
+class RouteMatch {
+  final AppRoute route;
+  final RouteCheckpoint checkpoint;
+
+  const RouteMatch({required this.route, required this.checkpoint});
+}
+
+String normalizePlaceName(String input) {
+  return input.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+}
 
 AppRoute? findRouteById(String? id) {
   if (id == null) return null;
@@ -13,16 +23,23 @@ AppRoute? findRouteById(String? id) {
   return null;
 }
 
-AppRoute? findRouteByDestination(String? destination) {
-  if (destination == null) return null;
+List<RouteMatch> findRoutesByDestination(String? destination) {
+  if (destination == null) return const [];
 
-  final clean = destination.trim().toLowerCase();
-  if (clean.isEmpty) return null;
+  final clean = normalizePlaceName(destination);
+  if (clean.isEmpty) return const [];
 
-  final routeId = destinationToRouteId[clean];
-  if (routeId == null) return null;
+  final matches = <RouteMatch>[];
 
-  return findRouteById(routeId);
+  for (final route in routes) {
+    for (final cp in route.checkpoints) {
+      if (normalizePlaceName(cp.name) == clean) {
+        matches.add(RouteMatch(route: route, checkpoint: cp));
+      }
+    }
+  }
+
+  return matches;
 }
 
 List<Checkpoint> validatedCheckpoints(AppRoute route) {

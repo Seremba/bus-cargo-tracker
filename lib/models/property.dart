@@ -125,13 +125,15 @@ class Property extends HiveObject {
   @HiveField(38)
   DateTime? lastReceiverNotifiedAt;
 
-  // NEW (append-only): receiver notification channel
   // values: "whatsapp" | "sms"
   @HiveField(39, defaultValue: 'whatsapp')
   String receiverNotifyChannel;
 
   @HiveField(40)
-int aggregateVersion;
+  int aggregateVersion;
+
+  @HiveField(41, defaultValue: true)
+  bool routeConfirmed;
 
   Property({
     required this.receiverName,
@@ -174,22 +176,25 @@ int aggregateVersion;
     String? receiverNotifyEnabledByUserId,
     this.lastReceiverNotifiedAt,
     this.aggregateVersion = 1,
-
+    this.routeConfirmed = true,
     String? receiverNotifyChannel,
-  })  : loadedAtStation = (loadedAtStation ?? '').trim(),
-        loadedByUserId = (loadedByUserId ?? '').trim(),
-        routeId = routeId ?? '',
-        routeName = routeName ?? '',
-        propertyCode = (propertyCode ?? '').trim(),
-        trackingCode = (trackingCode ?? '').trim(),
-        receiverNotifyEnabledByUserId = (receiverNotifyEnabledByUserId ?? '').trim(),
-        currency = (currency == null || currency.trim().isEmpty) ? 'UGX' : currency.trim(),
-        lastPaymentMethod = (lastPaymentMethod ?? '').trim(),
-        lastPaidByUserId = (lastPaidByUserId ?? '').trim(),
-        lastPaidAtStation = (lastPaidAtStation ?? '').trim(),
-        lastTxnRef = (lastTxnRef ?? '').trim(),
-        // default A: WhatsApp
-        receiverNotifyChannel = ((receiverNotifyChannel ?? '').trim().toLowerCase() == 'sms')
-            ? 'sms'
-            : 'whatsapp';
+  }) : loadedAtStation = (loadedAtStation ?? '').trim(),
+       loadedByUserId = (loadedByUserId ?? '').trim(),
+       routeId = routeId ?? '',
+       routeName = routeName ?? '',
+       propertyCode = (propertyCode ?? '').trim(),
+       trackingCode = (trackingCode ?? '').trim(),
+       receiverNotifyEnabledByUserId = (receiverNotifyEnabledByUserId ?? '')
+           .trim(),
+       currency = (currency == null || currency.trim().isEmpty)
+           ? 'UGX'
+           : currency.trim(),
+       lastPaymentMethod = (lastPaymentMethod ?? '').trim(),
+       lastPaidByUserId = (lastPaidByUserId ?? '').trim(),
+       lastPaidAtStation = (lastPaidAtStation ?? '').trim(),
+       lastTxnRef = (lastTxnRef ?? '').trim(),
+       receiverNotifyChannel =
+           ((receiverNotifyChannel ?? '').trim().toLowerCase() == 'sms')
+           ? 'sms'
+           : 'whatsapp';
 }

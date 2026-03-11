@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../data/routes.dart';
+import '../../data/routes_helpers.dart';
 import '../../models/property.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
@@ -26,23 +28,38 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   String _method = 'cash';
   bool _saving = false;
 
-  // Receiver tracking (opt-in)
   bool _notifyReceiver = false;
   String _notifyChannel = 'whatsapp';
 
-  bool get _canUse => RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
+  AppRoute? _selectedRouteForConfirmation;
+
+  bool get _canUse =>
+      RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
 
   @override
   void initState() {
     super.initState();
 
-    // ✅ Initialize receiver updates UI from the stored property
     final p = widget.property;
     _notifyReceiver = p.notifyReceiver == true;
 
-    // If receiverNotifyChannel is missing/empty, default to whatsapp (A)
     final c = (p.receiverNotifyChannel).trim().toLowerCase();
     _notifyChannel = (c == 'sms') ? 'sms' : 'whatsapp';
+
+    final matches = findRoutesByDestination(p.destination);
+    if (matches.isNotEmpty) {
+      if (p.routeConfirmed && p.routeId.trim().isNotEmpty) {
+        try {
+          _selectedRouteForConfirmation = routes.firstWhere(
+            (r) => r.id == p.routeId.trim(),
+          );
+        } catch (_) {
+          _selectedRouteForConfirmation = matches.first.route;
+        }
+      } else {
+        _selectedRouteForConfirmation = matches.first.route;
+      }
+    }
   }
 
   @override
@@ -55,7 +72,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   Future<void> _copy(BuildContext context, String label, String value) async {
     await Clipboard.setData(ClipboardData(text: value));
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$label copied ✅')));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label copied ✅')));
   }
 
   @override
@@ -74,9 +93,21 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(widget.property.key) ?? widget.property;
 
-    final displayCode =
-        fresh.propertyCode.trim().isEmpty ? fresh.key.toString() : fresh.propertyCode.trim();
-    final displayCurrency = fresh.currency.trim().isEmpty ? 'UGX' : fresh.currency.trim();
+    final displayCode = fresh.propertyCode.trim().isEmpty
+        ? fresh.key.toString()
+        : fresh.propertyCode.trim();
+    final displayCurrency =
+        fresh.currency.trim().isEmpty ? 'UGX' : fresh.currency.trim();
+
+    final routeMatches = findRoutesByDestination(fresh.destination);
+    final needsRouteConfirmation =
+        !fresh.routeConfirmed && routeMatches.isNotEmpty;
+
+    final uniqueRoutes = <String, AppRoute>{};
+    for (final m in routeMatches) {
+      uniqueRoutes[m.route.id] = m.route;
+    }
+    final candidateRoutes = uniqueRoutes.values.toList();
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Record Payment')),
@@ -104,14 +135,17 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                             IconButton(
                               tooltip: 'Copy code',
                               icon: const Icon(Icons.copy, size: 18),
-                              onPressed: () => _copy(context, 'Property code', displayCode),
+                              onPressed: () =>
+                                  _copy(context, 'Property code', displayCode),
                             ),
                         ],
                       ),
                       const SizedBox(height: 6),
                       Text('Receiver: ${fresh.receiverName}'),
                       Text('Phone: ${fresh.receiverPhone}'),
-                      Text('Route: ${fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim()}'),
+                      Text(
+                        'Route: ${fresh.routeName.trim().isEmpty ? '—' : fresh.routeName.trim()}',
+                      ),
                       Text('Destination: ${fresh.destination}'),
                       const SizedBox(height: 6),
                       Text('Station: $station'),
@@ -125,6 +159,57 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                 ),
               ),
               const SizedBox(height: 12),
+
+              if (needsRouteConfirmation) ...[
+                Card(
+                  color: Colors.orange.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Route confirmation required',
+                          style: TextStyle(fontWeight: FontWeight.w700),
+                        ),
+                        const SizedBox(height: 6),
+                        const Text(
+                          'This destination matches multiple operational routes. Confirm the route before recording payment.',
+                        ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<AppRoute>(
+                          initialValue: _selectedRouteForConfirmation,
+                          decoration: const InputDecoration(
+                            labelText: 'Operational route',
+                            border: OutlineInputBorder(),
+                          ),
+                          items: candidateRoutes
+                              .map(
+                                (r) => DropdownMenuItem(
+                                  value: r,
+                                  child: Text(r.name),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: (v) {
+                            setState(() {
+                              _selectedRouteForConfirmation = v;
+                            });
+                          },
+                          validator: (_) {
+                            if (!needsRouteConfirmation) return null;
+                            if (_selectedRouteForConfirmation == null) {
+                              return 'Please confirm route';
+                            }
+                            return null;
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 12),
+              ],
 
               TextFormField(
                 controller: _amount,
@@ -172,19 +257,23 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
               const SizedBox(height: 16),
 
-              // ✅ Receiver updates toggle
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Receiver updates', style: TextStyle(fontWeight: FontWeight.w700)),
+                      const Text(
+                        'Receiver updates',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
                       const SizedBox(height: 6),
                       SwitchListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('Send progress updates to receiver'),
-                        subtitle: const Text('Sends payment confirmation + later status updates.'),
+                        subtitle: const Text(
+                          'Sends payment confirmation + later status updates.',
+                        ),
                         value: _notifyReceiver,
                         onChanged: (v) => setState(() => _notifyReceiver = v),
                       ),
@@ -197,7 +286,10 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                             border: OutlineInputBorder(),
                           ),
                           items: const [
-                            DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
+                            DropdownMenuItem(
+                              value: 'whatsapp',
+                              child: Text('WhatsApp'),
+                            ),
                             DropdownMenuItem(value: 'sms', child: Text('SMS')),
                           ],
                           onChanged: (v) =>
@@ -213,7 +305,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
               ElevatedButton(
                 onPressed: _saving ? null : _submit,
-                style: ElevatedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(48),
+                ),
                 child: Text(_saving ? 'Saving...' : 'Save Payment'),
               ),
             ],
@@ -241,10 +335,27 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     setState(() => _saving = true);
 
     try {
+      final pBox = HiveService.propertyBox();
+      final freshBeforePayment = pBox.get(widget.property.key) ?? widget.property;
+
+      if (!freshBeforePayment.routeConfirmed) {
+        if (_selectedRouteForConfirmation == null) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Please confirm route first.')),
+          );
+          return;
+        }
+
+        freshBeforePayment.routeId = _selectedRouteForConfirmation!.id;
+        freshBeforePayment.routeName = _selectedRouteForConfirmation!.name;
+        freshBeforePayment.routeConfirmed = true;
+        await freshBeforePayment.save();
+      }
+
       final amount = int.parse(_amount.text.trim());
 
       final rec = await PaymentService.recordPayment(
-        property: widget.property,
+        property: freshBeforePayment,
         amount: amount,
         currency: 'UGX',
         method: _method,
@@ -253,7 +364,6 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
         kind: 'payment',
       );
 
-      final pBox = HiveService.propertyBox();
       final fresh = pBox.get(widget.property.key) ?? widget.property;
 
       if (_notifyReceiver) {
@@ -265,7 +375,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
           );
         } catch (e) {
           messenger.showSnackBar(
-            SnackBar(content: Text('Payment saved, but receiver updates failed: $e')),
+            SnackBar(
+              content: Text('Payment saved, but receiver updates failed: $e'),
+            ),
           );
         }
       } else {

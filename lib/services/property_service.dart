@@ -45,6 +45,7 @@ class PropertyService {
     required String createdByUserId,
     required String routeId,
     required String routeName,
+    bool routeConfirmed = true,
   }) async {
     final box = HiveService.propertyBox();
 
@@ -71,8 +72,8 @@ class PropertyService {
     if (cleanDestination.isEmpty) {
       throw ArgumentError('Destination is required');
     }
-    if (cleanRouteId.isEmpty || cleanRouteName.isEmpty) {
-      throw ArgumentError('Route is required');
+    if (routeConfirmed && (cleanRouteId.isEmpty || cleanRouteName.isEmpty)) {
+      throw ArgumentError('Confirmed route is required');
     }
     if (itemCount < 1) {
       throw ArgumentError('Item count must be at least 1');
@@ -101,6 +102,7 @@ class PropertyService {
       lastPaidAtStation: '',
       lastTxnRef: '',
       aggregateVersion: 1,
+      routeConfirmed: routeConfirmed,
     );
 
     final key = await box.add(property);
@@ -128,6 +130,7 @@ class PropertyService {
         'itemCount': saved.itemCount,
         'routeId': saved.routeId,
         'routeName': saved.routeName,
+        'routeConfirmed': saved.routeConfirmed,
         'status': saved.status.name,
         'createdAt': saved.createdAt.toIso8601String(),
         'createdByUserId': saved.createdByUserId,
@@ -175,6 +178,7 @@ class PropertyService {
       itemCount: (payload['itemCount'] as num).toInt(),
       routeId: (payload['routeId'] ?? '').toString(),
       routeName: (payload['routeName'] ?? '').toString(),
+      routeConfirmed: (payload['routeConfirmed'] as bool?) ?? true,
       createdAt: DateTime.parse((payload['createdAt'] ?? '').toString()),
       status: PropertyStatus.values.byName(
         (payload['status'] ?? 'pending').toString(),

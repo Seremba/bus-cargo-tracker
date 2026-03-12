@@ -87,32 +87,52 @@ class PaymentService {
     fresh.lastPaidAtStation = cleanStation;
     fresh.lastTxnRef = cleanTxnRef;
 
-    // Step 11: payment changes property aggregate state
+    // payment changes property aggregate state
     fresh.aggregateVersion += 1;
 
     await fresh.save();
 
-    await SyncService.enqueuePaymentRecorded(
-      paymentId: rec.paymentId,
-      actorUserId: rec.recordedByUserId.trim().isEmpty
-          ? 'system'
-          : rec.recordedByUserId,
-      aggregateVersion: fresh.aggregateVersion,
-      payload: {
-        'paymentId': rec.paymentId,
-        'propertyCode': fresh.propertyCode,
-        'amount': rec.amount,
-        'currency': rec.currency,
-        'method': rec.method,
-        'txnRef': rec.txnRef,
-        'station': rec.station,
-        'createdAt': rec.createdAt.toIso8601String(),
-        'recordedByUserId': rec.recordedByUserId,
-        'kind': rec.kind,
-        'note': rec.note,
-        'aggregateVersion': fresh.aggregateVersion,
-      },
-    );
+    final Map<String, dynamic> syncPayload = {
+      'paymentId': rec.paymentId,
+      'propertyCode': fresh.propertyCode,
+      'amount': rec.amount,
+      'currency': rec.currency,
+      'method': rec.method,
+      'txnRef': rec.txnRef,
+      'station': rec.station,
+      'createdAt': rec.createdAt.toIso8601String(),
+      'recordedByUserId': rec.recordedByUserId,
+      'kind': rec.kind,
+      'note': rec.note,
+      'aggregateVersion': fresh.aggregateVersion,
+    };
+
+    final syncActor = rec.recordedByUserId.trim().isEmpty
+        ? 'system'
+        : rec.recordedByUserId;
+
+    if (cleanKind == 'refund') {
+      await SyncService.enqueuePaymentRefunded(
+        paymentId: rec.paymentId,
+        actorUserId: syncActor,
+        aggregateVersion: fresh.aggregateVersion,
+        payload: syncPayload,
+      );
+    } else if (cleanKind == 'adjustment') {
+      await SyncService.enqueuePaymentAdjusted(
+        paymentId: rec.paymentId,
+        actorUserId: syncActor,
+        aggregateVersion: fresh.aggregateVersion,
+        payload: syncPayload,
+      );
+    } else {
+      await SyncService.enqueuePaymentRecorded(
+        paymentId: rec.paymentId,
+        actorUserId: syncActor,
+        aggregateVersion: fresh.aggregateVersion,
+        payload: syncPayload,
+      );
+    }
 
     await AuditService.log(
       action: 'PAYMENT_RECORDED',
@@ -146,12 +166,12 @@ class PaymentService {
 
     final paymentId = (payload['paymentId'] ?? '').toString().trim();
     if (paymentId.isEmpty) {
-      throw StateError('paymentRecorded sync event missing paymentId');
+      throw StateError('Payment sync event missing paymentId');
     }
 
     final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
     if (propertyCode.isEmpty) {
-      throw StateError('paymentRecorded sync event missing propertyCode');
+      throw StateError('Payment sync event missing propertyCode');
     }
 
     final exists = payBox.values.any((p) => p.paymentId == paymentId);
@@ -167,7 +187,7 @@ class PaymentService {
 
     if (property == null) {
       throw StateError(
-        'Cannot apply paymentRecorded: property with code $propertyCode not found',
+        'Cannot apply payment sync event: property with code $propertyCode not found',
       );
     }
 
@@ -175,7 +195,6 @@ class PaymentService {
         (payload['aggregateVersion'] as num?)?.toInt() ??
         event.aggregateVersion;
 
-    // Step 11: ignore stale payment replay against newer property state
     if (property.aggregateVersion >= incomingVersion) {
       return;
     }

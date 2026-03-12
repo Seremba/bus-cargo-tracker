@@ -5,7 +5,6 @@ import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
-import '../../models/property_status.dart';
 import '../../models/property_item_status.dart';
 import '../../models/user_role.dart';
 

@@ -9,6 +9,7 @@ import '../models/sync_event_type.dart';
 import '../models/sync_run_result.dart';
 import 'hive_service.dart';
 import 'payment_service.dart';
+import 'property_item_service.dart';
 import 'property_service.dart';
 import 'trip_service.dart';
 
@@ -133,6 +134,38 @@ class SyncService {
       actorUserId: actorUserId,
       payload: payload,
       aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePaymentRefunded({
+    required String paymentId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.paymentRefunded,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePaymentAdjusted({
+    required String paymentId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.paymentAdjusted,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
     );
   }
 
@@ -264,6 +297,106 @@ class SyncService {
     );
   }
 
+  static Future<SyncEvent> enqueueItemEvent({
+    required SyncEventType type,
+    required String itemId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: type,
+      aggregateType: 'propertyItem',
+      aggregateId: itemId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyItemLoaded({
+    required String itemId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueueItemEvent(
+      type: SyncEventType.propertyItemLoaded,
+      itemId: itemId,
+      actorUserId: actorUserId,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyItemInTransit({
+    required String itemId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueueItemEvent(
+      type: SyncEventType.propertyItemInTransit,
+      itemId: itemId,
+      actorUserId: actorUserId,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyItemDelivered({
+    required String itemId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueueItemEvent(
+      type: SyncEventType.propertyItemDelivered,
+      itemId: itemId,
+      actorUserId: actorUserId,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyItemPickedUp({
+    required String itemId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueueItemEvent(
+      type: SyncEventType.propertyItemPickedUp,
+      itemId: itemId,
+      actorUserId: actorUserId,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueueExceptionLogged({
+    required String aggregateType,
+    required String aggregateId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.exceptionLogged,
+      aggregateType: aggregateType,
+      aggregateId: aggregateId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueAdminOverrideApplied({
+    required String aggregateType,
+    required String aggregateId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.adminOverrideApplied,
+      aggregateType: aggregateType,
+      aggregateId: aggregateId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
   static bool exists(String eventId) {
     final box = HiveService.syncEventBox();
     return box.containsKey(eventId.trim());
@@ -326,6 +459,8 @@ class SyncService {
         break;
 
       case SyncEventType.paymentRecorded:
+      case SyncEventType.paymentRefunded:
+      case SyncEventType.paymentAdjusted:
         await PaymentService.applyPaymentRecordedFromSync(event);
         break;
 
@@ -344,17 +479,40 @@ class SyncService {
       case SyncEventType.tripCancelled:
         await TripService.applyTripCancelledFromSync(event);
         break;
+
       case SyncEventType.itemsLoadedPartial:
         await PropertyService.applyItemsLoadedPartialFromSync(event);
         break;
+
       case SyncEventType.propertyInTransit:
         await PropertyService.applyPropertyInTransitFromSync(event);
         break;
+
       case SyncEventType.propertyDelivered:
         await PropertyService.applyPropertyDeliveredFromSync(event);
         break;
+
       case SyncEventType.propertyPickedUp:
         await PropertyService.applyPropertyPickedUpFromSync(event);
+        break;
+
+      case SyncEventType.propertyItemLoaded:
+        await PropertyItemService.applyPropertyItemLoadedFromSync(event);
+        break;
+
+      case SyncEventType.propertyItemInTransit:
+        await PropertyItemService.applyPropertyItemInTransitFromSync(event);
+        break;
+
+      case SyncEventType.propertyItemDelivered:
+        await PropertyItemService.applyPropertyItemDeliveredFromSync(event);
+        break;
+
+      case SyncEventType.propertyItemPickedUp:
+        await PropertyItemService.applyPropertyItemPickedUpFromSync(event);
+        break;
+      case SyncEventType.exceptionLogged:
+      case SyncEventType.adminOverrideApplied:
         break;
 
       default:

@@ -49,6 +49,20 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         return SyncEventType.tripCancelled;
       case 17:
         return SyncEventType.propertyInTransit;
+      case 18:
+        return SyncEventType.paymentRefunded;
+      case 19:
+        return SyncEventType.paymentAdjusted;
+      case 20:
+        return SyncEventType.propertyItemLoaded;
+      case 21:
+        return SyncEventType.propertyItemInTransit;
+      case 22:
+        return SyncEventType.propertyItemDelivered;
+      case 23:
+        return SyncEventType.propertyItemPickedUp;
+      case 24:
+        return SyncEventType.adminOverrideApplied;
       default:
         return SyncEventType.propertyCreated;
     }
@@ -110,6 +124,27 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         break;
       case SyncEventType.propertyInTransit:
         writer.writeByte(17);
+        break;
+      case SyncEventType.paymentRefunded:
+        writer.writeByte(18);
+        break;
+      case SyncEventType.paymentAdjusted:
+        writer.writeByte(19);
+        break;
+      case SyncEventType.propertyItemLoaded:
+        writer.writeByte(20);
+        break;
+      case SyncEventType.propertyItemInTransit:
+        writer.writeByte(21);
+        break;
+      case SyncEventType.propertyItemDelivered:
+        writer.writeByte(22);
+        break;
+      case SyncEventType.propertyItemPickedUp:
+        writer.writeByte(23);
+        break;
+      case SyncEventType.adminOverrideApplied:
+        writer.writeByte(24);
         break;
     }
   }

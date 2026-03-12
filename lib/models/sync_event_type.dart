@@ -57,4 +57,25 @@ enum SyncEventType {
 
   @HiveField(17)
   propertyInTransit,
+
+  @HiveField(18)
+  paymentRefunded,
+
+  @HiveField(19)
+  paymentAdjusted,
+
+  @HiveField(20)
+  propertyItemLoaded,
+
+  @HiveField(21)
+  propertyItemInTransit,
+
+  @HiveField(22)
+  propertyItemDelivered,
+
+  @HiveField(23)
+  propertyItemPickedUp,
+
+  @HiveField(24)
+  adminOverrideApplied,
 }

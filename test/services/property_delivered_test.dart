@@ -7,6 +7,8 @@ import 'package:bus_cargo_tracker/models/audit_event.dart';
 import 'package:bus_cargo_tracker/models/notification_item.dart';
 import 'package:bus_cargo_tracker/models/outbound_message.dart';
 import 'package:bus_cargo_tracker/models/property.dart';
+import 'package:bus_cargo_tracker/models/property_item.dart';
+import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
@@ -24,6 +26,12 @@ void main() {
     }
     if (!Hive.isAdapterRegistered(5)) {
       Hive.registerAdapter(PropertyAdapter());
+    }
+    if (!Hive.isAdapterRegistered(12)) {
+      Hive.registerAdapter(PropertyItemStatusAdapter());
+    }
+    if (!Hive.isAdapterRegistered(13)) {
+      Hive.registerAdapter(PropertyItemAdapter());
     }
     if (!Hive.isAdapterRegistered(14)) {
       Hive.registerAdapter(NotificationItemAdapter());
@@ -50,6 +58,7 @@ void main() {
     Hive.init(tempDir.path);
 
     await HiveService.openPropertyBox();
+    await HiveService.openPropertyItemBox();
     await HiveService.openAuditBox();
     await HiveService.openNotificationBox();
     await HiveService.openSyncEventBox();
@@ -67,6 +76,8 @@ void main() {
     Session.currentRole = null;
     Session.currentUserFullName = null;
     Session.currentStationName = null;
+    Session.currentAssignedRouteId = null;
+    Session.currentAssignedRouteName = null;
 
     await Hive.close();
     if (await tempDir.exists()) {
@@ -75,7 +86,7 @@ void main() {
   });
 
   group('PropertyService.markDelivered', () {
-    test('marks inTransit property as delivered and generates pickup OTP', () async {
+    test('marks inTransit property as delivered and marks item(s) delivered', () async {
       final property = Property(
         receiverName: 'Receiver One',
         receiverPhone: '0700000000',
@@ -86,9 +97,11 @@ void main() {
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-1',
         propertyCode: 'P-DELIVERED-001',
+        trackingCode: 'BC-DEL-001',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
+        tripId: 'TRIP-001',
         inTransitAt: DateTime.now().subtract(const Duration(hours: 2)),
         loadedAt: DateTime.now().subtract(const Duration(hours: 3)),
         loadedAtStation: 'Kampala',
@@ -97,11 +110,38 @@ void main() {
       );
 
       final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-001',
+          labelCode: 'BC-DEL-001|1',
+        ),
+      );
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#2',
+        PropertyItem(
+          itemKey: '$propertyKey#2',
+          propertyKey: propertyKey,
+          itemNo: 2,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-001',
+          labelCode: 'BC-DEL-001|2',
+        ),
+      );
+
       final saved = HiveService.propertyBox().get(key)!;
 
       await PropertyService.markDelivered(saved);
 
       final refreshed = HiveService.propertyBox().get(key)!;
+      final item1 = HiveService.propertyItemBox().get('$propertyKey#1')!;
+      final item2 = HiveService.propertyItemBox().get('$propertyKey#2')!;
 
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.deliveredAt, isNotNull);
@@ -111,6 +151,11 @@ void main() {
       expect(refreshed.otpAttempts, 0);
       expect(refreshed.otpLockedUntil, isNull);
       expect(refreshed.aggregateVersion, 3);
+
+      expect(item1.status, PropertyItemStatus.delivered);
+      expect(item2.status, PropertyItemStatus.delivered);
+      expect(item1.deliveredAt, isNotNull);
+      expect(item2.deliveredAt, isNotNull);
     });
 
     test('does nothing if property is not inTransit', () async {
@@ -124,6 +169,7 @@ void main() {
         status: PropertyStatus.pending,
         createdByUserId: 'sender-2',
         propertyCode: 'P-DELIVERED-002',
+        trackingCode: 'BC-DEL-002',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
@@ -157,9 +203,11 @@ void main() {
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-3',
         propertyCode: 'P-DELIVERED-003',
+        trackingCode: 'BC-DEL-003',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
+        tripId: 'TRIP-003',
         inTransitAt: inTransitAt,
         loadedAt: null,
         loadedAtStation: '',
@@ -168,15 +216,31 @@ void main() {
       );
 
       final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-003',
+          labelCode: 'BC-DEL-003|1',
+        ),
+      );
+
       final saved = HiveService.propertyBox().get(key)!;
 
       await PropertyService.markDelivered(saved);
 
       final refreshed = HiveService.propertyBox().get(key)!;
+      final item = HiveService.propertyItemBox().get('$propertyKey#1')!;
 
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.loadedAt, isNotNull);
       expect(refreshed.loadedByUserId.trim().isNotEmpty, isTrue);
+      expect(item.status, PropertyItemStatus.delivered);
     });
 
     test('emits propertyDelivered sync event', () async {
@@ -190,9 +254,11 @@ void main() {
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-4',
         propertyCode: 'P-DELIVERED-004',
+        trackingCode: 'BC-DEL-004',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
+        tripId: 'TRIP-004',
         inTransitAt: DateTime.now().subtract(const Duration(hours: 2)),
         loadedAt: DateTime.now().subtract(const Duration(hours: 3)),
         loadedAtStation: 'Kampala',
@@ -201,6 +267,31 @@ void main() {
       );
 
       final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-004',
+          labelCode: 'BC-DEL-004|1',
+        ),
+      );
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#2',
+        PropertyItem(
+          itemKey: '$propertyKey#2',
+          propertyKey: propertyKey,
+          itemNo: 2,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-004',
+          labelCode: 'BC-DEL-004|2',
+        ),
+      );
+
       final saved = HiveService.propertyBox().get(key)!;
 
       await PropertyService.markDelivered(saved);
@@ -233,30 +324,47 @@ void main() {
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-5',
         propertyCode: 'P-DELIVERED-005',
+        trackingCode: 'BC-TRACK-001',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
+        tripId: 'TRIP-005',
         inTransitAt: DateTime.now().subtract(const Duration(hours: 2)),
         loadedAt: DateTime.now().subtract(const Duration(hours: 3)),
         loadedAtStation: 'Kampala',
         loadedByUserId: 'desk-3',
         notifyReceiver: true,
         receiverNotifyChannel: 'sms',
-        trackingCode: 'BC-TRACK-001',
         aggregateVersion: 2,
       );
 
       final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.inTransit,
+          tripId: 'TRIP-005',
+          labelCode: 'BC-TRACK-001|1',
+        ),
+      );
+
       final saved = HiveService.propertyBox().get(key)!;
 
       await PropertyService.markDelivered(saved);
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final outbound = HiveService.outboundMessageBox().values.toList();
+      final item = HiveService.propertyItemBox().get('$propertyKey#1')!;
 
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.pickupOtp, isNotNull);
       expect(outbound.isNotEmpty, isTrue);
+      expect(item.status, PropertyItemStatus.delivered);
 
       final sms = outbound.first;
       expect(sms.channel.toLowerCase(), 'sms');

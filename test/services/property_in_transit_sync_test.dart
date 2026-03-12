@@ -39,6 +39,7 @@ void main() {
     await HiveService.openPropertyBox();
     await HiveService.openPropertyItemBox();
     await HiveService.openSyncEventBox();
+    await HiveService.openAppSettingsBox();
   });
 
   tearDown(() async {
@@ -122,6 +123,8 @@ void main() {
       itemNos: const [1, 2],
       now: DateTime.parse('2026-03-10T09:00:00Z'),
     );
+
+    await HiveService.syncEventBox().clear();
   }
 
   Property reloadProperty(String propertyCode) {

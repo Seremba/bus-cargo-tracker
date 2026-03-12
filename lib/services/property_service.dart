@@ -164,8 +164,6 @@ class PropertyService {
       }
     }
 
-    // Creation replay rule:
-    // if it already exists locally, do not recreate or mutate it.
     if (existing != null) {
       return;
     }
@@ -249,7 +247,6 @@ class PropertyService {
     for (final item in items) {
       if (!itemNos.contains(item.itemNo)) continue;
 
-      // Forward-only replay: pending -> loaded
       if (item.status == PropertyItemStatus.pending) {
         item.status = PropertyItemStatus.loaded;
         item.loadedAt ??= loadedAt;
@@ -432,7 +429,6 @@ class PropertyService {
 
       final pKey = fresh.key.toString();
 
-      // DEDUPE: don't queue if same OTP SMS already exists for this property
       if (_alreadyQueuedOtpSms(propertyKey: pKey, otp: otp)) {
         await AuditService.log(
           action: 'OTP_SMS_SKIPPED_DUPLICATE',
@@ -522,15 +518,41 @@ class PropertyService {
 
     if (fresh.status != PropertyStatus.inTransit) return;
 
-    fresh.loadedAt ??= fresh.inTransitAt ?? DateTime.now();
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final now = DateTime.now();
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+
+    final inTransitNos =
+        items
+            .where((x) => x.status == PropertyItemStatus.inTransit)
+            .map((x) => x.itemNo)
+            .toList()
+          ..sort();
+
+    if (inTransitNos.isEmpty) {
+      return;
+    }
+
+    await itemSvc.markItemsDelivered(
+      propertyKey: fresh.key.toString(),
+      itemNos: inTransitNos,
+      now: now,
+    );
+
+    fresh.loadedAt ??= fresh.inTransitAt ?? now;
     if (fresh.loadedByUserId.trim().isEmpty) {
       fresh.loadedByUserId = (Session.currentUserId ?? 'system').trim();
     }
 
-    final now = DateTime.now();
-
-    fresh.status = PropertyStatus.delivered;
-    fresh.deliveredAt = now;
+    fresh.deliveredAt ??= now;
 
     final otp = (fresh.pickupOtp ?? '').trim().isEmpty
         ? _generateOtp()
@@ -541,31 +563,38 @@ class PropertyService {
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
 
-    // IMPORTANT: version increment must happen BEFORE save
     fresh.aggregateVersion += 1;
     await fresh.save();
 
+    await itemSvc.recomputePropertyAggregate(property: fresh);
+
+    final refreshed = box.get(fresh.key) ?? fresh;
+    refreshed.deliveredAt ??= now;
+    refreshed.inTransitAt ??= now;
+    refreshed.loadedAt ??= refreshed.inTransitAt;
+    await refreshed.save();
+
     await SyncService.enqueuePropertyDelivered(
-      propertyId: fresh.propertyCode.trim(),
+      propertyId: refreshed.propertyCode.trim(),
       actorUserId: (Session.currentUserId ?? '').trim().isEmpty
-          ? fresh.createdByUserId
+          ? refreshed.createdByUserId
           : (Session.currentUserId ?? '').trim(),
-      aggregateVersion: fresh.aggregateVersion,
+      aggregateVersion: refreshed.aggregateVersion,
       payload: {
-        'propertyCode': fresh.propertyCode,
+        'propertyCode': refreshed.propertyCode,
         'deliveredAt': now.toIso8601String(),
-        'aggregateVersion': fresh.aggregateVersion,
+        'aggregateVersion': refreshed.aggregateVersion,
       },
     );
 
-    await PickupQrService.issueForDelivered(fresh, otp: otp);
+    await PickupQrService.issueForDelivered(refreshed, otp: otp);
 
-    await _safeSendOtpIfSms(fresh: fresh, otp: otp);
+    await _safeSendOtpIfSms(fresh: refreshed, otp: otp);
 
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'DELIVERED');
+    await _safeNotifyReceiver(fresh: refreshed, eventLabel: 'DELIVERED');
 
     await NotificationService.notify(
-      targetUserId: fresh.createdByUserId,
+      targetUserId: refreshed.createdByUserId,
       title: 'Property delivered to station',
       message:
           'Your property arrived at the destination station.\nOTP/QR issued for pickup.',
@@ -575,7 +604,7 @@ class PropertyService {
       targetUserId: NotificationService.adminInbox,
       title: 'Store update: Delivered',
       message:
-          'Property for ${fresh.receiverName} delivered.\nOTP/QR issued for pickup.',
+          'Property for ${refreshed.receiverName} delivered.\nOTP/QR issued for pickup.',
     );
   }
 
@@ -601,13 +630,37 @@ class PropertyService {
       return false;
     }
 
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
     final now = DateTime.now();
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+
+    final deliveredNos =
+        items
+            .where((x) => x.status == PropertyItemStatus.delivered)
+            .map((x) => x.itemNo)
+            .toList()
+          ..sort();
+
+    if (deliveredNos.isEmpty) return false;
+
+    await itemSvc.markItemsPickedUp(
+      propertyKey: fresh.key.toString(),
+      itemNos: deliveredNos,
+      now: now,
+    );
 
     fresh.deliveredAt ??= now;
     fresh.inTransitAt ??= fresh.deliveredAt;
     fresh.loadedAt ??= fresh.inTransitAt;
 
-    fresh.status = PropertyStatus.pickedUp;
     fresh.pickedUpAt = now;
     fresh.staffPickupConfirmed = true;
     fresh.receiverPickupConfirmed = true;
@@ -622,23 +675,35 @@ class PropertyService {
     fresh.aggregateVersion += 1;
     await fresh.save();
 
+    await itemSvc.recomputePropertyAggregate(property: fresh);
+
+    final refreshed = HiveService.propertyBox().get(fresh.key) ?? fresh;
+    refreshed.pickedUpAt ??= now;
+    refreshed.deliveredAt ??= now;
+    refreshed.inTransitAt ??= refreshed.deliveredAt;
+    refreshed.loadedAt ??= refreshed.inTransitAt;
+    refreshed.staffPickupConfirmed = true;
+    refreshed.receiverPickupConfirmed = true;
+    refreshed.qrConsumedAt ??= now;
+    await refreshed.save();
+
     await SyncService.enqueuePropertyPickedUp(
-      propertyId: fresh.propertyCode.trim(),
+      propertyId: refreshed.propertyCode.trim(),
       actorUserId: (Session.currentUserId ?? '').trim().isEmpty
-          ? fresh.createdByUserId
+          ? refreshed.createdByUserId
           : (Session.currentUserId ?? '').trim(),
-      aggregateVersion: fresh.aggregateVersion,
+      aggregateVersion: refreshed.aggregateVersion,
       payload: {
-        'propertyCode': fresh.propertyCode,
+        'propertyCode': refreshed.propertyCode,
         'pickedUpAt': now.toIso8601String(),
-        'aggregateVersion': fresh.aggregateVersion,
+        'aggregateVersion': refreshed.aggregateVersion,
       },
     );
 
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PICKED UP');
+    await _safeNotifyReceiver(fresh: refreshed, eventLabel: 'PICKED UP');
 
     await NotificationService.notify(
-      targetUserId: fresh.createdByUserId,
+      targetUserId: refreshed.createdByUserId,
       title: 'Property picked up',
       message: 'Your property was picked up by the receiver.',
     );
@@ -647,7 +712,7 @@ class PropertyService {
       targetUserId: NotificationService.adminInbox,
       title: 'Pickup confirmed',
       message:
-          'Receiver pickup confirmed for ${fresh.receiverName} (${fresh.receiverPhone}).',
+          'Receiver pickup confirmed for ${refreshed.receiverName} (${refreshed.receiverPhone}).',
     );
 
     return true;
@@ -655,6 +720,8 @@ class PropertyService {
 
   static Future<void> applyPropertyPickedUpFromSync(SyncEvent event) async {
     final box = HiveService.propertyBox();
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
     final payload = event.payload;
 
     final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
@@ -680,26 +747,70 @@ class PropertyService {
     final pickedUpAt = DateTime.tryParse(pickedUpAtRaw);
     if (pickedUpAt == null) return;
 
-    // forward-only progression
-    if (property.status == PropertyStatus.delivered) {
-      property.status = PropertyStatus.pickedUp;
-      property.pickedUpAt ??= pickedUpAt;
-      property.deliveredAt ??= pickedUpAt;
-      property.inTransitAt ??= property.deliveredAt;
-      property.loadedAt ??= property.inTransitAt;
-
-      property.staffPickupConfirmed = true;
-      property.receiverPickupConfirmed = true;
-      property.qrConsumedAt ??= pickedUpAt;
-
-      property.pickupOtp = null;
-      property.otpGeneratedAt = null;
-      property.otpAttempts = 0;
-      property.otpLockedUntil = null;
+    if (property.status != PropertyStatus.delivered) {
+      property.aggregateVersion = incomingVersion;
+      await property.save();
+      return;
     }
 
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: property.key.toString(),
+      trackingCode: property.trackingCode,
+      itemCount: property.itemCount,
+    );
+
+    final items = itemSvc.getItemsForProperty(property.key.toString());
+
+    final deliveredNos =
+        items
+            .where((x) => x.status == PropertyItemStatus.delivered)
+            .map((x) => x.itemNo)
+            .toList()
+          ..sort();
+
+    if (deliveredNos.isNotEmpty) {
+      await itemSvc.markItemsPickedUp(
+        propertyKey: property.key.toString(),
+        itemNos: deliveredNos,
+        now: pickedUpAt,
+      );
+    }
+
+    property.status = PropertyStatus.pickedUp;
+    property.pickedUpAt ??= pickedUpAt;
+    property.deliveredAt ??= pickedUpAt;
+    property.inTransitAt ??= property.deliveredAt;
+    property.loadedAt ??= property.inTransitAt;
+
+    property.staffPickupConfirmed = true;
+    property.receiverPickupConfirmed = true;
+    property.qrConsumedAt ??= pickedUpAt;
+
+    property.pickupOtp = null;
+    property.otpGeneratedAt = null;
+    property.otpAttempts = 0;
+    property.otpLockedUntil = null;
+
     property.aggregateVersion = incomingVersion;
+
     await property.save();
+    await itemSvc.recomputePropertyAggregate(property: property);
+
+    final refreshed = box.get(property.key) ?? property;
+    refreshed.status = PropertyStatus.pickedUp;
+    refreshed.pickedUpAt ??= pickedUpAt;
+    refreshed.deliveredAt ??= pickedUpAt;
+    refreshed.inTransitAt ??= refreshed.deliveredAt;
+    refreshed.loadedAt ??= refreshed.inTransitAt;
+    refreshed.staffPickupConfirmed = true;
+    refreshed.receiverPickupConfirmed = true;
+    refreshed.qrConsumedAt ??= pickedUpAt;
+    refreshed.pickupOtp = null;
+    refreshed.otpGeneratedAt = null;
+    refreshed.otpAttempts = 0;
+    refreshed.otpLockedUntil = null;
+    refreshed.aggregateVersion = incomingVersion;
+    await refreshed.save();
   }
 
   static Future<void> adminUnlockOtp(Property p) async {
@@ -971,6 +1082,8 @@ class PropertyService {
 
   static Future<void> applyPropertyDeliveredFromSync(SyncEvent event) async {
     final box = HiveService.propertyBox();
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
     final payload = event.payload;
 
     final propertyCode = (payload['propertyCode'] ?? '').toString().trim();
@@ -996,16 +1109,51 @@ class PropertyService {
     final deliveredAt = DateTime.tryParse(deliveredAtRaw);
     if (deliveredAt == null) return;
 
-    // forward-only state progression
-    if (property.status == PropertyStatus.inTransit) {
-      property.status = PropertyStatus.delivered;
-      property.deliveredAt ??= deliveredAt;
-      property.inTransitAt ??= deliveredAt;
-      property.loadedAt ??= property.inTransitAt;
+    if (property.status != PropertyStatus.inTransit) {
+      property.aggregateVersion = incomingVersion;
+      await property.save();
+      return;
     }
 
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: property.key.toString(),
+      trackingCode: property.trackingCode,
+      itemCount: property.itemCount,
+    );
+
+    final items = itemSvc.getItemsForProperty(property.key.toString());
+
+    final inTransitNos =
+        items
+            .where((x) => x.status == PropertyItemStatus.inTransit)
+            .map((x) => x.itemNo)
+            .toList()
+          ..sort();
+
+    if (inTransitNos.isNotEmpty) {
+      await itemSvc.markItemsDelivered(
+        propertyKey: property.key.toString(),
+        itemNos: inTransitNos,
+        now: deliveredAt,
+      );
+    }
+
+    property.status = PropertyStatus.delivered;
+    property.deliveredAt ??= deliveredAt;
+    property.inTransitAt ??= deliveredAt;
+    property.loadedAt ??= property.inTransitAt;
     property.aggregateVersion = incomingVersion;
+
     await property.save();
+    await itemSvc.recomputePropertyAggregate(property: property);
+
+    final refreshed = box.get(property.key) ?? property;
+    refreshed.status = PropertyStatus.delivered;
+    refreshed.deliveredAt ??= deliveredAt;
+    refreshed.inTransitAt ??= deliveredAt;
+    refreshed.loadedAt ??= refreshed.inTransitAt;
+    refreshed.aggregateVersion = incomingVersion;
+    await refreshed.save();
   }
 
   static Future<bool> markLoaded(
@@ -1100,19 +1248,178 @@ class PropertyService {
 
     await repairMissingLoadedMilestone(fresh);
 
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final actorUserId = (Session.currentUserId ?? '').trim().isEmpty
+        ? 'admin'
+        : (Session.currentUserId ?? '').trim();
+
+    final fromStatus = fresh.status.name;
+
     if (newStatus == PropertyStatus.inTransit &&
         fresh.status == PropertyStatus.pending) {
       await markInTransit(fresh);
+
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.inTransit.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
       return;
     }
 
     if (newStatus == PropertyStatus.delivered &&
         fresh.status == PropertyStatus.inTransit) {
       await markDelivered(fresh);
+
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.delivered.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+      return;
+    }
+
+    if (newStatus == PropertyStatus.pickedUp &&
+        fresh.status == PropertyStatus.delivered) {
+      final otp = (fresh.pickupOtp ?? '').trim();
+      final usedNormalOtpFlow = otp.isNotEmpty;
+
+      if (usedNormalOtpFlow) {
+        final ok = await confirmPickupWithOtp(fresh, otp);
+        if (!ok) return;
+      } else {
+        final now = DateTime.now();
+
+        final items = itemSvc.getItemsForProperty(fresh.key.toString());
+        final deliveredNos =
+            items
+                .where((x) => x.status == PropertyItemStatus.delivered)
+                .map((x) => x.itemNo)
+                .toList()
+              ..sort();
+
+        if (deliveredNos.isNotEmpty) {
+          await itemSvc.markItemsPickedUp(
+            propertyKey: fresh.key.toString(),
+            itemNos: deliveredNos,
+            now: now,
+          );
+        }
+
+        fresh.pickedUpAt ??= now;
+        fresh.deliveredAt ??= now;
+        fresh.inTransitAt ??= fresh.deliveredAt;
+        fresh.loadedAt ??= fresh.inTransitAt;
+
+        fresh.status = PropertyStatus.pickedUp;
+        fresh.staffPickupConfirmed = true;
+        fresh.receiverPickupConfirmed = true;
+
+        fresh.pickupOtp = null;
+        fresh.otpGeneratedAt = null;
+        fresh.otpAttempts = 0;
+        fresh.otpLockedUntil = null;
+
+        fresh.qrConsumedAt ??= now;
+        fresh.aggregateVersion += 1;
+        await fresh.save();
+
+        await itemSvc.recomputePropertyAggregate(property: fresh);
+
+        await SyncService.enqueuePropertyPickedUp(
+          propertyId: fresh.propertyCode.trim(),
+          actorUserId: actorUserId,
+          aggregateVersion: fresh.aggregateVersion,
+          payload: {
+            'propertyCode': fresh.propertyCode,
+            'pickedUpAt': now.toIso8601String(),
+            'aggregateVersion': fresh.aggregateVersion,
+          },
+        );
+      }
+
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.pickedUp.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+
+      await AuditService.log(
+        action: 'admin_set_status',
+        propertyKey: updated.key.toString(),
+        details: 'Admin set status to pickedUp',
+      );
+
+      if (!usedNormalOtpFlow) {
+        await _safeNotifyReceiver(fresh: updated, eventLabel: 'PICKED UP');
+
+        await NotificationService.notify(
+          targetUserId: updated.createdByUserId,
+          title: 'Admin status update',
+          message:
+              'Admin updated your property for ${updated.receiverName} to pickedUp.',
+        );
+
+        await NotificationService.notify(
+          targetUserId: NotificationService.adminInbox,
+          title: 'Admin override applied',
+          message:
+              'Status set to pickedUp for ${updated.receiverName} (${updated.receiverPhone}).',
+        );
+      }
+
       return;
     }
 
     if (newStatus == PropertyStatus.pending) {
+      final items = itemSvc.getItemsForProperty(fresh.key.toString());
+
+      for (final item in items) {
+        item.status = PropertyItemStatus.pending;
+        item.tripId = '';
+        item.loadedAt = null;
+        item.inTransitAt = null;
+        item.deliveredAt = null;
+        item.pickedUpAt = null;
+        await item.save();
+      }
+
       fresh.status = PropertyStatus.pending;
 
       fresh.inTransitAt = null;
@@ -1137,7 +1444,22 @@ class PropertyService {
       fresh.loadedAtStation = '';
       fresh.loadedByUserId = '';
 
+      fresh.aggregateVersion += 1;
       await fresh.save();
+
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: fresh.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.pending.name,
+          'propertyKey': fresh.key.toString(),
+          'resetItems': true,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
 
       await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PENDING');
 
@@ -1149,120 +1471,11 @@ class PropertyService {
       return;
     }
 
-    if (newStatus == PropertyStatus.inTransit) {
-      final route = findRouteById(fresh.routeId);
-      if (route != null) {
-        final cps = validatedCheckpoints(route);
-        if (cps.isNotEmpty) {
-          final trip = await TripService.ensureActiveTrip(
-            routeId: route.id,
-            routeName: route.name,
-            checkpoints: cps,
-          );
-          fresh.tripId = trip.tripId;
-          fresh.routeId = route.id;
-          fresh.routeName = route.name;
-        }
-      }
-
-      fresh.inTransitAt ??= DateTime.now();
-      fresh.loadedAt ??= fresh.inTransitAt;
-
-      if (fresh.loadedByUserId.trim().isEmpty) {
-        fresh.loadedByUserId = (Session.currentUserId ?? 'admin').trim();
-      }
-
-      await AuditService.log(
-        action: 'admin_prepare_inTransit',
-        propertyKey: fresh.key.toString(),
-        details:
-            'Prepared inTransit: loadedAt=${fresh.loadedAt} inTransitAt=${fresh.inTransitAt}',
-      );
-    }
-
-    if (newStatus == PropertyStatus.delivered) {
-      fresh.deliveredAt ??= DateTime.now();
-      fresh.inTransitAt ??= fresh.deliveredAt;
-      fresh.loadedAt ??= fresh.inTransitAt;
-
-      final otp = (fresh.pickupOtp ?? '').trim().isEmpty
-          ? _generateOtp()
-          : fresh.pickupOtp!.trim();
-
-      fresh.pickupOtp = otp;
-      fresh.otpGeneratedAt ??= DateTime.now();
-      fresh.otpAttempts = 0;
-      fresh.otpLockedUntil = null;
-
-      fresh.qrIssuedAt ??= DateTime.now();
-      if (fresh.qrNonce.trim().isEmpty) fresh.qrNonce = _newNonce();
-      fresh.qrConsumedAt = null;
-
-      await AuditService.log(
-        action: 'admin_prepare_delivered',
-        propertyKey: fresh.key.toString(),
-        details:
-            'Prepared delivered: deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
-      );
-
-      await _safeSendOtpIfSms(fresh: fresh, otp: otp);
-    }
-
-    if (newStatus == PropertyStatus.pickedUp) {
-      fresh.pickedUpAt ??= DateTime.now();
-      fresh.deliveredAt ??= fresh.pickedUpAt;
-      fresh.inTransitAt ??= fresh.deliveredAt;
-      fresh.loadedAt ??= fresh.inTransitAt;
-
-      fresh.staffPickupConfirmed = true;
-      fresh.receiverPickupConfirmed = true;
-
-      fresh.pickupOtp = null;
-      fresh.otpGeneratedAt = null;
-      fresh.otpAttempts = 0;
-      fresh.otpLockedUntil = null;
-
-      fresh.qrConsumedAt ??= DateTime.now();
-
-      await AuditService.log(
-        action: 'admin_prepare_pickedUp',
-        propertyKey: fresh.key.toString(),
-        details:
-            'Prepared pickedUp: pickedUpAt=${fresh.pickedUpAt}, deliveredAt=${fresh.deliveredAt}, inTransitAt=${fresh.inTransitAt}, loadedAt=${fresh.loadedAt}',
-      );
-    }
-
-    fresh.status = newStatus;
-    await fresh.save();
-
-    final label = (newStatus == PropertyStatus.inTransit)
-        ? 'IN TRANSIT'
-        : (newStatus == PropertyStatus.delivered)
-        ? 'DELIVERED'
-        : (newStatus == PropertyStatus.pickedUp)
-        ? 'PICKED UP'
-        : 'PENDING';
-
-    await _safeNotifyReceiver(fresh: fresh, eventLabel: label);
-
     await AuditService.log(
-      action: 'admin_set_status',
+      action: 'admin_set_status_skipped',
       propertyKey: fresh.key.toString(),
-      details: 'Admin set status to ${newStatus.name}',
-    );
-
-    await NotificationService.notify(
-      targetUserId: fresh.createdByUserId,
-      title: 'Admin status update',
-      message:
-          'Admin updated your property for ${fresh.receiverName} to ${newStatus.name}.',
-    );
-
-    await NotificationService.notify(
-      targetUserId: NotificationService.adminInbox,
-      title: 'Admin override applied',
-      message:
-          'Status set to ${newStatus.name} for ${fresh.receiverName} (${fresh.receiverPhone}).',
+      details:
+          'Admin attempted unsupported transition ${fresh.status.name} -> ${newStatus.name}',
     );
   }
 

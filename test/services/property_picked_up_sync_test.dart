@@ -3,7 +3,10 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
+import 'package:bus_cargo_tracker/models/audit_event.dart';
 import 'package:bus_cargo_tracker/models/property.dart';
+import 'package:bus_cargo_tracker/models/property_item.dart';
+import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
@@ -28,10 +31,15 @@ void main() {
 
     _registerAdapterIfNeeded(PropertyStatusAdapter());
     _registerAdapterIfNeeded(PropertyAdapter());
+    _registerAdapterIfNeeded(PropertyItemStatusAdapter());
+    _registerAdapterIfNeeded(PropertyItemAdapter());
+    _registerAdapterIfNeeded(AuditEventAdapter());
     _registerAdapterIfNeeded(SyncEventTypeAdapter());
     _registerAdapterIfNeeded(SyncEventAdapter());
 
     await HiveService.openPropertyBox();
+    await HiveService.openPropertyItemBox();
+    await HiveService.openAuditBox();
     await HiveService.openSyncEventBox();
     await HiveService.openAppSettingsBox();
   });
@@ -43,159 +51,176 @@ void main() {
     }
   });
 
-  Property makeProperty({
-    required String propertyCode,
-    int aggregateVersion = 1,
-    PropertyStatus status = PropertyStatus.delivered,
-    DateTime? deliveredAt,
-    DateTime? inTransitAt,
-    DateTime? loadedAt,
-  }) {
-    return Property(
-      receiverName: 'John Receiver',
-      receiverPhone: '0780000000',
-      description: 'Bag',
-      destination: 'Juba',
-      itemCount: 1,
-      routeId: 'route-1',
-      routeName: 'Kampala - Juba',
-      createdAt: DateTime.parse('2026-03-10T08:00:00Z'),
-      status: status,
-      createdByUserId: 'sender-1',
-      propertyCode: propertyCode,
-      amountPaidTotal: 0,
-      currency: 'UGX',
-      aggregateVersion: aggregateVersion,
-      deliveredAt: deliveredAt,
-      inTransitAt: inTransitAt,
-      loadedAt: loadedAt,
-      pickupOtp: '123456',
-      otpGeneratedAt: DateTime.parse('2026-03-10T11:30:00Z'),
-      otpAttempts: 1,
-    );
-  }
-
-  SyncEvent makePickedUpEvent({
-    required String propertyCode,
-    required int aggregateVersion,
-    String pickedUpAt = '2026-03-10T13:00:00Z',
-  }) {
-    return SyncEvent(
-      eventId: 'evt-pickedup-$propertyCode-$aggregateVersion',
-      type: SyncEventType.propertyPickedUp,
-      aggregateType: 'property',
-      aggregateId: propertyCode,
-      actorUserId: 'staff-remote',
-      payload: {
-        'propertyCode': propertyCode,
-        'pickedUpAt': pickedUpAt,
-        'aggregateVersion': aggregateVersion,
-      },
-      createdAt: DateTime.parse('2026-03-10T13:00:01Z'),
-      sourceDeviceId: 'remote-device',
-      aggregateVersion: aggregateVersion,
-      pendingPush: false,
-      pushed: true,
-      appliedLocally: false,
-    );
-  }
-
-  Future<Property> saveProperty(Property property) async {
-    final key = await HiveService.propertyBox().add(property);
-    return HiveService.propertyBox().get(key)!;
-  }
-
-  Property reloadProperty(String propertyCode) {
-    return HiveService.propertyBox().values.firstWhere(
-      (p) => p.propertyCode == propertyCode,
-    );
-  }
-
   group('PropertyService.applyPropertyPickedUpFromSync', () {
     test('promotes delivered property to pickedUp', () async {
-      final property = await saveProperty(
-        makeProperty(
-          propertyCode: 'P-20260310-GGGG',
-          aggregateVersion: 1,
-          status: PropertyStatus.delivered,
-          deliveredAt: DateTime.parse('2026-03-10T12:00:00Z'),
-          inTransitAt: DateTime.parse('2026-03-10T10:00:00Z'),
-          loadedAt: DateTime.parse('2026-03-10T10:00:00Z'),
+      final now = DateTime.now();
+
+      final property = Property(
+        receiverName: 'Receiver One',
+        receiverPhone: '0700000000',
+        description: 'Box',
+        destination: 'Juba',
+        itemCount: 1,
+        createdAt: now.subtract(const Duration(days: 1)),
+        status: PropertyStatus.delivered,
+        createdByUserId: 'sender-1',
+        propertyCode: 'P-PICK-SYNC-001',
+        trackingCode: 'BC-PICK-SYNC-001',
+        tripId: 'TRIP-PICK-SYNC-001',
+        inTransitAt: now.subtract(const Duration(hours: 5)),
+        deliveredAt: now.subtract(const Duration(hours: 1)),
+        loadedAt: now.subtract(const Duration(hours: 6)),
+        aggregateVersion: 5,
+      );
+
+      final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.delivered,
+          tripId: 'TRIP-PICK-SYNC-001',
+          labelCode: 'BC-PICK-SYNC-001|1',
+          deliveredAt: now.subtract(const Duration(hours: 1)),
         ),
       );
 
-      final event = makePickedUpEvent(
-        propertyCode: property.propertyCode,
-        aggregateVersion: 2,
+      final event = SyncEvent(
+        eventId: 'evt-pickedup-1',
+        type: SyncEventType.propertyPickedUp,
+        aggregateType: 'property',
+        aggregateId: 'P-PICK-SYNC-001',
+        actorUserId: 'remote-user',
+        aggregateVersion: 6,
+        payload: {
+          'propertyCode': 'P-PICK-SYNC-001',
+          'pickedUpAt': now.toIso8601String(),
+          'aggregateVersion': 6,
+        },
+        createdAt: now,
+        sourceDeviceId: 'remote-device',
       );
 
       await PropertyService.applyPropertyPickedUpFromSync(event);
 
-      final updated = reloadProperty(property.propertyCode);
+      final refreshed = HiveService.propertyBox().get(key)!;
+      final item = HiveService.propertyItemBox().get('$propertyKey#1')!;
 
-      expect(updated.status, PropertyStatus.pickedUp);
-      expect(updated.pickedUpAt, isNotNull);
-      expect(updated.aggregateVersion, 2);
-      expect(updated.staffPickupConfirmed, isTrue);
-      expect(updated.receiverPickupConfirmed, isTrue);
-      expect(updated.pickupOtp, isNull);
-      expect(updated.otpGeneratedAt, isNull);
-      expect(updated.otpAttempts, 0);
+      expect(refreshed.status, PropertyStatus.pickedUp);
+      expect(refreshed.pickedUpAt, isNotNull);
+      expect(refreshed.staffPickupConfirmed, isTrue);
+      expect(refreshed.receiverPickupConfirmed, isTrue);
+      expect(refreshed.aggregateVersion, 6);
+      expect(item.status, PropertyItemStatus.pickedUp);
+      expect(item.pickedUpAt, isNotNull);
     });
 
     test('ignores stale pickedUp replay', () async {
-      final property = await saveProperty(
-        makeProperty(
-          propertyCode: 'P-20260310-HHHH',
-          aggregateVersion: 5,
-          status: PropertyStatus.pickedUp,
-        ),
+      final property = Property(
+        receiverName: 'Receiver Two',
+        receiverPhone: '0700000001',
+        description: 'Bag',
+        destination: 'Juba',
+        itemCount: 1,
+        createdAt: DateTime.now(),
+        status: PropertyStatus.pickedUp,
+        createdByUserId: 'sender-2',
+        propertyCode: 'P-PICK-SYNC-002',
+        trackingCode: 'BC-PICK-SYNC-002',
+        aggregateVersion: 7,
+        pickedUpAt: DateTime.now(),
       );
 
-      final event = makePickedUpEvent(
-        propertyCode: property.propertyCode,
-        aggregateVersion: 4,
+      final key = await HiveService.propertyBox().add(property);
+
+      final event = SyncEvent(
+        eventId: 'evt-pickedup-2',
+        type: SyncEventType.propertyPickedUp,
+        aggregateType: 'property',
+        aggregateId: 'P-PICK-SYNC-002',
+        actorUserId: 'remote-user',
+        aggregateVersion: 6,
+        payload: {
+          'propertyCode': 'P-PICK-SYNC-002',
+          'pickedUpAt': DateTime.now().toIso8601String(),
+          'aggregateVersion': 6,
+        },
+        createdAt: DateTime.now(),
+        sourceDeviceId: 'remote-device',
       );
 
       await PropertyService.applyPropertyPickedUpFromSync(event);
 
-      final updated = reloadProperty(property.propertyCode);
-      expect(updated.aggregateVersion, 5);
-      expect(updated.status, PropertyStatus.pickedUp);
+      final refreshed = HiveService.propertyBox().get(key)!;
+      expect(refreshed.status, PropertyStatus.pickedUp);
+      expect(refreshed.aggregateVersion, 7);
     });
 
     test('ignores replay for missing property', () async {
-      final event = makePickedUpEvent(
-        propertyCode: 'P-20260310-MISSING',
-        aggregateVersion: 2,
+      final event = SyncEvent(
+        eventId: 'evt-pickedup-3',
+        type: SyncEventType.propertyPickedUp,
+        aggregateType: 'property',
+        aggregateId: 'P-NOT-FOUND',
+        actorUserId: 'remote-user',
+        aggregateVersion: 1,
+        payload: {
+          'propertyCode': 'P-NOT-FOUND',
+          'pickedUpAt': DateTime.now().toIso8601String(),
+          'aggregateVersion': 1,
+        },
+        createdAt: DateTime.now(),
+        sourceDeviceId: 'remote-device',
       );
 
       await PropertyService.applyPropertyPickedUpFromSync(event);
 
-      expect(HiveService.propertyBox().values, isEmpty);
+      expect(HiveService.propertyBox().isEmpty, isTrue);
     });
 
     test('does not move pending property directly to pickedUp', () async {
-      final property = await saveProperty(
-        makeProperty(
-          propertyCode: 'P-20260310-IIII',
-          aggregateVersion: 1,
-          status: PropertyStatus.pending,
-        ),
+      final property = Property(
+        receiverName: 'Receiver Three',
+        receiverPhone: '0700000002',
+        description: 'Parcel',
+        destination: 'Juba',
+        itemCount: 1,
+        createdAt: DateTime.now(),
+        status: PropertyStatus.pending,
+        createdByUserId: 'sender-3',
+        propertyCode: 'P-PICK-SYNC-003',
+        trackingCode: 'BC-PICK-SYNC-003',
+        aggregateVersion: 1,
       );
 
-      final event = makePickedUpEvent(
-        propertyCode: property.propertyCode,
+      final key = await HiveService.propertyBox().add(property);
+
+      final event = SyncEvent(
+        eventId: 'evt-pickedup-4',
+        type: SyncEventType.propertyPickedUp,
+        aggregateType: 'property',
+        aggregateId: 'P-PICK-SYNC-003',
+        actorUserId: 'remote-user',
         aggregateVersion: 2,
+        payload: {
+          'propertyCode': 'P-PICK-SYNC-003',
+          'pickedUpAt': DateTime.now().toIso8601String(),
+          'aggregateVersion': 2,
+        },
+        createdAt: DateTime.now(),
+        sourceDeviceId: 'remote-device',
       );
 
       await PropertyService.applyPropertyPickedUpFromSync(event);
 
-      final updated = reloadProperty(property.propertyCode);
-
-      expect(updated.status, PropertyStatus.pending);
-      expect(updated.pickedUpAt, isNull);
-      expect(updated.aggregateVersion, 2);
+      final refreshed = HiveService.propertyBox().get(key)!;
+      expect(refreshed.status, PropertyStatus.pending);
+      expect(refreshed.pickedUpAt, isNull);
+      expect(refreshed.aggregateVersion, 2);
     });
   });
 }

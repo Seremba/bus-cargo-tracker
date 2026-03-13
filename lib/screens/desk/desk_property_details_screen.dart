@@ -19,6 +19,7 @@ import '../../theme/status_colors.dart';
 import '../../widgets/status_chip.dart';
 
 import '../../ui/status_labels.dart';
+import '../../services/property_qr_service.dart';
 
 class DeskPropertyDetailsScreen extends StatefulWidget {
   final String scannedCode; // propertyCode
@@ -36,17 +37,22 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     return s.length >= 16 ? s.substring(0, 16) : s;
   }
 
-  Property? _findByCode(Box<Property> box, String code) {
-    final c = code.trim().toLowerCase();
-    if (c.isEmpty) return null;
+  Property? _findByCode(Box box, String code) {
+    final normalized =
+        PropertyQrService.decodeToPropertyCode(code)?.trim().toLowerCase() ??
+        '';
+
+    if (normalized.isEmpty) return null;
 
     // primary: propertyCode
     for (final p in box.values) {
-      if (p.propertyCode.trim().toLowerCase() == c) return p;
+      if (p.propertyCode.trim().toLowerCase() == normalized) {
+        return p;
+      }
     }
 
-    // fallback: allow scanning "key"
-    final key = int.tryParse(code.trim());
+    // fallback: allow scanning Hive key
+    final key = int.tryParse(normalized);
     if (key != null) return box.get(key);
 
     return null;

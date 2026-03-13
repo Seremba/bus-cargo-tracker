@@ -1,5 +1,4 @@
 class PropertyQrService {
-  
   static String encodePropertyCode(String propertyCode) {
     final c = propertyCode.trim();
     return 'prop:$c';
@@ -12,12 +11,11 @@ class PropertyQrService {
     final s = raw.trim();
     if (s.isEmpty) return null;
 
-    if (s.startsWith('prop:')) {
-      final code = s.substring('prop:'.length).trim();
+    if (s.toLowerCase().startsWith('prop:')) {
+      final code = s.substring(5).trim();
       return code.isEmpty ? null : code;
     }
 
-    // fallback: if they scanned just the code
     return s;
   }
 }

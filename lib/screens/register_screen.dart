@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
-import '../services/phone_normalizer.dart';
 import 'login_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -324,45 +323,31 @@ class _RegisterScreenState extends State<RegisterScreen> {
   }
 
   Future<void> _submit() async {
-    if (_loading) return;
-    FocusManager.instance.primaryFocus?.unfocus();
     if (!_formKey.currentState!.validate()) return;
-
-    final fullName = _name.text.trim();
-    final rawPhone = _phone.text.trim();
-    final canonical = _normalizePhoneUg(rawPhone);
-    final password = _password.text.trim();
 
     setState(() => _loading = true);
 
     try {
       final user = await AuthService.registerSender(
-        fullName: fullName,
-        phone: canonical, // ✅ store canonical
-        password: password,
+        fullName: _name.text,
+        phone: _phone.text,
+        password: _password.text,
       );
 
       if (!mounted) return;
 
       if (user == null) {
-        _toast('Registration failed ❌ (phone may already exist)');
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Phone already registered ❌')),
+        );
         return;
       }
 
-      _toast('Account created ✅ Please login');
-
-      final displayPhone = PhoneNormalizer.displayUg(canonical);
-
-      Navigator.pushAndRemoveUntil(
-        context,
-        MaterialPageRoute(
-          builder: (_) => LoginScreen(initialPhone: displayPhone),
-        ),
-        (_) => false,
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Account created ✅ You can now login')),
       );
-    } catch (_) {
-      if (!mounted) return;
-      _toast('Failed to create account ❌');
+
+      Navigator.pop(context, user.phone);
     } finally {
       if (mounted) setState(() => _loading = false);
     }

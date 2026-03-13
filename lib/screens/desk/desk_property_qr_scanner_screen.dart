@@ -1,14 +1,18 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../services/property_qr_service.dart';
+
 class DeskPropertyQrScannerScreen extends StatefulWidget {
   const DeskPropertyQrScannerScreen({super.key});
 
   @override
-  State<DeskPropertyQrScannerScreen> createState() => _DeskPropertyQrScannerScreenState();
+  State<DeskPropertyQrScannerScreen> createState() =>
+      _DeskPropertyQrScannerScreenState();
 }
 
-class _DeskPropertyQrScannerScreenState extends State<DeskPropertyQrScannerScreen> {
+class _DeskPropertyQrScannerScreenState
+    extends State<DeskPropertyQrScannerScreen> {
   final MobileScannerController _controller = MobileScannerController();
   bool _done = false;
 
@@ -33,13 +37,16 @@ class _DeskPropertyQrScannerScreenState extends State<DeskPropertyQrScannerScree
           final raw = codes.first.rawValue;
           if (raw == null || raw.trim().isEmpty) return;
 
+          final decoded = PropertyQrService.decodeToPropertyCode(raw);
+          if (decoded == null || decoded.trim().isEmpty) return;
+
           setState(() => _done = true);
 
           // stop camera ASAP to prevent double fires
           await _controller.stop();
 
           if (!context.mounted) return;
-          Navigator.pop(context, raw.trim());
+          Navigator.pop(context, decoded);
         },
       ),
     );

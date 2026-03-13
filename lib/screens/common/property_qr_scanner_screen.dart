@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
 
+import '../../services/property_qr_service.dart';
+
 class PropertyQrScannerScreen extends StatefulWidget {
   const PropertyQrScannerScreen({super.key});
 
   @override
-  State<PropertyQrScannerScreen> createState() => _PropertyQrScannerScreenState();
+  State<PropertyQrScannerScreen> createState() =>
+      _PropertyQrScannerScreenState();
 }
 
 class _PropertyQrScannerScreenState extends State<PropertyQrScannerScreen> {
@@ -46,11 +49,13 @@ class _PropertyQrScannerScreenState extends State<PropertyQrScannerScreen> {
               final raw = barcodes.first.rawValue;
               if (raw == null || raw.trim().isEmpty) return;
 
+              final decoded = PropertyQrService.decodeToPropertyCode(raw);
+              if (decoded == null || decoded.trim().isEmpty) return;
+
               setState(() => _done = true);
-              Navigator.pop(context, raw.trim());
+              Navigator.pop(context, decoded);
             },
           ),
-
           if (_done)
             Positioned.fill(
               child: Material(

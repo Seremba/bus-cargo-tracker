@@ -90,16 +90,23 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _showCreateHint = !_showCreateHint);
   }
 
-  void _goToRegister() {
+  Future<void> _goToRegister() async {
     if (_loading) return;
 
-    // optional: collapse hint when navigating
     setState(() => _showCreateHint = false);
 
-    Navigator.push(
+    final returnedPhone = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (_) => const RegisterScreen()),
     );
+
+    if (!mounted) return;
+
+    final t = (returnedPhone ?? '').trim();
+    if (t.isNotEmpty) {
+      phoneController.text = PhoneNormalizer.displayUg(t);
+      _passwordFocus.requestFocus();
+    }
   }
 
   @override

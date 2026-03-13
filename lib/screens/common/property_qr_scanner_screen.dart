@@ -66,7 +66,10 @@ class _PropertyQrScannerScreenState extends State<PropertyQrScannerScreen> {
                     child: Text(
                       'Scanned ✅\nTap to scan again',
                       textAlign: TextAlign.center,
-                      style: TextStyle(color: Colors.white, fontSize: 16),
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                      ),
                     ),
                   ),
                 ),

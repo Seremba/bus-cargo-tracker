@@ -34,22 +34,26 @@ class PropertyItemService {
     required String trackingCode,
     required int itemCount,
   }) async {
-    final existingCount =
-        _itemsBox.values.where((x) => x.propertyKey == propertyKey).length;
-
-    if (existingCount > 0) return;
-
+    final cleanPropertyKey = propertyKey.trim();
     final cleanTracking = trackingCode.trim();
 
+    if (cleanPropertyKey.isEmpty || itemCount <= 0) return;
+
+    final existing = getItemsForProperty(cleanPropertyKey);
+    final existingNos = existing.map((x) => x.itemNo).toSet();
+
     for (int i = 1; i <= itemCount; i++) {
-      final itemKey = _itemKey(propertyKey, i);
+      if (existingNos.contains(i)) continue;
+
+      final itemKey = _itemKey(cleanPropertyKey, i);
       final item = PropertyItem(
         itemKey: itemKey,
-        propertyKey: propertyKey,
+        propertyKey: cleanPropertyKey,
         itemNo: i,
         status: PropertyItemStatus.pending,
         labelCode: _buildLabelCode(cleanTracking, i),
       );
+
       await _itemsBox.put(itemKey, item);
     }
   }
@@ -74,7 +78,9 @@ class PropertyItemService {
     final items = getItemsForProperty(propertyKey);
 
     for (final no in itemNos) {
-      final item = items.firstWhere((x) => x.itemNo == no);
+      final matches = items.where((x) => x.itemNo == no);
+      if (matches.isEmpty) continue;
+      final item = matches.first;
 
       if (item.status != PropertyItemStatus.pending) {
         continue;
@@ -132,8 +138,9 @@ class PropertyItemService {
           x.status == PropertyItemStatus.pickedUp;
     }).length;
 
-    final remainingAtStation =
-        items.where((x) => x.status == PropertyItemStatus.pending).length;
+    final remainingAtStation = items
+        .where((x) => x.status == PropertyItemStatus.pending)
+        .length;
 
     return PropertyItemTripCounts(
       total: total,
@@ -149,8 +156,9 @@ class PropertyItemService {
     final items = getItemsForProperty(property.key.toString());
     if (items.isEmpty) return;
 
-    final bool anyInTransit =
-        items.any((x) => x.status == PropertyItemStatus.inTransit);
+    final bool anyInTransit = items.any(
+      (x) => x.status == PropertyItemStatus.inTransit,
+    );
 
     final bool allDelivered = items.every(
       (x) =>
@@ -158,8 +166,9 @@ class PropertyItemService {
           x.status == PropertyItemStatus.pickedUp,
     );
 
-    final bool allPickedUp =
-        items.every((x) => x.status == PropertyItemStatus.pickedUp);
+    final bool allPickedUp = items.every(
+      (x) => x.status == PropertyItemStatus.pickedUp,
+    );
 
     PropertyStatus newStatus;
 
@@ -180,11 +189,12 @@ class PropertyItemService {
     }
 
     if (property.loadedAt == null) {
-      final loadedTimes = items
-          .where((x) => x.loadedAt != null)
-          .map((x) => x.loadedAt!)
-          .toList()
-        ..sort();
+      final loadedTimes =
+          items
+              .where((x) => x.loadedAt != null)
+              .map((x) => x.loadedAt!)
+              .toList()
+            ..sort();
 
       if (loadedTimes.isNotEmpty) {
         property.loadedAt = loadedTimes.first;
@@ -230,7 +240,9 @@ class PropertyItemService {
     final items = getItemsForProperty(propertyKey);
 
     for (final no in itemNos) {
-      final item = items.firstWhere((x) => x.itemNo == no);
+      final matches = items.where((x) => x.itemNo == no);
+      if (matches.isEmpty) continue;
+      final item = matches.first;
 
       if (item.status != PropertyItemStatus.inTransit) {
         continue;
@@ -256,7 +268,9 @@ class PropertyItemService {
     final items = getItemsForProperty(propertyKey);
 
     for (final no in itemNos) {
-      final item = items.firstWhere((x) => x.itemNo == no);
+      final matches = items.where((x) => x.itemNo == no);
+      if (matches.isEmpty) continue;
+      final item = matches.first;
 
       if (item.status != PropertyItemStatus.delivered) {
         continue;
@@ -316,14 +330,17 @@ class PropertyItemService {
     }
 
     item.status = PropertyItemStatus.loaded;
-    item.loadedAt = _parseDate(event.payload['loadedAt']) ??
+    item.loadedAt =
+        _parseDate(event.payload['loadedAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
 
     await item.save();
   }
 
-  static Future<void> applyPropertyItemInTransitFromSync(SyncEvent event) async {
+  static Future<void> applyPropertyItemInTransitFromSync(
+    SyncEvent event,
+  ) async {
     final item = _requireItemFromPayload(event);
 
     if (item.status == PropertyItemStatus.inTransit ||
@@ -338,14 +355,17 @@ class PropertyItemService {
     }
 
     item.status = PropertyItemStatus.inTransit;
-    item.inTransitAt = _parseDate(event.payload['inTransitAt']) ??
+    item.inTransitAt =
+        _parseDate(event.payload['inTransitAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
 
     await item.save();
   }
 
-  static Future<void> applyPropertyItemDeliveredFromSync(SyncEvent event) async {
+  static Future<void> applyPropertyItemDeliveredFromSync(
+    SyncEvent event,
+  ) async {
     final item = _requireItemFromPayload(event);
 
     if (item.status == PropertyItemStatus.delivered ||
@@ -354,7 +374,8 @@ class PropertyItemService {
     }
 
     item.status = PropertyItemStatus.delivered;
-    item.deliveredAt = _parseDate(event.payload['deliveredAt']) ??
+    item.deliveredAt =
+        _parseDate(event.payload['deliveredAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
 
@@ -369,7 +390,8 @@ class PropertyItemService {
     }
 
     item.status = PropertyItemStatus.pickedUp;
-    item.pickedUpAt = _parseDate(event.payload['pickedUpAt']) ??
+    item.pickedUpAt =
+        _parseDate(event.payload['pickedUpAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
 

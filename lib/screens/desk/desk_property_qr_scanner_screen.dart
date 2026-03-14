@@ -25,10 +25,7 @@ class _DeskPropertyQrScannerScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        centerTitle: true,
-        title: const Text('Scan Property QR'),
-      ),
+      appBar: AppBar(centerTitle: true, title: const Text('Scan Property QR')),
       body: MobileScanner(
         controller: _controller,
         onDetect: (capture) async {
@@ -45,7 +42,9 @@ class _DeskPropertyQrScannerScreenState
 
           setState(() => _done = true);
 
-          await _controller.stop();
+          try {
+            await _controller.stop();
+          } catch (_) {}
 
           if (!context.mounted) return;
           Navigator.pop(context, decoded);

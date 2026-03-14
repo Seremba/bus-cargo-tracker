@@ -7,17 +7,18 @@ class StaffPickupQrScannerScreen extends StatefulWidget {
   const StaffPickupQrScannerScreen({super.key});
 
   @override
-  State<StaffPickupQrScannerScreen> createState() =>
+ State<StaffPickupQrScannerScreen> createState() =>
       _StaffPickupQrScannerScreenState();
 }
 
-class _StaffPickupQrScannerScreenState extends State<StaffPickupQrScannerScreen> {
+class _StaffPickupQrScannerScreenState
+    extends State<StaffPickupQrScannerScreen> {
   final MobileScannerController _controller = MobileScannerController();
   bool _done = false;
 
   @override
   void dispose() {
-    _controller.dispose(); // ✅ release camera
+    _controller.dispose();
     super.dispose();
   }
 
@@ -25,14 +26,17 @@ class _StaffPickupQrScannerScreenState extends State<StaffPickupQrScannerScreen>
     try {
       await _controller.stop();
     } catch (_) {
-      // ignore (already stopped/disposed)
+      // already stopped/disposed
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const Text('Scan Pickup QR')),
+      appBar: AppBar(
+        centerTitle: true,
+        title: const Text('Scan Pickup QR'),
+      ),
       body: MobileScanner(
         controller: _controller,
         onDetect: (capture) async {
@@ -47,7 +51,6 @@ class _StaffPickupQrScannerScreenState extends State<StaffPickupQrScannerScreen>
           final value = raw.trim();
           if (value.isEmpty) return;
 
-          // ✅ Validate QR format before proceeding
           final parsed = PickupQrService.parsePayload(value);
           if (parsed == null) {
             if (!context.mounted) return;
@@ -57,9 +60,7 @@ class _StaffPickupQrScannerScreenState extends State<StaffPickupQrScannerScreen>
             return;
           }
 
-          _done = true;
-
-          // ✅ stop camera ASAP to prevent double fires
+          setState(() => _done = true);
           await _stopCameraSafe();
 
           if (!context.mounted) return;

@@ -266,6 +266,22 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               );
             }(),
             builder: (context, snap) {
+              if (snap.connectionState == ConnectionState.waiting) {
+                return const Center(child: CircularProgressIndicator());
+              }
+
+              if (snap.hasError) {
+                return Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(16),
+                    child: Text(
+                      'Failed to prepare item records: ${snap.error}',
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                );
+              }
+
               final itemBox = HiveService.propertyItemBox();
               final itemSvc = PropertyItemService(itemBox);
               final items = itemSvc.getItemsForProperty(p.key.toString());

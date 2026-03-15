@@ -9,13 +9,16 @@ class PropertyStatusColors {
   static Color color(PropertyStatus status) {
     switch (status) {
       case PropertyStatus.pending:
-        return AppColors.secondary; // waiting
+        return Colors.grey; // waiting
+
+      case PropertyStatus.loaded:
+        return Colors.amber; // staged at station
 
       case PropertyStatus.inTransit:
         return AppColors.primary; // moving
 
       case PropertyStatus.delivered:
-        return AppColors.highlight; // arrived
+        return Colors.blue; // arrived
 
       case PropertyStatus.pickedUp:
         return Colors.green; // success

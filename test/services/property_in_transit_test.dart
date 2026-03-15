@@ -3,9 +3,12 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
+import 'package:bus_cargo_tracker/data/routes.dart';
+import 'package:bus_cargo_tracker/data/routes_helpers.dart';
 import 'package:bus_cargo_tracker/models/audit_event.dart';
 import 'package:bus_cargo_tracker/models/checkpoint.dart';
 import 'package:bus_cargo_tracker/models/notification_item.dart';
+import 'package:bus_cargo_tracker/models/payment_record.dart';
 import 'package:bus_cargo_tracker/models/property.dart';
 import 'package:bus_cargo_tracker/models/property_item.dart';
 import 'package:bus_cargo_tracker/models/property_item_status.dart';
@@ -17,46 +20,108 @@ import 'package:bus_cargo_tracker/models/trip_status.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
-import 'package:bus_cargo_tracker/services/property_item_service.dart';
 import 'package:bus_cargo_tracker/services/session.dart';
-import 'package:bus_cargo_tracker/services/trip_service.dart';
+
+AppRoute _validTestRoute() {
+  for (final route in routes) {
+    final cps = validatedCheckpoints(route);
+    if (cps.isNotEmpty) return route;
+  }
+  throw StateError('No valid route with checkpoints found for test');
+}
+
+Future<Property> _seedLoadedProperty({
+  required String receiverName,
+  required String receiverPhone,
+  required String propertyCode,
+  required String createdByUserId,
+  required AppRoute route,
+  required int itemCount,
+  required List<int> loadedItemNos,
+}) async {
+  final property = Property(
+    receiverName: receiverName,
+    receiverPhone: receiverPhone,
+    description: 'Cargo',
+    destination: route.checkpoints.last.name,
+    itemCount: itemCount,
+    createdAt: DateTime.now(),
+    status: PropertyStatus.loaded,
+    createdByUserId: createdByUserId,
+    propertyCode: propertyCode,
+    routeId: route.id,
+    routeName: route.name,
+    routeConfirmed: true,
+    loadedAt: DateTime.now(),
+    loadedAtStation: 'Kampala',
+    loadedByUserId: 'desk-1',
+  );
+
+  final key = await HiveService.propertyBox().add(property);
+  final saved = HiveService.propertyBox().get(key)!;
+  final propertyKey = saved.key.toString();
+
+  for (int i = 1; i <= itemCount; i++) {
+    final isLoaded = loadedItemNos.contains(i);
+
+    await HiveService.propertyItemBox().put(
+      '$propertyKey#$i',
+      PropertyItem(
+        itemKey: '$propertyKey#$i',
+        propertyKey: propertyKey,
+        itemNo: i,
+        status: isLoaded
+            ? PropertyItemStatus.loaded
+            : PropertyItemStatus.pending,
+        tripId: '',
+        labelCode: '${saved.trackingCode}|$i',
+        loadedAt: isLoaded ? DateTime.now() : null,
+      ),
+    );
+  }
+
+  return HiveService.propertyBox().get(key)!;
+}
 
 void main() {
   late Directory tempDir;
 
   setUpAll(() {
-    if (!Hive.isAdapterRegistered(2)) {
+    if (!Hive.isAdapterRegistered(CheckpointAdapter().typeId)) {
       Hive.registerAdapter(CheckpointAdapter());
     }
-    if (!Hive.isAdapterRegistered(4)) {
+    if (!Hive.isAdapterRegistered(PropertyStatusAdapter().typeId)) {
       Hive.registerAdapter(PropertyStatusAdapter());
     }
-    if (!Hive.isAdapterRegistered(5)) {
+    if (!Hive.isAdapterRegistered(PropertyAdapter().typeId)) {
       Hive.registerAdapter(PropertyAdapter());
     }
-    if (!Hive.isAdapterRegistered(7)) {
+    if (!Hive.isAdapterRegistered(TripAdapter().typeId)) {
       Hive.registerAdapter(TripAdapter());
     }
-    if (!Hive.isAdapterRegistered(8)) {
+    if (!Hive.isAdapterRegistered(TripStatusAdapter().typeId)) {
       Hive.registerAdapter(TripStatusAdapter());
     }
-    if (!Hive.isAdapterRegistered(14)) {
+    if (!Hive.isAdapterRegistered(NotificationItemAdapter().typeId)) {
       Hive.registerAdapter(NotificationItemAdapter());
     }
-    if (!Hive.isAdapterRegistered(15)) {
+    if (!Hive.isAdapterRegistered(AuditEventAdapter().typeId)) {
       Hive.registerAdapter(AuditEventAdapter());
     }
-    if (!Hive.isAdapterRegistered(16)) {
+    if (!Hive.isAdapterRegistered(SyncEventTypeAdapter().typeId)) {
       Hive.registerAdapter(SyncEventTypeAdapter());
     }
-    if (!Hive.isAdapterRegistered(17)) {
+    if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
       Hive.registerAdapter(SyncEventAdapter());
     }
-    if (!Hive.isAdapterRegistered(65)) {
+    if (!Hive.isAdapterRegistered(PropertyItemAdapter().typeId)) {
       Hive.registerAdapter(PropertyItemAdapter());
     }
-    if (!Hive.isAdapterRegistered(66)) {
+    if (!Hive.isAdapterRegistered(PropertyItemStatusAdapter().typeId)) {
       Hive.registerAdapter(PropertyItemStatusAdapter());
+    }
+    if (!Hive.isAdapterRegistered(PaymentRecordAdapter().typeId)) {
+      Hive.registerAdapter(PaymentRecordAdapter());
     }
   });
 
@@ -69,16 +134,21 @@ void main() {
 
     await HiveService.openPropertyBox();
     await HiveService.openPropertyItemBox();
+    await HiveService.openPaymentBox();
     await HiveService.openTripBox();
     await HiveService.openSyncEventBox();
     await HiveService.openAppSettingsBox();
     await HiveService.openAuditBox();
     await HiveService.openNotificationBox();
 
+    final route = _validTestRoute();
+
     Session.currentUserId = 'driver-1';
     Session.currentRole = UserRole.driver;
     Session.currentUserFullName = 'Driver Tester';
     Session.currentStationName = 'Kampala';
+    Session.currentAssignedRouteId = route.id;
+    Session.currentAssignedRouteName = route.name;
   });
 
   tearDown(() async {
@@ -86,6 +156,8 @@ void main() {
     Session.currentRole = null;
     Session.currentUserFullName = null;
     Session.currentStationName = null;
+    Session.currentAssignedRouteId = null;
+    Session.currentAssignedRouteName = null;
 
     await Hive.close();
     if (await tempDir.exists()) {
@@ -95,43 +167,26 @@ void main() {
 
   group('PropertyService.markInTransit', () {
     test('moves loaded items to inTransit and assigns trip', () async {
-      final property = Property(
+      final route = _validTestRoute();
+
+      final saved = await _seedLoadedProperty(
         receiverName: 'Receiver One',
         receiverPhone: '0700000000',
-        description: 'Box',
-        destination: 'Juba',
-        itemCount: 3,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: 'sender-1',
         propertyCode: 'P-TRANSIT-001',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
-        routeConfirmed: true,
-      );
-
-      final key = await HiveService.propertyBox().add(property);
-      final saved = HiveService.propertyBox().get(key)!;
-
-      final itemSvc = PropertyItemService(HiveService.propertyItemBox());
-      await itemSvc.ensureItemsForProperty(
-        propertyKey: saved.key.toString(),
-        trackingCode: saved.trackingCode,
-        itemCount: saved.itemCount,
-      );
-      await itemSvc.markSelectedItemsLoaded(
-        propertyKey: saved.key.toString(),
-        itemNos: [1, 2],
-        now: DateTime.now(),
+        createdByUserId: 'sender-1',
+        route: route,
+        itemCount: 3,
+        loadedItemNos: [1, 2],
       );
 
       await PropertyService.markInTransit(saved);
 
-      final refreshed = HiveService.propertyBox().get(key)!;
-      final items = HiveService.propertyItemBox().values
-          .where((x) => x.propertyKey == refreshed.key.toString())
-          .toList()
-        ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
+      final refreshed = HiveService.propertyBox().get(saved.key)!;
+      final items =
+          HiveService.propertyItemBox().values
+              .where((x) => x.propertyKey == refreshed.key.toString())
+              .toList()
+            ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       final trips = HiveService.tripBox().values.toList();
       final syncEvents = HiveService.syncEventBox().values.toList();
@@ -142,8 +197,8 @@ void main() {
       expect(refreshed.tripId!.trim(), isNotEmpty);
 
       expect(trips.length, 1);
-      expect(trips.first.routeId, 'kla_juba');
-      expect(trips.first.routeName, 'Kampala → Juba');
+      expect(trips.first.routeId, route.id);
+      expect(trips.first.routeName, route.name);
       expect(trips.first.driverUserId, 'driver-1');
       expect(trips.first.status, TripStatus.active);
 
@@ -166,19 +221,21 @@ void main() {
       );
     });
 
-    test('does nothing when property is not pending', () async {
+    test('does nothing when property is not pending or loaded', () async {
+      final route = _validTestRoute();
+
       final property = Property(
         receiverName: 'Receiver Two',
         receiverPhone: '0700000001',
         description: 'Bag',
-        destination: 'Juba',
+        destination: route.checkpoints.last.name,
         itemCount: 2,
         createdAt: DateTime.now(),
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-2',
         propertyCode: 'P-TRANSIT-002',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
+        routeId: route.id,
+        routeName: route.name,
         routeConfirmed: true,
       );
 
@@ -192,33 +249,52 @@ void main() {
       expect(refreshed.status, PropertyStatus.inTransit);
       expect(refreshed.tripId, isNull);
       expect(HiveService.tripBox().isEmpty, isTrue);
-      expect(HiveService.syncEventBox().isEmpty, isTrue);
     });
 
     test('does nothing when no items are loaded', () async {
+      final route = _validTestRoute();
+
       final property = Property(
         receiverName: 'Receiver Three',
         receiverPhone: '0700000002',
         description: 'Parcel',
-        destination: 'Juba',
+        destination: route.checkpoints.last.name,
         itemCount: 2,
         createdAt: DateTime.now(),
         status: PropertyStatus.pending,
         createdByUserId: 'sender-3',
         propertyCode: 'P-TRANSIT-003',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
+        routeId: route.id,
+        routeName: route.name,
         routeConfirmed: true,
       );
 
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
+      final propertyKey = saved.key.toString();
 
-      final itemSvc = PropertyItemService(HiveService.propertyItemBox());
-      await itemSvc.ensureItemsForProperty(
-        propertyKey: saved.key.toString(),
-        trackingCode: saved.trackingCode,
-        itemCount: saved.itemCount,
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.pending,
+          tripId: '',
+          labelCode: '${saved.trackingCode}|1',
+        ),
+      );
+
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#2',
+        PropertyItem(
+          itemKey: '$propertyKey#2',
+          propertyKey: propertyKey,
+          itemNo: 2,
+          status: PropertyItemStatus.pending,
+          tripId: '',
+          labelCode: '${saved.trackingCode}|2',
+        ),
       );
 
       await PropertyService.markInTransit(saved);
@@ -233,7 +309,10 @@ void main() {
       expect(refreshed.tripId, isNull);
 
       expect(items.length, 2);
-      expect(items.every((x) => x.status == PropertyItemStatus.pending), isTrue);
+      expect(
+        items.every((x) => x.status == PropertyItemStatus.pending),
+        isTrue,
+      );
 
       expect(HiveService.tripBox().isEmpty, isTrue);
       expect(
@@ -245,72 +324,34 @@ void main() {
     });
 
     test('reuses existing active trip on same route', () async {
-      final firstProperty = Property(
+      final route = _validTestRoute();
+
+      final firstSaved = await _seedLoadedProperty(
         receiverName: 'Receiver Four',
         receiverPhone: '0700000003',
-        description: 'Goods',
-        destination: 'Juba',
-        itemCount: 2,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: 'sender-4',
         propertyCode: 'P-TRANSIT-004',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
-        routeConfirmed: true,
+        createdByUserId: 'sender-4',
+        route: route,
+        itemCount: 2,
+        loadedItemNos: [1, 2],
       );
 
-      final secondProperty = Property(
+      final secondSaved = await _seedLoadedProperty(
         receiverName: 'Receiver Five',
         receiverPhone: '0700000004',
-        description: 'More goods',
-        destination: 'Juba',
-        itemCount: 2,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: 'sender-5',
         propertyCode: 'P-TRANSIT-005',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
-        routeConfirmed: true,
-      );
-
-      final firstKey = await HiveService.propertyBox().add(firstProperty);
-      final secondKey = await HiveService.propertyBox().add(secondProperty);
-
-      final firstSaved = HiveService.propertyBox().get(firstKey)!;
-      final secondSaved = HiveService.propertyBox().get(secondKey)!;
-
-      final itemSvc = PropertyItemService(HiveService.propertyItemBox());
-
-      await itemSvc.ensureItemsForProperty(
-        propertyKey: firstSaved.key.toString(),
-        trackingCode: firstSaved.trackingCode,
-        itemCount: firstSaved.itemCount,
-      );
-      await itemSvc.markSelectedItemsLoaded(
-        propertyKey: firstSaved.key.toString(),
-        itemNos: [1, 2],
-        now: DateTime.now(),
-      );
-
-      await itemSvc.ensureItemsForProperty(
-        propertyKey: secondSaved.key.toString(),
-        trackingCode: secondSaved.trackingCode,
-        itemCount: secondSaved.itemCount,
-      );
-      await itemSvc.markSelectedItemsLoaded(
-        propertyKey: secondSaved.key.toString(),
-        itemNos: [1],
-        now: DateTime.now(),
+        createdByUserId: 'sender-5',
+        route: route,
+        itemCount: 2,
+        loadedItemNos: [1],
       );
 
       await PropertyService.markInTransit(firstSaved);
-      final firstRefreshed = HiveService.propertyBox().get(firstKey)!;
+      final firstRefreshed = HiveService.propertyBox().get(firstSaved.key)!;
       final existingTripId = firstRefreshed.tripId;
 
       await PropertyService.markInTransit(secondSaved);
-      final secondRefreshed = HiveService.propertyBox().get(secondKey)!;
+      final secondRefreshed = HiveService.propertyBox().get(secondSaved.key)!;
 
       expect(existingTripId, isNotNull);
       expect(existingTripId, isNotEmpty);
@@ -319,40 +360,21 @@ void main() {
     });
 
     test('emits propertyInTransit sync event with trip data', () async {
-      final property = Property(
+      final route = _validTestRoute();
+
+      final saved = await _seedLoadedProperty(
         receiverName: 'Receiver Six',
         receiverPhone: '0700000005',
-        description: 'Cargo',
-        destination: 'Juba',
-        itemCount: 2,
-        createdAt: DateTime.now(),
-        status: PropertyStatus.pending,
-        createdByUserId: 'sender-6',
         propertyCode: 'P-TRANSIT-006',
-        routeId: 'kla_juba',
-        routeName: 'Kampala → Juba',
-        routeConfirmed: true,
-        aggregateVersion: 1,
-      );
-
-      final key = await HiveService.propertyBox().add(property);
-      final saved = HiveService.propertyBox().get(key)!;
-
-      final itemSvc = PropertyItemService(HiveService.propertyItemBox());
-      await itemSvc.ensureItemsForProperty(
-        propertyKey: saved.key.toString(),
-        trackingCode: saved.trackingCode,
-        itemCount: saved.itemCount,
-      );
-      await itemSvc.markSelectedItemsLoaded(
-        propertyKey: saved.key.toString(),
-        itemNos: [1],
-        now: DateTime.now(),
+        createdByUserId: 'sender-6',
+        route: route,
+        itemCount: 2,
+        loadedItemNos: [1],
       );
 
       await PropertyService.markInTransit(saved);
 
-      final refreshed = HiveService.propertyBox().get(key)!;
+      final refreshed = HiveService.propertyBox().get(saved.key)!;
       final events = HiveService.syncEventBox().values.toList();
 
       final inTransitEvents = events

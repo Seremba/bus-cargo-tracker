@@ -101,32 +101,46 @@ class TripService {
 
     await box.add(trip);
 
-    await SyncService.enqueueTripStarted(
-      tripId: trip.tripId,
-      actorUserId: driverId,
-      aggregateVersion: trip.aggregateVersion,
-      payload: {
-        'tripId': trip.tripId,
-        'routeId': trip.routeId,
-        'routeName': trip.routeName,
-        'driverUserId': trip.driverUserId,
-        'startedAt': trip.startedAt.toIso8601String(),
-        'status': trip.status.name,
-        'lastCheckpointIndex': trip.lastCheckpointIndex,
-        'aggregateVersion': trip.aggregateVersion,
-        'checkpoints': trip.checkpoints
-            .map(
-              (cp) => {
-                'name': cp.name,
-                'lat': cp.lat,
-                'lng': cp.lng,
-                'radiusMeters': cp.radiusMeters,
-                'reachedAt': cp.reachedAt?.toIso8601String(),
-              },
-            )
-            .toList(),
-      },
-    );
+    // IMPORTANT: local trip creation must survive sync failures
+    try {
+      await SyncService.enqueueTripStarted(
+        tripId: trip.tripId,
+        actorUserId: driverId,
+        aggregateVersion: trip.aggregateVersion,
+        payload: {
+          'tripId': trip.tripId,
+          'routeId': trip.routeId,
+          'routeName': trip.routeName,
+          'driverUserId': trip.driverUserId,
+          'startedAt': trip.startedAt.toIso8601String(),
+          'status': trip.status.name,
+          'lastCheckpointIndex': trip.lastCheckpointIndex,
+          'aggregateVersion': trip.aggregateVersion,
+          'checkpoints': trip.checkpoints
+              .map(
+                (cp) => {
+                  'name': cp.name,
+                  'lat': cp.lat,
+                  'lng': cp.lng,
+                  'radiusMeters': cp.radiusMeters,
+                  'reachedAt': cp.reachedAt?.toIso8601String(),
+                },
+              )
+              .toList(),
+        },
+      );
+    } catch (e) {
+      // Do not block the local workflow
+      try {
+        await NotificationService.notify(
+          targetUserId: NotificationService.adminInbox,
+          title: 'Trip sync queue failed',
+          message:
+              'Trip ${trip.routeName} was created locally for driver $driverId, '
+              'but enqueueTripStarted failed.\nError: $e',
+        );
+      } catch (_) {}
+    }
 
     return trip;
   }

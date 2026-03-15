@@ -32,11 +32,17 @@ class ReceiverTrackingService {
     // Repo semantics: LOADED is a milestone while still pending.
     switch (p.status) {
       case PropertyStatus.pending:
-        return (p.loadedAt != null) ? 'LOADED' : 'PENDING';
+        return 'PENDING';
+
+      case PropertyStatus.loaded:
+        return 'LOADED';
+
       case PropertyStatus.inTransit:
         return 'IN TRANSIT';
+
       case PropertyStatus.delivered:
         return 'DELIVERED';
+
       case PropertyStatus.pickedUp:
         return 'PICKED UP';
     }
@@ -270,20 +276,20 @@ class ReceiverTrackingService {
         : routeName.trim();
 
     final body = [
-  'Bebeto Cargo',
-  '',
-  'Tracking: $code',
-  'Item: $desc (x${fresh.itemCount})',
-  '',
-  '$loadedForTrip of $total item(s) have departed via $route.',
-  if (remainingAtStation > 0)
-    '$remainingAtStation item(s) remain at the station and will follow on the next trip.',
-  '',
-  'Destination: ${fresh.destination}',
-  'Time: $when',
-  '',
-  'Support: $_supportPhones',
-].join('\n');
+      'Bebeto Cargo',
+      '',
+      'Tracking: $code',
+      'Item: $desc (x${fresh.itemCount})',
+      '',
+      '$loadedForTrip of $total item(s) have departed via $route.',
+      if (remainingAtStation > 0)
+        '$remainingAtStation item(s) remain at the station and will follow on the next trip.',
+      '',
+      'Destination: ${fresh.destination}',
+      'Time: $when',
+      '',
+      'Support: $_supportPhones',
+    ].join('\n');
 
     await OutboundMessageService.queue(
       toPhone: phone,

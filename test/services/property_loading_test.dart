@@ -4,6 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
 import 'package:bus_cargo_tracker/models/audit_event.dart';
+import 'package:bus_cargo_tracker/models/notification_item.dart';
+import 'package:bus_cargo_tracker/models/payment_record.dart';
 import 'package:bus_cargo_tracker/models/property.dart';
 import 'package:bus_cargo_tracker/models/property_item.dart';
 import 'package:bus_cargo_tracker/models/property_item_status.dart';
@@ -12,6 +14,7 @@ import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
+import 'package:bus_cargo_tracker/services/payment_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
 import 'package:bus_cargo_tracker/services/session.dart';
 
@@ -19,26 +22,32 @@ void main() {
   late Directory tempDir;
 
   setUpAll(() {
-    if (!Hive.isAdapterRegistered(4)) {
+    if (!Hive.isAdapterRegistered(PropertyStatusAdapter().typeId)) {
       Hive.registerAdapter(PropertyStatusAdapter());
     }
-    if (!Hive.isAdapterRegistered(5)) {
+    if (!Hive.isAdapterRegistered(PropertyAdapter().typeId)) {
       Hive.registerAdapter(PropertyAdapter());
     }
-    if (!Hive.isAdapterRegistered(15)) {
+    if (!Hive.isAdapterRegistered(AuditEventAdapter().typeId)) {
       Hive.registerAdapter(AuditEventAdapter());
     }
-    if (!Hive.isAdapterRegistered(65)) {
+    if (!Hive.isAdapterRegistered(PropertyItemAdapter().typeId)) {
       Hive.registerAdapter(PropertyItemAdapter());
     }
-    if (!Hive.isAdapterRegistered(66)) {
+    if (!Hive.isAdapterRegistered(PropertyItemStatusAdapter().typeId)) {
       Hive.registerAdapter(PropertyItemStatusAdapter());
     }
-    if (!Hive.isAdapterRegistered(16)) {
+    if (!Hive.isAdapterRegistered(SyncEventTypeAdapter().typeId)) {
       Hive.registerAdapter(SyncEventTypeAdapter());
     }
-    if (!Hive.isAdapterRegistered(17)) {
+    if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
       Hive.registerAdapter(SyncEventAdapter());
+    }
+    if (!Hive.isAdapterRegistered(PaymentRecordAdapter().typeId)) {
+      Hive.registerAdapter(PaymentRecordAdapter());
+    }
+    if (!Hive.isAdapterRegistered(NotificationItemAdapter().typeId)) {
+      Hive.registerAdapter(NotificationItemAdapter());
     }
   });
 
@@ -51,9 +60,11 @@ void main() {
 
     await HiveService.openPropertyBox();
     await HiveService.openPropertyItemBox();
+    await HiveService.openPaymentBox();
     await HiveService.openSyncEventBox();
     await HiveService.openAppSettingsBox();
     await HiveService.openAuditBox();
+    await HiveService.openNotificationBox();
 
     Session.currentUserId = 'desk-1';
     Session.currentRole = UserRole.deskCargoOfficer;
@@ -76,6 +87,40 @@ void main() {
   });
 
   group('PropertyService.markLoaded', () {
+    test('returns false when property is unpaid', () async {
+      final property = Property(
+        receiverName: 'Receiver Zero',
+        receiverPhone: '0700999999',
+        description: 'Unpaid box',
+        destination: 'Juba',
+        itemCount: 2,
+        createdAt: DateTime.now(),
+        status: PropertyStatus.pending,
+        createdByUserId: 'sender-0',
+        propertyCode: 'P-LOAD-000',
+        routeId: 'kla_juba',
+        routeName: 'Kampala → Juba',
+        routeConfirmed: true,
+      );
+
+      final key = await HiveService.propertyBox().add(property);
+      final saved = HiveService.propertyBox().get(key)!;
+
+      final ok = await PropertyService.markLoaded(
+        saved,
+        station: 'Kampala',
+      );
+
+      final refreshed = HiveService.propertyBox().get(key)!;
+      final items = HiveService.propertyItemBox().values
+          .where((x) => x.propertyKey == refreshed.key.toString())
+          .toList();
+
+      expect(ok, isFalse);
+      expect(refreshed.status, PropertyStatus.pending);
+      expect(items, isEmpty);
+    });
+
     test('marks all items loaded when itemNos is omitted', () async {
       final property = Property(
         receiverName: 'Receiver One',
@@ -95,6 +140,13 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
+      await PaymentService.recordPayment(
+        property: saved,
+        amount: 10000,
+        method: 'cash',
+        station: 'Kampala',
+      );
+
       final ok = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
@@ -107,7 +159,7 @@ void main() {
         ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       expect(ok, isTrue);
-      expect(refreshed.status, PropertyStatus.pending);
+      expect(refreshed.status, PropertyStatus.loaded);
       expect(refreshed.loadedAt, isNotNull);
       expect(refreshed.loadedAtStation, 'Kampala');
       expect(refreshed.loadedByUserId, 'desk-1');
@@ -139,6 +191,13 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
+      await PaymentService.recordPayment(
+        property: saved,
+        amount: 20000,
+        method: 'cash',
+        station: 'Kampala',
+      );
+
       final ok = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
@@ -152,7 +211,7 @@ void main() {
         ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       expect(ok, isTrue);
-      expect(refreshed.status, PropertyStatus.pending);
+      expect(refreshed.status, PropertyStatus.loaded);
       expect(refreshed.loadedAt, isNotNull);
       expect(refreshed.loadedAtStation, 'Kampala');
       expect(refreshed.loadedByUserId, 'desk-1');
@@ -175,7 +234,7 @@ void main() {
       expect(items[4].status, PropertyItemStatus.loaded);
     });
 
-    test('does not load property if status is not pending', () async {
+    test('does not load property if status is not pending or loaded', () async {
       final property = Property(
         receiverName: 'Receiver Three',
         receiverPhone: '0700000002',
@@ -231,6 +290,13 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
+      await PaymentService.recordPayment(
+        property: saved,
+        amount: 15000,
+        method: 'cash',
+        station: 'Kampala',
+      );
+
       final first = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
@@ -249,11 +315,13 @@ void main() {
 
       expect(second, isTrue);
 
+      final refreshed = HiveService.propertyBox().get(key)!;
       final items = HiveService.propertyItemBox().values
-          .where((x) => x.propertyKey == mid.key.toString())
+          .where((x) => x.propertyKey == refreshed.key.toString())
           .toList()
         ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
+      expect(refreshed.status, PropertyStatus.loaded);
       expect(items.length, 4);
       expect(items[0].status, PropertyItemStatus.loaded);
       expect(items[1].status, PropertyItemStatus.loaded);
@@ -280,6 +348,13 @@ void main() {
 
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
+
+      await PaymentService.recordPayment(
+        property: saved,
+        amount: 12000,
+        method: 'cash',
+        station: 'Kampala',
+      );
 
       final ok = await PropertyService.markLoaded(
         saved,

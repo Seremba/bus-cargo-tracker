@@ -27,25 +27,63 @@ import 'services/route_decider_service.dart';
 import 'services/sync_service.dart';
 import 'ui/app_colors.dart';
 
+import 'models/property_item.dart';
+import 'models/property_item_status.dart';
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Hive.initFlutter();
 
   // Register adapters
-  Hive.registerAdapter(PropertyAdapter());
-  Hive.registerAdapter(PropertyStatusAdapter());
-  Hive.registerAdapter(NotificationItemAdapter());
-  Hive.registerAdapter(TripAdapter());
-  Hive.registerAdapter(TripStatusAdapter());
-  Hive.registerAdapter(CheckpointAdapter());
-  Hive.registerAdapter(AuditEventAdapter());
-  Hive.registerAdapter(UserAdapter());
-  Hive.registerAdapter(UserRoleAdapter());
-  Hive.registerAdapter(PaymentRecordAdapter());
-  Hive.registerAdapter(PrinterSettingsAdapter());
-  Hive.registerAdapter(OutboundMessageAdapter());
-  Hive.registerAdapter(SyncEventTypeAdapter());
-  Hive.registerAdapter(SyncEventAdapter());
+  if (!Hive.isAdapterRegistered(PropertyAdapter().typeId)) {
+    Hive.registerAdapter(PropertyAdapter());
+  }
+  if (!Hive.isAdapterRegistered(PropertyStatusAdapter().typeId)) {
+    Hive.registerAdapter(PropertyStatusAdapter());
+  }
+  if (!Hive.isAdapterRegistered(PropertyItemAdapter().typeId)) {
+    Hive.registerAdapter(PropertyItemAdapter());
+  }
+  if (!Hive.isAdapterRegistered(PropertyItemStatusAdapter().typeId)) {
+    Hive.registerAdapter(PropertyItemStatusAdapter());
+  }
+  if (!Hive.isAdapterRegistered(NotificationItemAdapter().typeId)) {
+    Hive.registerAdapter(NotificationItemAdapter());
+  }
+  if (!Hive.isAdapterRegistered(TripAdapter().typeId)) {
+    Hive.registerAdapter(TripAdapter());
+  }
+  if (!Hive.isAdapterRegistered(TripStatusAdapter().typeId)) {
+    Hive.registerAdapter(TripStatusAdapter());
+  }
+  if (!Hive.isAdapterRegistered(CheckpointAdapter().typeId)) {
+    Hive.registerAdapter(CheckpointAdapter());
+  }
+  if (!Hive.isAdapterRegistered(AuditEventAdapter().typeId)) {
+    Hive.registerAdapter(AuditEventAdapter());
+  }
+  if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+    Hive.registerAdapter(UserAdapter());
+  }
+  if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+    Hive.registerAdapter(UserRoleAdapter());
+  }
+  if (!Hive.isAdapterRegistered(PaymentRecordAdapter().typeId)) {
+    Hive.registerAdapter(PaymentRecordAdapter());
+  }
+  if (!Hive.isAdapterRegistered(PrinterSettingsAdapter().typeId)) {
+    Hive.registerAdapter(PrinterSettingsAdapter());
+  }
+  if (!Hive.isAdapterRegistered(OutboundMessageAdapter().typeId)) {
+    Hive.registerAdapter(OutboundMessageAdapter());
+  }
+  if (!Hive.isAdapterRegistered(SyncEventTypeAdapter().typeId)) {
+    Hive.registerAdapter(SyncEventTypeAdapter());
+  }
+
+  if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
+    Hive.registerAdapter(SyncEventAdapter());
+  }
 
   await HiveService.openAllBoxes();
 

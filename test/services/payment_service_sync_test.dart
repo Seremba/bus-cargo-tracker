@@ -202,15 +202,17 @@ void main() {
     );
 
     final refreshedProperty = HiveService.propertyBox().get(key)!;
-    final syncEvents = HiveService.syncEventBox().values.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final syncEvents = HiveService.syncEventBox().values.toList();
 
     expect(refund.kind, 'refund');
     expect(refund.amount, -3000);
     expect(refreshedProperty.amountPaidTotal, 7000);
     expect(refreshedProperty.aggregateVersion, 2);
 
-    final refundEvent = syncEvents.last;
+    final refundEvent = syncEvents.firstWhere(
+      (e) => e.payload['paymentId'] == refund.paymentId,
+    );
+
     expect(refundEvent.type, SyncEventType.paymentRefunded);
     expect(refundEvent.aggregateType, 'payment');
     expect(refundEvent.aggregateId, refund.paymentId);
@@ -259,15 +261,17 @@ void main() {
     );
 
     final refreshedProperty = HiveService.propertyBox().get(key)!;
-    final syncEvents = HiveService.syncEventBox().values.toList()
-      ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+    final syncEvents = HiveService.syncEventBox().values.toList();
 
     expect(adjustment.kind, 'adjustment');
     expect(adjustment.amount, 1500);
     expect(refreshedProperty.amountPaidTotal, 6500);
     expect(refreshedProperty.aggregateVersion, 2);
 
-    final adjustmentEvent = syncEvents.last;
+    final adjustmentEvent = syncEvents.firstWhere(
+      (e) => e.payload['paymentId'] == adjustment.paymentId,
+    );
+
     expect(adjustmentEvent.type, SyncEventType.paymentAdjusted);
     expect(adjustmentEvent.aggregateType, 'payment');
     expect(adjustmentEvent.aggregateId, adjustment.paymentId);

@@ -12,8 +12,8 @@ import 'sync_service.dart';
 
 class PropertyItemTripCounts {
   final int total;
-  final int loadedForTrip; // items assigned to this trip (loaded/inTransit/etc)
-  final int remainingAtStation; // pending items (not loaded yet)
+  final int loadedForTrip;
+  final int remainingAtStation;
 
   const PropertyItemTripCounts({
     required this.total,
@@ -27,8 +27,6 @@ class PropertyItemService {
 
   PropertyItemService(this._itemsBox);
 
-  /// Creates PropertyItems (1..itemCount) if missing.
-  /// Idempotent: safe to call many times.
   Future<void> ensureItemsForProperty({
     required String propertyKey,
     required String trackingCode,
@@ -59,8 +57,10 @@ class PropertyItemService {
   }
 
   List<PropertyItem> getItemsForProperty(String propertyKey) {
+    final cleanPropertyKey = propertyKey.trim();
+
     final list = _itemsBox.values
-        .where((x) => x.propertyKey == propertyKey)
+        .where((x) => x.propertyKey == cleanPropertyKey)
         .cast<PropertyItem>()
         .toList();
 
@@ -68,8 +68,6 @@ class PropertyItemService {
     return list;
   }
 
-  /// Desk selects which items to load today (does NOT move inTransit yet).
-  /// Only pending -> loaded is allowed.
   Future<void> markSelectedItemsLoaded({
     required String propertyKey,
     required List<int> itemNos,
@@ -98,7 +96,6 @@ class PropertyItemService {
     }
   }
 
-  /// Driver starts trip: move only loaded items assigned to this trip -> inTransit
   Future<void> onTripStartMoveLoadedToInTransit({
     required String tripId,
     required DateTime now,
@@ -145,16 +142,17 @@ class PropertyItemService {
     return PropertyItemTripCounts(
       total: total,
       loadedForTrip: onThisTrip,
-      // keep field name, but treat as "onThisTrip"
       remainingAtStation: remainingAtStation,
     );
   }
 
-  /// Keeps your existing Property strict status consistent with item reality.
-  /// Call this after load, trip start, delivered, picked up, etc.
   Future<void> recomputePropertyAggregate({required Property property}) async {
     final items = getItemsForProperty(property.key.toString());
     if (items.isEmpty) return;
+
+    final bool anyLoaded = items.any(
+      (x) => x.status == PropertyItemStatus.loaded,
+    );
 
     final bool anyInTransit = items.any(
       (x) => x.status == PropertyItemStatus.inTransit,
@@ -178,8 +176,9 @@ class PropertyItemService {
       newStatus = PropertyStatus.delivered;
     } else if (anyInTransit) {
       newStatus = PropertyStatus.inTransit;
+    } else if (anyLoaded) {
+      newStatus = PropertyStatus.loaded;
     } else {
-      // IMPORTANT: property stays pending until trip starts
       newStatus = PropertyStatus.pending;
     }
 
@@ -446,8 +445,6 @@ class PropertyItemService {
   String _itemKey(String propertyKey, int itemNo) => '$propertyKey#$itemNo';
 
   String _buildLabelCode(String trackingCode, int itemNo) {
-    // keep stable + short; scanner gets trackingCode + itemNo
-    // Example: "BC-482193-XK|3"
     final tc = trackingCode.trim();
     return '$tc|$itemNo';
   }

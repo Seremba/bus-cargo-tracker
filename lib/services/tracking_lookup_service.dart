@@ -52,10 +52,16 @@ class TrackingLookupService {
     switch (p.status) {
       case PropertyStatus.pending:
         return 'PENDING';
+
+      case PropertyStatus.loaded:
+        return 'LOADED';
+
       case PropertyStatus.inTransit:
         return 'IN TRANSIT';
+
       case PropertyStatus.delivered:
         return 'DELIVERED';
+
       case PropertyStatus.pickedUp:
         return 'PICKED UP';
     }

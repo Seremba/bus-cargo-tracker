@@ -2,10 +2,12 @@ import '../models/property_status.dart';
 import '../models/trip_status.dart';
 
 class PropertyStatusLabels {
-  static String text(PropertyStatus s) {
-    switch (s) {
+  static String text(PropertyStatus status) {
+    switch (status) {
       case PropertyStatus.pending:
         return 'Pending';
+      case PropertyStatus.loaded:
+        return 'Loaded';
       case PropertyStatus.inTransit:
         return 'In Transit';
       case PropertyStatus.delivered:

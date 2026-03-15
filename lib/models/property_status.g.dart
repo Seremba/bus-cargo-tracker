@@ -8,7 +8,7 @@ part of 'property_status.dart';
 
 class PropertyStatusAdapter extends TypeAdapter<PropertyStatus> {
   @override
-  final int typeId = 4;
+  final int typeId = 6;
 
   @override
   PropertyStatus read(BinaryReader reader) {
@@ -16,10 +16,12 @@ class PropertyStatusAdapter extends TypeAdapter<PropertyStatus> {
       case 0:
         return PropertyStatus.pending;
       case 1:
-        return PropertyStatus.inTransit;
+        return PropertyStatus.loaded;
       case 2:
-        return PropertyStatus.delivered;
+        return PropertyStatus.inTransit;
       case 3:
+        return PropertyStatus.delivered;
+      case 4:
         return PropertyStatus.pickedUp;
       default:
         return PropertyStatus.pending;
@@ -32,14 +34,17 @@ class PropertyStatusAdapter extends TypeAdapter<PropertyStatus> {
       case PropertyStatus.pending:
         writer.writeByte(0);
         break;
-      case PropertyStatus.inTransit:
+      case PropertyStatus.loaded:
         writer.writeByte(1);
         break;
-      case PropertyStatus.delivered:
+      case PropertyStatus.inTransit:
         writer.writeByte(2);
         break;
-      case PropertyStatus.pickedUp:
+      case PropertyStatus.delivered:
         writer.writeByte(3);
+        break;
+      case PropertyStatus.pickedUp:
+        writer.writeByte(4);
         break;
     }
   }

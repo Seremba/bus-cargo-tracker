@@ -36,10 +36,16 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     switch (s) {
       case PropertyStatus.pending:
         return '🟡 Pending';
+
+      case PropertyStatus.loaded:
+        return '🟠 Loaded';
+
       case PropertyStatus.inTransit:
         return '🔵 In Transit';
+
       case PropertyStatus.delivered:
         return '🟢 Delivered';
+
       case PropertyStatus.pickedUp:
         return '✅ Picked Up';
     }

@@ -1,28 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../models/payment_record.dart';
 import '../../models/property.dart';
+import '../../models/property_item_status.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
-import '../../models/property_item_status.dart';
 
 import '../../services/hive_service.dart';
+import '../../services/payment_service.dart';
+import '../../services/printing/escpos_label_builder.dart';
 import '../../services/printing/printer_service.dart';
 import '../../services/printing/printer_settings_service.dart';
-import '../../services/role_guard.dart';
-import '../../services/property_service.dart';
-import '../../services/session.dart';
 import '../../services/property_item_service.dart';
-import '../../services/printing/escpos_label_builder.dart';
+import '../../services/property_qr_service.dart';
+import '../../services/property_service.dart';
+import '../../services/role_guard.dart';
+import '../../services/session.dart';
 
 import '../../theme/status_colors.dart';
-import '../../widgets/status_chip.dart';
-
 import '../../ui/status_labels.dart';
-import '../../services/property_qr_service.dart';
+import '../../widgets/status_chip.dart';
 
 class DeskPropertyDetailsScreen extends StatefulWidget {
   final String scannedCode; // propertyCode
+
   const DeskPropertyDetailsScreen({super.key, required this.scannedCode});
 
   @override
@@ -44,14 +46,12 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
 
     if (normalized.isEmpty) return null;
 
-    // primary: propertyCode
     for (final p in box.values) {
       if (p.propertyCode.trim().toLowerCase() == normalized) {
         return p;
       }
     }
 
-    // fallback: allow scanning Hive key
     final key = int.tryParse(normalized);
     if (key != null) return box.get(key);
 
@@ -80,7 +80,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               onPressed: () {
                 final v = int.tryParse(controller.text.trim());
                 if (v == null || v <= 0 || v > 20) {
-                  Navigator.pop(ctx, 1); // safe fallback
+                  Navigator.pop(ctx, 1);
                   return;
                 }
                 Navigator.pop(ctx, v);
@@ -108,16 +108,13 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
 
     final all = itemSvc.getItemsForProperty(p.key.toString());
 
-    // Only allow selecting PENDING items for loading
     final selectable =
         all.where((x) => x.status == PropertyItemStatus.pending).toList()
           ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
     if (selectable.isEmpty) return null;
 
-    final selected = <int>{
-      for (final x in selectable) x.itemNo,
-    }; // default: all pending
+    final selected = <int>{for (final x in selectable) x.itemNo};
 
     if (!context.mounted) return null;
 
@@ -195,7 +192,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                 ElevatedButton(
                   onPressed: () {
                     if (selected.isEmpty) {
-                      Navigator.pop(ctx); // nothing selected
+                      Navigator.pop(ctx);
                       return;
                     }
                     final list = selected.toList()..sort();
@@ -209,6 +206,120 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
         );
       },
     );
+  }
+
+  Future<void> _recordPaymentDialog(BuildContext context, Property p) async {
+    final station = (Session.currentStationName ?? '').trim();
+
+    if (station.isEmpty) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No station set for this user ❌')),
+      );
+      return;
+    }
+
+    final amountController = TextEditingController(
+      text: p.amountPaidTotal > 0 ? p.amountPaidTotal.toString() : '',
+    );
+    final txnRefController = TextEditingController(text: p.lastTxnRef);
+
+    String method = p.lastPaymentMethod.trim().isEmpty
+        ? 'cash'
+        : p.lastPaymentMethod.trim();
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogCtx) {
+        return StatefulBuilder(
+          builder: (dialogCtx, setDialogState) {
+            return AlertDialog(
+              title: const Text('Record Payment'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    TextField(
+                      controller: amountController,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(
+                        labelText: 'Amount',
+                        hintText: 'Enter amount paid',
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    DropdownButtonFormField<String>(
+                      value: method,
+                      items: const [
+                        DropdownMenuItem(value: 'cash', child: Text('Cash')),
+                        DropdownMenuItem(
+                          value: 'mobile money',
+                          child: Text('Mobile Money'),
+                        ),
+                        DropdownMenuItem(value: 'bank', child: Text('Bank')),
+                        DropdownMenuItem(value: 'other', child: Text('Other')),
+                      ],
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setDialogState(() => method = v);
+                      },
+                      decoration: const InputDecoration(labelText: 'Method'),
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: txnRefController,
+                      decoration: const InputDecoration(
+                        labelText: 'Transaction reference (optional)',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogCtx, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  onPressed: () => Navigator.pop(dialogCtx, true),
+                  child: const Text('Save'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!context.mounted || result != true) return;
+
+    final amount = int.tryParse(amountController.text.trim());
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter a valid amount')));
+      return;
+    }
+
+    try {
+      await PaymentService.recordPayment(
+        property: p,
+        amount: amount,
+        method: method,
+        txnRef: txnRefController.text.trim(),
+        station: station,
+      );
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payment recorded ✅')));
+    } catch (e) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
+    }
   }
 
   @override
@@ -252,8 +363,9 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
           final bg = PropertyStatusColors.background(p.status);
           final fg = PropertyStatusColors.foreground(p.status);
 
-          // Desk can load as long as property is still pending.
-          final canLoad = p.status == PropertyStatus.pending;
+          final canLoad =
+              p.status == PropertyStatus.pending ||
+              p.status == PropertyStatus.loaded;
 
           return FutureBuilder<void>(
             future: () async {
@@ -286,6 +398,16 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               final itemSvc = PropertyItemService(itemBox);
               final items = itemSvc.getItemsForProperty(p.key.toString());
 
+              final payments = PaymentService.getPaymentsForProperty(
+                p.key.toString(),
+              );
+              final isPaid = PaymentService.hasValidPaymentForProperty(
+                p.key.toString(),
+              );
+              final PaymentRecord? latestPayment = payments.isEmpty
+                  ? null
+                  : payments.first;
+
               final loadedNotAssigned = items
                   .where(
                     (x) =>
@@ -298,7 +420,8 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                   .where((x) => x.status == PropertyItemStatus.pending)
                   .length;
 
-              final canMarkLoadedNow = canLoad && remainingPending > 0;
+              final canMarkLoadedNow =
+                  isPaid && canLoad && remainingPending > 0;
 
               return ListView(
                 padding: const EdgeInsets.all(12),
@@ -332,8 +455,52 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                           Text('Phone: ${p.receiverPhone}'),
                           Text('Destination: ${p.destination}'),
                           Text('Items: ${p.itemCount}'),
-                          const SizedBox(height: 12),
 
+                          const SizedBox(height: 12),
+                          Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: isPaid
+                                  ? Colors.green.withValues(alpha: 0.08)
+                                  : Colors.orange.withValues(alpha: 0.10),
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: isPaid
+                                    ? Colors.green.withValues(alpha: 0.25)
+                                    : Colors.orange.withValues(alpha: 0.30),
+                              ),
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  isPaid
+                                      ? 'Payment: Recorded ✅'
+                                      : 'Payment: Not yet recorded',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w800,
+                                  ),
+                                ),
+                                const SizedBox(height: 6),
+                                Text(
+                                  'Amount paid total: '
+                                  '${p.currency.trim().isEmpty ? 'UGX' : p.currency} '
+                                  '${p.amountPaidTotal}',
+                                ),
+                                if (latestPayment != null) ...[
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Last payment: '
+                                    '${latestPayment.method.trim().isEmpty ? '—' : latestPayment.method.trim()}'
+                                    ' • ${_fmt16(latestPayment.createdAt)}',
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+
+                          const SizedBox(height: 12),
                           Container(
                             width: double.infinity,
                             padding: const EdgeInsets.all(12),
@@ -391,19 +558,42 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Mark Loaded (Desk) with selection
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.payments_outlined),
+                      label: Text(
+                        isPaid ? 'Payment Recorded ✅' : 'Record Payment',
+                      ),
+                      onPressed: () => _recordPaymentDialog(context, p),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
                       icon: const Icon(Icons.local_shipping),
                       label: Text(
-                        canMarkLoadedNow
+                        !isPaid
+                            ? 'Record Payment First'
+                            : canMarkLoadedNow
                             ? 'Mark Loaded (Select items)'
                             : (remainingPending == 0
                                   ? 'All items loaded ✅'
                                   : 'Cannot load now'),
                       ),
-                      onPressed: !canMarkLoadedNow
+                      onPressed: (!isPaid && remainingPending > 0)
+                          ? () {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Record payment first before loading cargo',
+                                  ),
+                                ),
+                              );
+                            }
+                          : !canMarkLoadedNow
                           ? null
                           : () async {
                               final ctx = context;
@@ -454,7 +644,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // Print item labels (thermal) for LOADED not assigned to a trip
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(

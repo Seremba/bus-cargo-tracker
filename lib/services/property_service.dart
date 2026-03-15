@@ -1,8 +1,10 @@
+import '../data/routes.dart';
 import '../data/routes_helpers.dart';
 import '../models/property.dart';
 import '../models/property_item_status.dart';
 import '../models/property_status.dart';
 import '../models/sync_event.dart';
+import '../models/sync_event_type.dart';
 import '../models/trip.dart';
 import '../models/user_role.dart';
 
@@ -10,6 +12,7 @@ import 'audit_service.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
 import 'outbound_message_service.dart';
+import 'payment_service.dart';
 import 'pickup_qr_service.dart';
 import 'property_item_service.dart';
 import 'receiver_tracking_service.dart';
@@ -474,6 +477,7 @@ class PropertyService {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
     final impliesLoaded =
+        fresh.status == PropertyStatus.loaded ||
         fresh.status == PropertyStatus.inTransit ||
         fresh.status == PropertyStatus.delivered ||
         fresh.status == PropertyStatus.pickedUp;
@@ -571,7 +575,7 @@ class PropertyService {
     final refreshed = box.get(fresh.key) ?? fresh;
     refreshed.deliveredAt ??= now;
     refreshed.inTransitAt ??= now;
-    refreshed.loadedAt ??= refreshed.inTransitAt;
+    refreshed.loadedAt ??= now;
     await refreshed.save();
 
     await SyncService.enqueuePropertyDelivered(
@@ -872,11 +876,22 @@ class PropertyService {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(p.key) ?? p;
 
-    if (fresh.status != PropertyStatus.pending) {
+    if (fresh.status != PropertyStatus.pending &&
+        fresh.status != PropertyStatus.loaded) {
       return;
     }
 
-    final route = findRouteById(fresh.routeId);
+    AppRoute? route = findRouteById(fresh.routeId);
+
+    if (route == null) {
+      final assigned = findRouteById(Session.currentAssignedRouteId);
+      if (assigned != null) {
+        route = assigned;
+        fresh.routeId = assigned.id;
+        fresh.routeName = assigned.name;
+      }
+    }
+
     if (route == null) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
@@ -900,20 +915,24 @@ class PropertyService {
 
     final itemBox = HiveService.propertyItemBox();
     final itemSvc = PropertyItemService(itemBox);
+    final propertyKey = fresh.key.toString();
 
     await itemSvc.ensureItemsForProperty(
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       trackingCode: fresh.trackingCode,
       itemCount: fresh.itemCount,
     );
 
-    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+    final itemsBefore = itemSvc.getItemsForProperty(propertyKey);
 
-    final hasLoaded = items.any(
-      (x) => x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
-    );
+    final readyToMove = itemsBefore
+        .where(
+          (x) =>
+              x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
+        )
+        .toList();
 
-    if (!hasLoaded) {
+    if (readyToMove.isEmpty) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
         title: 'No loaded items',
@@ -935,36 +954,112 @@ class PropertyService {
     }
 
     final now = DateTime.now();
-    Trip trip;
 
-    try {
-      trip = await TripService.ensureActiveTrip(
-        routeId: route.id,
-        routeName: route.name,
-        checkpoints: cps,
-      );
-    } catch (e, st) {
-      await AuditService.log(
-        action: 'trip_ensure_failed',
-        propertyKey: fresh.key.toString(),
-        details: 'ensureActiveTrip failed: $e\n$st',
-      );
-      await NotificationService.notify(
-        targetUserId: NotificationService.adminInbox,
-        title: 'Trip start failed',
-        message: 'Failed to start trip for route "${route.name}".\nError: $e',
-      );
-      return;
+    Trip? trip = TripService.getActiveTripForCurrentDriver(routeId: route.id);
+
+    if (trip == null) {
+      try {
+        trip = await TripService.ensureActiveTrip(
+          routeId: route.id,
+          routeName: route.name,
+          checkpoints: cps,
+        );
+      } catch (e, st) {
+        trip = TripService.getActiveTripForCurrentDriver(routeId: route.id);
+
+        if (trip == null) {
+          await AuditService.log(
+            action: 'trip_ensure_failed',
+            propertyKey: propertyKey,
+            details: 'ensureActiveTrip failed: $e\n$st',
+          );
+
+          await NotificationService.notify(
+            targetUserId: NotificationService.adminInbox,
+            title: 'Trip start failed',
+            message:
+                'Failed to start trip for route "${route.name}".\nError: $e',
+          );
+          return;
+        }
+      }
     }
 
     await itemSvc.onTripStartedMoveLoadedToInTransitForProperty(
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       tripId: trip.tripId,
       now: now,
     );
 
+    var refreshedItems = itemSvc.getItemsForProperty(propertyKey);
+    var movedCount = refreshedItems
+        .where(
+          (x) =>
+              x.tripId.trim() == trip!.tripId &&
+              x.status == PropertyItemStatus.inTransit,
+        )
+        .length;
+
+    if (movedCount == 0) {
+      for (final item in readyToMove) {
+        final live = HiveService.propertyItemBox().get(item.itemKey);
+        if (live == null) continue;
+
+        if (live.status == PropertyItemStatus.loaded &&
+            live.tripId.trim().isEmpty) {
+          live.tripId = trip.tripId;
+          live.status = PropertyItemStatus.inTransit;
+          live.inTransitAt = now;
+          await live.save();
+
+          try {
+            await SyncService.enqueueItemEvent(
+              type: SyncEventType.propertyItemInTransit,
+              itemId: live.itemKey,
+              actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+                  ? 'system'
+                  : (Session.currentUserId ?? '').trim(),
+              payload: {
+                'itemKey': live.itemKey,
+                'propertyKey': live.propertyKey,
+                'propertyCode': fresh.propertyCode,
+                'itemNo': live.itemNo,
+                'status': 'inTransit',
+                'tripId': live.tripId,
+                'labelCode': live.labelCode,
+                'loadedAt': live.loadedAt?.toIso8601String(),
+                'inTransitAt': live.inTransitAt?.toIso8601String(),
+                'deliveredAt': live.deliveredAt?.toIso8601String(),
+                'pickedUpAt': live.pickedUpAt?.toIso8601String(),
+                'eventAt': now.toIso8601String(),
+              },
+            );
+          } catch (_) {}
+        }
+      }
+
+      refreshedItems = itemSvc.getItemsForProperty(propertyKey);
+      movedCount = refreshedItems
+          .where(
+            (x) =>
+                x.tripId.trim() == trip!.tripId &&
+                x.status == PropertyItemStatus.inTransit,
+          )
+          .length;
+    }
+
+    if (movedCount == 0) {
+      await AuditService.log(
+        action: 'mark_in_transit_no_items_moved',
+        propertyKey: propertyKey,
+        details:
+            'Trip ${trip.tripId} created/found, but no loaded items moved to inTransit.',
+      );
+      return;
+    }
+
     final counts = itemSvc.computeTripCounts(
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       tripId: trip.tripId,
     );
 
@@ -977,24 +1072,33 @@ class PropertyService {
     fresh.aggregateVersion += 1;
     await fresh.save();
 
-    await SyncService.enqueuePropertyInTransit(
-      propertyId: fresh.propertyCode.trim(),
-      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
-          ? fresh.createdByUserId
-          : (Session.currentUserId ?? '').trim(),
-      aggregateVersion: fresh.aggregateVersion,
-      payload: {
-        'propertyCode': fresh.propertyCode,
-        'tripId': trip.tripId,
-        'routeId': fresh.routeId,
-        'routeName': fresh.routeName,
-        'inTransitAt': now.toIso8601String(),
-        'loadedForTrip': counts.loadedForTrip,
-        'remainingAtStation': counts.remainingAtStation,
-        'total': counts.total,
-        'aggregateVersion': fresh.aggregateVersion,
-      },
-    );
+    try {
+      await SyncService.enqueuePropertyInTransit(
+        propertyId: fresh.propertyCode.trim(),
+        actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+            ? fresh.createdByUserId
+            : (Session.currentUserId ?? '').trim(),
+        aggregateVersion: fresh.aggregateVersion,
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'tripId': trip.tripId,
+          'routeId': fresh.routeId,
+          'routeName': fresh.routeName,
+          'inTransitAt': now.toIso8601String(),
+          'loadedForTrip': counts.loadedForTrip,
+          'remainingAtStation': counts.remainingAtStation,
+          'total': counts.total,
+          'aggregateVersion': fresh.aggregateVersion,
+        },
+      );
+    } catch (e) {
+      await AuditService.log(
+        action: 'property_in_transit_sync_enqueue_failed',
+        propertyKey: propertyKey,
+        details:
+            'Local transition succeeded, but enqueuePropertyInTransit failed: $e',
+      );
+    }
 
     final msg =
         'Departed today: ${counts.loadedForTrip}/${counts.total}\n'
@@ -1069,6 +1173,7 @@ class PropertyService {
       now: inTransitAt,
     );
 
+    property.status = PropertyStatus.inTransit;
     property.tripId = tripId;
     if (routeId.isNotEmpty) property.routeId = routeId;
     if (routeName.isNotEmpty) property.routeName = routeName;
@@ -1078,6 +1183,16 @@ class PropertyService {
 
     await property.save();
     await itemSvc.recomputePropertyAggregate(property: property);
+
+    final refreshed = pBox.get(property.key) ?? property;
+    refreshed.status = PropertyStatus.inTransit;
+    refreshed.tripId = tripId;
+    if (routeId.isNotEmpty) refreshed.routeId = routeId;
+    if (routeName.isNotEmpty) refreshed.routeName = routeName;
+    refreshed.inTransitAt ??= inTransitAt;
+    refreshed.loadedAt ??= inTransitAt;
+    refreshed.aggregateVersion = incomingVersion;
+    await refreshed.save();
   }
 
   static Future<void> applyPropertyDeliveredFromSync(SyncEvent event) async {
@@ -1168,13 +1283,30 @@ class PropertyService {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(p.key) ?? p;
 
-    if (fresh.status != PropertyStatus.pending) return false;
+    if (fresh.status != PropertyStatus.pending &&
+        fresh.status != PropertyStatus.loaded) {
+      return false;
+    }
+
+    final propertyKey = fresh.key.toString();
+
+    final isPaid = PaymentService.hasValidPaymentForProperty(propertyKey);
+    if (!isPaid) {
+      await AuditService.log(
+        action: 'desk_mark_loaded_blocked_unpaid',
+        propertyKey: propertyKey,
+        details:
+            'Blocked loading because no valid payment exists for property '
+            '${fresh.propertyCode.trim().isEmpty ? propertyKey : fresh.propertyCode.trim()}',
+      );
+      return false;
+    }
 
     final itemBox = HiveService.propertyItemBox();
     final itemSvc = PropertyItemService(itemBox);
 
     await itemSvc.ensureItemsForProperty(
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       trackingCode: fresh.trackingCode,
       itemCount: fresh.itemCount,
     );
@@ -1188,7 +1320,7 @@ class PropertyService {
     final now = DateTime.now();
 
     await itemSvc.markSelectedItemsLoaded(
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       itemNos: selectedNos,
       now: now,
     );
@@ -1201,7 +1333,7 @@ class PropertyService {
 
     await itemSvc.recomputePropertyAggregate(property: fresh);
 
-    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+    final items = itemSvc.getItemsForProperty(propertyKey);
     final loadedCount = items
         .where((x) => x.status == PropertyItemStatus.loaded)
         .length;
@@ -1211,7 +1343,7 @@ class PropertyService {
 
     await AuditService.log(
       action: 'desk_mark_loaded_items',
-      propertyKey: fresh.key.toString(),
+      propertyKey: propertyKey,
       details:
           'Loaded items: ${selectedNos.join(",")} at station: ${fresh.loadedAtStation}',
     );
@@ -1224,7 +1356,7 @@ class PropertyService {
       aggregateVersion: fresh.aggregateVersion,
       payload: {
         'propertyCode': fresh.propertyCode,
-        'propertyKey': fresh.key.toString(),
+        'propertyKey': propertyKey,
         'itemNos': selectedNos,
         'loadedCount': loadedCount,
         'remainingCount': remainingCount,
@@ -1264,7 +1396,8 @@ class PropertyService {
     final fromStatus = fresh.status.name;
 
     if (newStatus == PropertyStatus.inTransit &&
-        fresh.status == PropertyStatus.pending) {
+        (fresh.status == PropertyStatus.pending ||
+            fresh.status == PropertyStatus.loaded)) {
       await markInTransit(fresh);
 
       final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
@@ -1597,7 +1730,10 @@ class PropertyService {
 
     final candidates = pBox.values.where((p) {
       if (p.routeId != route.id) return false;
-      if (p.status != PropertyStatus.pending) return false;
+      if (p.status != PropertyStatus.pending &&
+          p.status != PropertyStatus.loaded) {
+        return false;
+      }
       return true;
     }).toList();
 

@@ -25,10 +25,16 @@ class MyPropertiesScreen extends StatelessWidget {
     switch (status) {
       case PropertyStatus.pending:
         return '🟡 Pending';
+
+      case PropertyStatus.loaded:
+        return '🟠 Loaded';
+
       case PropertyStatus.inTransit:
         return '🔵 In Transit';
+
       case PropertyStatus.delivered:
         return '🟢 Delivered';
+
       case PropertyStatus.pickedUp:
         return '✅ Picked Up';
     }
@@ -63,10 +69,11 @@ class MyPropertiesScreen extends StatelessWidget {
           tripBox.listenable(),
         ]),
         builder: (context, _) {
-          final myItems = propertyBox.values
-              .where((p) => p.createdByUserId == userId)
-              .toList()
-            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          final myItems =
+              propertyBox.values
+                  .where((p) => p.createdByUserId == userId)
+                  .toList()
+                ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
           if (myItems.isEmpty) {
             return const Center(child: Text('No properties yet.'));
@@ -138,7 +145,9 @@ class MyPropertiesScreen extends StatelessWidget {
                   subtitle: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text('${property.destination} • ${property.receiverPhone}'),
+                      Text(
+                        '${property.destination} • ${property.receiverPhone}',
+                      ),
                       const SizedBox(height: 2),
                       Text(
                         'Items: ${property.itemCount} • Route: ${property.routeName.trim().isEmpty ? '—' : property.routeName}',

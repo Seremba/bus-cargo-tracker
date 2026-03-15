@@ -10,6 +10,29 @@ import 'sync_service.dart';
 class PaymentService {
   static String _id() => DateTime.now().millisecondsSinceEpoch.toString();
 
+  static List<PaymentRecord> getPaymentsForProperty(String propertyKey) {
+    final key = propertyKey.trim();
+    if (key.isEmpty) return const <PaymentRecord>[];
+
+    final payBox = HiveService.paymentBox();
+
+    final list = payBox.values
+        .where((x) => x.propertyKey.trim() == key)
+        .cast<PaymentRecord>()
+        .toList();
+
+    list.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    return list;
+  }
+
+  static bool hasValidPaymentForProperty(String propertyKey) {
+    final payments = getPaymentsForProperty(propertyKey);
+    if (payments.isEmpty) return false;
+
+    final total = payments.fold<int>(0, (sum, x) => sum + x.amount);
+    return total > 0;
+  }
+
   static Future<PaymentRecord> recordPayment({
     required Property property,
     required int amount,
@@ -87,7 +110,6 @@ class PaymentService {
     fresh.lastPaidAtStation = cleanStation;
     fresh.lastTxnRef = cleanTxnRef;
 
-    // payment changes property aggregate state
     fresh.aggregateVersion += 1;
 
     await fresh.save();

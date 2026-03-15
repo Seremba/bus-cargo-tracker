@@ -36,16 +36,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     switch (s) {
       case PropertyStatus.pending:
         return '🟡 Pending';
-
       case PropertyStatus.loaded:
         return '🟠 Loaded';
-
       case PropertyStatus.inTransit:
         return '🔵 In Transit';
-
       case PropertyStatus.delivered:
         return '🟢 Delivered';
-
       case PropertyStatus.pickedUp:
         return '✅ Picked Up';
     }
@@ -75,13 +71,14 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     final propertyBox = HiveService.propertyBox();
     final tripBox = HiveService.tripBox();
     final payBox = HiveService.paymentBox();
+    final userBox = HiveService.userBox();
 
     return AnimatedBuilder(
       animation: Listenable.merge([
         propertyBox.listenable(),
         tripBox.listenable(),
         payBox.listenable(),
-        HiveService.userBox().listenable(),
+        userBox.listenable(),
       ]),
       builder: (context, _) {
         final p = propertyBox.values.firstWhere(
@@ -136,7 +133,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 .toList()
               ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        //  Pickup QR payload
+        // Pickup QR payload
         final int? propertyKeyInt = (p.key is int)
             ? (p.key as int)
             : int.tryParse(p.key.toString());
@@ -158,7 +155,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             ? now.isAfter(expiresAt)
             : false;
 
-        // QR "ready" means: delivered + has nonce + issued + not consumed + payload
         final bool qrReadyForDisplay =
             p.status == PropertyStatus.delivered &&
             p.qrIssuedAt != null &&
@@ -166,12 +162,14 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             p.qrConsumedAt == null &&
             pickupQrPayload != null;
 
-        final loadedStation = (p.loadedAtStation).trim();
+        final loadedStation = p.loadedAtStation.trim();
+
+        // Resolve loadedBy userId → full name
         final loadedByRaw = p.loadedByUserId.trim();
-        final loadedByUser = HiveService.userBox().values
+        final loadedByUser = userBox.values
             .where((u) => u.id == loadedByRaw)
             .firstOrNull;
-        final loadedBy = loadedByUser?.fullName.trim().isNotEmpty == true
+        final loadedBy = (loadedByUser?.fullName.trim().isNotEmpty == true)
             ? loadedByUser!.fullName.trim()
             : loadedByRaw.isEmpty
             ? ''
@@ -256,6 +254,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                             Expanded(
                               child: Text('Property Code: ${p.propertyCode}'),
                             ),
+                            const SizedBox(width: 4),
                             IconButton(
                               tooltip: 'Copy code',
                               icon: const Icon(Icons.copy, size: 18),
@@ -280,10 +279,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         'Loaded at station: ${loadedStation.isEmpty ? '—' : loadedStation}',
                         style: const TextStyle(fontSize: 12),
                       ),
-                      Text(
-                        'Loaded by: ${loadedBy.isEmpty ? '—' : loadedBy}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
+                      // Only show "Loaded by" when we have something meaningful
+                      if (loadedBy.isNotEmpty)
+                        Text(
+                          'Loaded by: $loadedBy',
+                          style: const TextStyle(fontSize: 12),
+                        ),
                     ],
                   ),
                 ),
@@ -390,8 +391,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-
-                // CASE A: QR already consumed
                 if (p.qrConsumedAt != null)
                   Card(
                     child: Padding(
@@ -402,7 +401,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   )
-                // CASE B: QR not issued
                 else if (!qrReadyForDisplay)
                   const Card(
                     child: Padding(
@@ -412,7 +410,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   )
-                // CASE C: QR expired
                 else if (isQrExpired)
                   Card(
                     child: Padding(
@@ -453,9 +450,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                                     await PickupQrService.refreshForDelivered(
                                       p,
                                     );
-
                                 if (!context.mounted) return;
-
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
                                     content: Text(
@@ -472,7 +467,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   )
-                // CASE D: QR valid
                 else
                   Card(
                     child: Padding(
@@ -484,7 +478,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 10),
                           Center(
                             child: QrImageView(
-                              data: pickupQrPayload, // force non-null
+                              data: pickupQrPayload!,
                               version: QrVersions.auto,
                               size: 220,
                               gapless: false,
@@ -512,18 +506,15 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           SelectableText(
-                            pickupQrPayload, // ✅ force non-null
+                            pickupQrPayload!,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 10),
                           Align(
                             alignment: Alignment.centerLeft,
                             child: ElevatedButton.icon(
-                              onPressed: () => _copy(
-                                context,
-                                'Pickup QR',
-                                pickupQrPayload, // force non-null
-                              ),
+                              onPressed: () =>
+                                  _copy(context, 'Pickup QR', pickupQrPayload!),
                               icon: const Icon(Icons.copy, size: 18),
                               label: const Text('Copy payload'),
                             ),
@@ -532,13 +523,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   ),
-
                 const SizedBox(height: 12),
               ],
 
-              // =========================
-              // Payment
-              // =========================
               const Text(
                 'Payment',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -553,34 +540,37 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   ),
                 )
               else ...[
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Total Paid: ${_money(currency, paidTotal)}',
-                          style: const TextStyle(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          'Method: ${p.lastPaymentMethod.trim().isEmpty ? '—' : p.lastPaymentMethod.trim()}',
-                        ),
-                        Text(
-                          'Station: ${p.lastPaidAtStation.trim().isEmpty ? '—' : p.lastPaidAtStation.trim()}',
-                        ),
-                        Text(
-                          'TxnRef: ${p.lastTxnRef.trim().isEmpty ? '—' : p.lastTxnRef.trim()}',
-                        ),
-                        Text(
-                          'Last Paid At: ${_fmt16(p.lastPaidAt)}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ],
+                // Show summary only when there is no history to avoid redundancy,
+                // or when history has more than one entry (summary is then useful).
+                if (payments.length != 1)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Total Paid: ${_money(currency, paidTotal)}',
+                            style: const TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            'Method: ${p.lastPaymentMethod.trim().isEmpty ? '—' : p.lastPaymentMethod.trim()}',
+                          ),
+                          Text(
+                            'Station: ${p.lastPaidAtStation.trim().isEmpty ? '—' : p.lastPaidAtStation.trim()}',
+                          ),
+                          Text(
+                            'TxnRef: ${p.lastTxnRef.trim().isEmpty ? '—' : p.lastTxnRef.trim()}',
+                          ),
+                          Text(
+                            'Last Paid At: ${_fmt16(p.lastPaidAt)}',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
                     ),
                   ),
-                ),
                 const SizedBox(height: 10),
                 if (payments.isNotEmpty) ...[
                   const Text(
@@ -590,18 +580,41 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   const SizedBox(height: 6),
                   for (final x in payments)
                     Card(
-                      child: ListTile(
-                        title: Text(
-                          '${x.currency} ${x.amount} • ${x.method.trim().isEmpty ? '—' : x.method}',
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
                         ),
-                        subtitle: Text(
-                          'Station: ${x.station.trim().isEmpty ? '—' : x.station}\n'
-                          'TxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                        trailing: Text(
-                          _fmt16(x.createdAt),
-                          style: const TextStyle(fontSize: 12),
+                        child: Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '${x.currency} ${x.amount}  •  ${x.method.trim().isEmpty ? '—' : x.method}',
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Station: ${x.station.trim().isEmpty ? '—' : x.station}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  Text(
+                                    'TxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Text(
+                              _fmt16(x.createdAt),
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
                         ),
                       ),
                     ),
@@ -610,9 +623,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // =========================
-              // Timeline (PATCHED)
-              // =========================
               const Text(
                 'Timeline',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -622,10 +632,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 child: Column(
                   children: [
                     _timelineRow('Pending', p.createdAt, true),
-
-                    // ✅ Loaded is implied by later statuses
                     _timelineRow('Loaded', p.loadedAt, loadedDone),
-
                     _timelineRow(
                       'In Transit',
                       p.inTransitAt,
@@ -641,9 +648,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       p.pickedUpAt,
                       p.pickedUpAt != null,
                     ),
+                    const SizedBox(height: 8),
                   ],
                 ),
               ),
+
+              const SizedBox(height: 24),
             ],
           ),
         );
@@ -654,9 +664,15 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
   static Widget _timelineRow(String label, DateTime? at, bool done) {
     return ListTile(
       dense: true,
-      leading: Icon(done ? Icons.check_circle : Icons.radio_button_unchecked),
+      leading: Icon(
+        done ? Icons.check_circle : Icons.radio_button_unchecked,
+        color: done ? Colors.green : Colors.grey,
+      ),
       title: Text(label),
-      subtitle: Text(_fmt16(at)),
+      // Hide subtitle entirely when there is no date — avoids the empty "—" rows
+      subtitle: at != null
+          ? Text(_fmt16(at), style: const TextStyle(fontSize: 12))
+          : null,
     );
   }
 }

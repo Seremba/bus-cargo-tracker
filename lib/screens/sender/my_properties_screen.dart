@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
@@ -17,37 +18,78 @@ class MyPropertiesScreen extends StatelessWidget {
   }
 
   static String _money(String currency, int amount) {
-    // simple formatting; later we can add commas
     return '$currency $amount';
   }
 
-  static String _statusText(PropertyStatus status) {
+  // Returns (emoji, label, background, foreground) for each status
+  static ({String emoji, String label, Color bg, Color fg}) _statusStyle(
+    PropertyStatus status,
+  ) {
     switch (status) {
       case PropertyStatus.pending:
-        return '🟡 Pending';
-
+        return (
+          emoji: '🟡',
+          label: 'Pending',
+          bg: const Color(0xFFFFF8E1),
+          fg: const Color(0xFFF57F17),
+        );
       case PropertyStatus.loaded:
-        return '🟠 Loaded';
-
+        return (
+          emoji: '🟠',
+          label: 'Loaded',
+          bg: const Color(0xFFFFF3E0),
+          fg: const Color(0xFFE65100),
+        );
       case PropertyStatus.inTransit:
-        return '🔵 In Transit';
-
+        return (
+          emoji: '🔵',
+          label: 'In Transit',
+          bg: const Color(0xFFE3F2FD),
+          fg: const Color(0xFF1565C0),
+        );
       case PropertyStatus.delivered:
-        return '🟢 Delivered';
-
+        return (
+          emoji: '🟢',
+          label: 'Delivered',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF2E7D32),
+        );
       case PropertyStatus.pickedUp:
-        return '✅ Picked Up';
+        return (
+          emoji: '✅',
+          label: 'Picked Up',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF1B5E20),
+        );
     }
   }
 
-  static String _tripStatusText(TripStatus status) {
-    switch (status) {
+  static String _tripLine(Property property, Trip? trip) {
+    final tripId = property.tripId;
+    if (tripId == null || tripId.trim().isEmpty) {
+      return 'Awaiting departure';
+    }
+    if (trip == null) return 'Trip: Loading...';
+
+    final i = trip.lastCheckpointIndex;
+    String last;
+    if (trip.checkpoints.isEmpty) {
+      last = 'No checkpoints configured';
+    } else if (i < 0) {
+      last = 'Departed — no checkpoint yet';
+    } else if (i < trip.checkpoints.length) {
+      last = trip.checkpoints[i].name;
+    } else {
+      last = 'Completed';
+    }
+
+    switch (trip.status) {
       case TripStatus.active:
-        return '🟢 Active';
+        return 'En route • Last: $last';
       case TripStatus.ended:
-        return '✅ Ended';
+        return 'Trip ended • Last: $last';
       case TripStatus.cancelled:
-        return '⛔ Cancelled';
+        return 'Trip cancelled';
     }
   }
 
@@ -65,7 +107,7 @@ class MyPropertiesScreen extends StatelessWidget {
       ),
       body: AnimatedBuilder(
         animation: Listenable.merge([
-          propertyBox.listenable(), // ✅ works because hive_flutter is imported
+          propertyBox.listenable(),
           tripBox.listenable(),
         ]),
         builder: (context, _) {
@@ -80,58 +122,37 @@ class MyPropertiesScreen extends StatelessWidget {
           }
 
           return ListView.builder(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             itemCount: myItems.length,
             itemBuilder: (context, index) {
               final property = myItems[index];
+              final style = _statusStyle(property.status);
 
-              final String tripInfo = () {
-                final tripId = property.tripId;
-                if (tripId == null || tripId.trim().isEmpty) {
-                  return 'Trip: Not started yet';
-                }
-
-                Trip? trip;
+              Trip? trip;
+              final tripId = property.tripId;
+              if (tripId != null && tripId.trim().isNotEmpty) {
                 try {
                   trip = tripBox.values.firstWhere((t) => t.tripId == tripId);
                 } catch (_) {
                   trip = null;
                 }
+              }
 
-                if (trip == null) return 'Trip: Loading...';
+              final tripInfo = _tripLine(property, trip);
 
-                final i = trip.lastCheckpointIndex;
-
-                String last;
-                if (trip.checkpoints.isEmpty) {
-                  last = 'No checkpoints configured';
-                } else if (i < 0) {
-                  last = 'Not started yet';
-                } else if (i < trip.checkpoints.length) {
-                  last = trip.checkpoints[i].name;
-                } else {
-                  last = 'Completed';
-                }
-
-                var info =
-                    'Trip: ${_tripStatusText(trip.status)} • Last checkpoint: $last';
-                if (trip.endedAt != null) {
-                  info = '$info • Ended: ${_fmt16(trip.endedAt)}';
-                }
-                return info;
-              }();
-
-              // ✅ Payment summary line
               final paid = property.amountPaidTotal;
               final currency = property.currency.trim().isEmpty
                   ? 'UGX'
                   : property.currency.trim();
-              final paymentLine = paid <= 0
-                  ? 'Payment: —'
-                  : 'Paid: ${_money(currency, paid)} • Last: ${_fmt16(property.lastPaidAt)}';
+
+              final muted = Theme.of(
+                context,
+              ).colorScheme.onSurface.withValues(alpha: 0.55);
 
               return Card(
-                margin: const EdgeInsets.all(8),
-                child: ListTile(
+                margin: const EdgeInsets.only(bottom: 10),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(12),
                   onTap: () {
                     Navigator.push(
                       context,
@@ -141,32 +162,156 @@ class MyPropertiesScreen extends StatelessWidget {
                       ),
                     );
                   },
-                  title: Text(property.receiverName),
-                  subtitle: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '${property.destination} • ${property.receiverPhone}',
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        'Items: ${property.itemCount} • Route: ${property.routeName.trim().isEmpty ? '—' : property.routeName}',
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        _statusText(property.status),
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(tripInfo, style: const TextStyle(fontSize: 12)),
-                      const SizedBox(height: 4),
-                      Text(paymentLine, style: const TextStyle(fontSize: 12)),
-                    ],
-                  ),
-                  trailing: Text(
-                    _fmt16(property.createdAt),
-                    style: const TextStyle(fontSize: 12),
+                  child: Padding(
+                    padding: const EdgeInsets.all(14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // ── Row 1: name + status chip ──────────────────
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                property.receiverName,
+                                style: const TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: style.bg,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                '${style.emoji}  ${style.label}',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: style.fg,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // ── Row 2: destination (prominent) ─────────────
+                        Text(
+                          '📍 ${property.destination}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        // ── Row 3: phone ───────────────────────────────
+                        Text(
+                          '📞 ${property.receiverPhone}',
+                          style: TextStyle(fontSize: 12, color: muted),
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        // ── Row 4: items + route (no wrapping) ─────────
+                        Text(
+                          '${property.itemCount} item${property.itemCount == 1 ? '' : 's'}  •  ${property.routeName.trim().isEmpty ? 'No route' : property.routeName}',
+                          style: TextStyle(fontSize: 12, color: muted),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+
+                        const SizedBox(height: 8),
+                        Divider(height: 1, color: Colors.grey.shade200),
+                        const SizedBox(height: 8),
+
+                        // ── Row 5: trip info ───────────────────────────
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.directions_bus_outlined,
+                              size: 14,
+                              color: muted,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                tripInfo,
+                                style: TextStyle(fontSize: 12, color: muted),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 4),
+
+                        // ── Row 6: payment ─────────────────────────────
+                        Row(
+                          children: [
+                            Icon(
+                              Icons.payments_outlined,
+                              size: 14,
+                              color: muted,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: paid <= 0
+                                  ? Text(
+                                      'No payment recorded',
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        color: muted,
+                                      ),
+                                    )
+                                  : Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'Paid: ${_money(currency, paid)}',
+                                          style: TextStyle(
+                                            fontSize: 12,
+                                            color: muted,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        Text(
+                                          'Last paid: ${_fmt16(property.lastPaidAt)}',
+                                          style: TextStyle(
+                                            fontSize: 11,
+                                            color: muted,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // ── Row 7: created date (labelled, bottom-right)
+                        Align(
+                          alignment: Alignment.bottomRight,
+                          child: Text(
+                            'Created: ${_fmt16(property.createdAt)}',
+                            style: TextStyle(fontSize: 11, color: muted),
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               );

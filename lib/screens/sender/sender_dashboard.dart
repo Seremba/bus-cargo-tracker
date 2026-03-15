@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
+import '../../models/property_status.dart';
 import '../../models/notification_item.dart';
 
 import '../../services/hive_service.dart';
@@ -15,17 +16,57 @@ import 'my_properties_screen.dart';
 class SenderDashboard extends StatelessWidget {
   const SenderDashboard({super.key});
 
-  static const int _recentLimit = 3; // ✅ set to 4 if you prefer
+  static const int _recentLimit = 3;
 
   String _name() {
     final t = (Session.currentUserFullName ?? '').trim();
     return t.isEmpty ? 'Sender' : t;
   }
 
-  String _statusText(Property p) {
-    final raw = p.status.toString();
-    final s = raw.contains('.') ? raw.split('.').last : raw;
-    return s.trim().isEmpty ? '—' : s.trim();
+  // Returns initials from a full name, e.g. "Seremba Patrick" → "SP"
+  static String _initials(String name) {
+    final parts = name.trim().split(RegExp(r'\s+'));
+    if (parts.isEmpty) return '?';
+    if (parts.length == 1) return parts[0][0].toUpperCase();
+    return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
+  }
+
+  // Returns (label, background, foreground) for each status
+  static ({String label, Color bg, Color fg}) _statusStyle(
+    PropertyStatus status,
+  ) {
+    switch (status) {
+      case PropertyStatus.pending:
+        return (
+          label: 'Pending',
+          bg: const Color(0xFFFFF8E1),
+          fg: const Color(0xFFF57F17),
+        );
+      case PropertyStatus.loaded:
+        return (
+          label: 'Loaded',
+          bg: const Color(0xFFFFF3E0),
+          fg: const Color(0xFFE65100),
+        );
+      case PropertyStatus.inTransit:
+        return (
+          label: 'In Transit',
+          bg: const Color(0xFFE3F2FD),
+          fg: const Color(0xFF1565C0),
+        );
+      case PropertyStatus.delivered:
+        return (
+          label: 'Delivered',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF2E7D32),
+        );
+      case PropertyStatus.pickedUp:
+        return (
+          label: 'Picked Up',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF1B5E20),
+        );
+    }
   }
 
   @override
@@ -45,7 +86,7 @@ class SenderDashboard extends StatelessWidget {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                userName, // ✅ Name first, bigger
+                userName,
                 style: const TextStyle(
                   fontSize: 22,
                   fontWeight: FontWeight.w900,
@@ -124,32 +165,35 @@ class SenderDashboard extends StatelessWidget {
         body: ValueListenableBuilder(
           valueListenable: HiveService.propertyBox().listenable(),
           builder: (context, Box<Property> box, _) {
-            final muted = Theme.of(
-              context,
-            ).colorScheme.onSurface.withValues(alpha: 0.65);
-
+            final muted = cs.onSurface.withValues(alpha: 0.65);
             final userId = (Session.currentUserId ?? '').trim();
 
             final myProps =
                 userId.isEmpty
-                      ? <Property>[]
-                      : box.values.where((p) {
-                          final createdBy = (p.createdByUserId ?? '').trim();
-                          return createdBy == userId;
-                        }).toList()
-                  ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                    ? <Property>[]
+                    : box.values
+                          .where((p) => p.createdByUserId.trim() == userId)
+                          .toList()
+                      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
             final recent = myProps.take(_recentLimit).toList();
+
+            // Count active shipments (pending, loaded, inTransit)
+            final activeCount = myProps.where((p) {
+              return p.status == PropertyStatus.pending ||
+                  p.status == PropertyStatus.loaded ||
+                  p.status == PropertyStatus.inTransit;
+            }).length;
+
+            final totalCount = myProps.length;
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               children: [
-                // ✅ Keep welcome card but make it lighter + smaller
-                _welcomeCard(context, userName),
+                _welcomeCard(context, userName, activeCount),
 
                 const SizedBox(height: 14),
 
-                // ✅ Primary action (kept “nice”)
                 _actionCard(
                   context,
                   title: 'Register Property',
@@ -168,11 +212,12 @@ class SenderDashboard extends StatelessWidget {
 
                 const SizedBox(height: 12),
 
-                // ✅ Secondary action (calmer)
                 _actionCard(
                   context,
                   title: 'My Properties',
-                  subtitle: 'Track status, payments, and QR',
+                  subtitle: totalCount == 0
+                      ? 'Track status, payments, and QR'
+                      : '$totalCount propert${totalCount == 1 ? 'y' : 'ies'} • tap to view all',
                   icon: Icons.inventory_2_outlined,
                   filled: false,
                   onTap: () {
@@ -185,9 +230,8 @@ class SenderDashboard extends StatelessWidget {
                   },
                 ),
 
-                const SizedBox(height: 18),
+                const SizedBox(height: 22),
 
-                // Recent header
                 Row(
                   children: [
                     const Expanded(
@@ -217,15 +261,14 @@ class SenderDashboard extends StatelessWidget {
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
                     child: Text(
-                      'No properties yet. Tap “Register Property” to start.',
+                      'No properties yet. Tap "Register Property" to start.',
                       style: TextStyle(color: muted),
                     ),
                   ),
 
                 const SizedBox(height: 6),
 
-                // ✅ Recent tiles (still nice, but less heavy)
-                for (final p in recent) _recentTile(context, p, _statusText),
+                for (final p in recent) _recentTile(context, p),
               ],
             );
           },
@@ -234,31 +277,45 @@ class SenderDashboard extends StatelessWidget {
     );
   }
 
-  static Widget _welcomeCard(BuildContext context, String userName) {
+  static Widget _welcomeCard(
+    BuildContext context,
+    String userName,
+    int activeCount,
+  ) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
+    final initials = _initials(userName);
 
     return Container(
-      padding: const EdgeInsets.all(14), // ✅ slightly smaller
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.35), // ✅ lighter
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: cs.outlineVariant.withValues(alpha: 0.50), // ✅ soft border
+          color: cs.outlineVariant.withValues(alpha: 0.50),
         ),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // smaller icon block
+          // Initials avatar
           Container(
-            width: 40,
-            height: 40,
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: cs.primary.withValues(alpha: 0.10),
+              color: cs.primary,
               borderRadius: BorderRadius.circular(14),
             ),
-            child: Icon(Icons.person, color: cs.primary),
+            alignment: Alignment.center,
+            child: Text(
+              initials,
+              style: TextStyle(
+                color: cs.onPrimary,
+                fontSize: 16,
+                fontWeight: FontWeight.w900,
+                letterSpacing: 1,
+              ),
+            ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -275,10 +332,21 @@ class SenderDashboard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  'Register cargo and keep track of your properties.',
-                  style: TextStyle(color: muted),
-                ),
+                // Active shipments count — shown only when > 0
+                if (activeCount > 0)
+                  Text(
+                    '$activeCount active shipment${activeCount == 1 ? '' : 's'} in progress',
+                    style: TextStyle(
+                      color: cs.primary,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  )
+                else
+                  Text(
+                    'Register cargo and keep track of your properties.',
+                    style: TextStyle(color: muted),
+                  ),
               ],
             ),
           ),
@@ -310,7 +378,6 @@ class SenderDashboard extends StatelessWidget {
         borderRadius: BorderRadius.circular(18),
         onTap: onTap,
         child: Container(
-          // ✅ add soft outline for secondary card (makes it “nice” but calm)
           decoration: filled
               ? null
               : BoxDecoration(
@@ -337,7 +404,7 @@ class SenderDashboard extends StatelessWidget {
                       ),
                     ),
                     const SizedBox(height: 2),
-                    Text(subtitle, style: TextStyle(color: sub)),
+                    Text(subtitle, style: TextStyle(color: sub, fontSize: 13)),
                   ],
                 ),
               ),
@@ -349,32 +416,21 @@ class SenderDashboard extends StatelessWidget {
     );
   }
 
-  static Widget _recentTile(
-    BuildContext context,
-    Property p,
-    String Function(Property) statusTextFn,
-  ) {
+  static Widget _recentTile(BuildContext context, Property p) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
 
-    final receiver = (p.receiverName ?? '').trim().isEmpty
-        ? 'Receiver'
-        : p.receiverName!.trim();
-
-    final route = (p.routeName ?? '').trim().isEmpty
-        ? '—'
-        : p.routeName!.trim();
-
-    final code = (p.propertyCode ?? '').trim();
-    final codeText = code.isEmpty ? '—' : code;
+    final receiver = p.receiverName.trim().isEmpty ? 'Receiver' : p.receiverName.trim();
+    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
+    final destination = p.destination.trim().isEmpty ? '—' : p.destination.trim();
+    final code = p.propertyCode.trim().isEmpty ? '—' : p.propertyCode.trim();
     final itemCount = p.itemCount < 0 ? 0 : p.itemCount;
-
-    final status = statusTextFn(p);
+    final style = _statusStyle(p.status);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.28), // ✅ lighter
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.28),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.55)),
       ),
@@ -383,40 +439,65 @@ class SenderDashboard extends StatelessWidget {
           horizontal: 14,
           vertical: 10,
         ),
-        title: Text(
-          receiver,
-          style: const TextStyle(fontWeight: FontWeight.w900),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                receiver,
+                style: const TextStyle(fontWeight: FontWeight.w900),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            const SizedBox(width: 8),
+            // Consistent colored pill chip — matches MyPropertiesScreen
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: style.bg,
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: Text(
+                style.label,
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: style.fg,
+                ),
+              ),
+            ),
+          ],
         ),
         subtitle: Padding(
-          padding: const EdgeInsets.only(top: 4),
+          padding: const EdgeInsets.only(top: 6),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // Destination — most useful info at a glance
               Text(
-                '$codeText • Items: $itemCount',
+                '📍 $destination',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 3),
+              Text(
+                '$code  •  ${itemCount} item${itemCount == 1 ? '' : 's'}',
                 style: TextStyle(color: muted, fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 2),
               Text(
                 'Route: $route',
                 style: TextStyle(color: muted, fontSize: 12),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
             ],
-          ),
-        ),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: cs.primary.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Text(
-            status,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w900,
-              color: cs.primary,
-            ),
           ),
         ),
       ),

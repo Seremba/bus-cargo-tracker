@@ -22,13 +22,19 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
   final receiverPhoneController = TextEditingController();
   final descriptionController = TextEditingController();
   final destinationController = TextEditingController();
-  final itemCountController = TextEditingController(text: '1');
+
+  // Item count is managed as an int directly — no text controller needed
+  int _itemCount = 1;
 
   bool _saving = false;
   AutovalidateMode _autoValidate = AutovalidateMode.disabled;
 
-  List<RouteMatch> get _routeMatches =>
-      findRoutesByDestination(destinationController.text);
+  // Only compute route matches when destination is non-empty
+  List<RouteMatch> get _routeMatches {
+    final dest = destinationController.text.trim();
+    if (dest.isEmpty) return [];
+    return findRoutesByDestination(dest);
+  }
 
   RouteMatch? get _singleMatch =>
       _routeMatches.length == 1 ? _routeMatches.first : null;
@@ -50,7 +56,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     receiverPhoneController.dispose();
     descriptionController.dispose();
     destinationController.dispose();
-    itemCountController.dispose();
     super.dispose();
   }
 
@@ -59,30 +64,44 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     receiverPhoneController.clear();
     descriptionController.clear();
     destinationController.clear();
-    itemCountController.text = '1';
+    setState(() => _itemCount = 1);
+  }
+
+  void _incrementCount() {
+    if (_itemCount < 999) setState(() => _itemCount++);
+  }
+
+  void _decrementCount() {
+    if (_itemCount > 1) setState(() => _itemCount--);
   }
 
   InputDecoration _dec({
     required String label,
     required IconData icon,
     String? hint,
+    String? helper,
   }) {
     return InputDecoration(
       labelText: label,
       hintText: hint,
+      helperText: helper,
       border: const OutlineInputBorder(),
       prefixIcon: Icon(icon),
     );
   }
 
-  Widget _section(String title) {
+  Widget _sectionHeader(String title) {
     return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 8),
+      padding: const EdgeInsets.only(top: 8, bottom: 10),
       child: Text(
         title,
         style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
       ),
     );
+  }
+
+  Widget _sectionDivider() {
+    return const Divider(height: 28, thickness: 1);
   }
 
   Future<void> _submit() async {
@@ -94,30 +113,19 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
     final actorUserId = (Session.currentUserId ?? '').trim();
     if (actorUserId.isEmpty) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Session expired. Please login again.')),
-      );
+      _showSnack('Session expired. Please login again.');
       return;
     }
 
     final matches = _routeMatches;
     if (matches.isEmpty) {
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('No valid transport route found for this destination.'),
-        ),
-      );
+      _showSnack('No valid transport route found for this destination.');
       return;
     }
 
     setState(() => _saving = true);
 
     try {
-      final count = int.parse(itemCountController.text.trim());
-
       final bool routeConfirmed = matches.length == 1;
       final String routeId = routeConfirmed ? matches.first.route.id : '';
       final String routeName = routeConfirmed ? matches.first.route.name : '';
@@ -127,7 +135,7 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         receiverPhone: receiverPhoneController.text,
         description: descriptionController.text,
         destination: destinationController.text,
-        itemCount: count,
+        itemCount: _itemCount,
         createdByUserId: actorUserId,
         routeId: routeId,
         routeName: routeName,
@@ -136,15 +144,11 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
 
       if (!mounted) return;
 
-      final propertyCode = property.propertyCode;
-
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).hideCurrentSnackBar();
-
       await Navigator.push<bool>(
         context,
         MaterialPageRoute(
-          builder: (_) => PropertyQrDisplayScreen(propertyCode: propertyCode),
+          builder: (_) =>
+              PropertyQrDisplayScreen(propertyCode: property.propertyCode),
         ),
       );
 
@@ -158,37 +162,38 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       );
     } on FormatException {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid number of items.')),
-      );
+      _showSnack('Enter a valid number of items.');
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).clearSnackBars();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to register property: $e')),
-      );
+      _showSnack('Failed to register property: $e');
     } finally {
-      if (mounted) {
-        setState(() => _saving = false);
-      }
+      if (mounted) setState(() => _saving = false);
     }
+  }
+
+  void _showSnack(String message) {
+    ScaffoldMessenger.of(context).clearSnackBars();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final matches = _routeMatches;
-    final singleMatch = _singleMatch;
+    final destTyped = destinationController.text.trim().isNotEmpty;
 
-    String routeMessage;
-    if (matches.isEmpty) {
-      routeMessage = 'No matching operational route found yet';
-    } else if (matches.length == 1) {
-      routeMessage = singleMatch!.route.name;
-    } else {
-      routeMessage =
-          'Multiple operational routes match this destination. Desk officer will confirm the route.';
-    }
+    // Route resolution card state
+    final bool routeFound = matches.isNotEmpty;
+    final bool routeAmbiguous = matches.length > 1;
+    final String routeMessage = !destTyped
+        ? ''
+        : matches.isEmpty
+            ? 'No matching operational route found'
+            : matches.length == 1
+                ? matches.first.route.name
+                : 'Multiple routes match — desk officer will confirm';
 
     return Scaffold(
       appBar: AppBar(
@@ -196,19 +201,53 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
         elevation: 2,
         title: const Text('Register Property'),
       ),
+      // ── Pinned Submit button at the bottom ──────────────────────────────
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+            ),
+            onPressed: _saving ? null : _submit,
+            child: _saving
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Text(
+                    'Submit',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+          ),
+        ),
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Form(
           key: _formKey,
           autovalidateMode: _autoValidate,
           child: ListView(
             children: [
-              _section('Receiver'),
+              const SizedBox(height: 8),
+
+              // ── Receiver section ────────────────────────────────────────
+              _sectionHeader('Receiver'),
               TextFormField(
                 controller: receiverNameController,
                 textInputAction: TextInputAction.next,
-                decoration: _dec(label: 'Receiver Name', icon: Icons.person),
-                validator: (value) => (value == null || value.trim().isEmpty)
+                decoration: _dec(
+                  label: 'Receiver Name',
+                  icon: Icons.person_outline,
+                ),
+                validator: (v) => (v == null || v.trim().isEmpty)
                     ? 'Receiver name required'
                     : null,
               ),
@@ -223,53 +262,83 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                 ],
                 decoration: _dec(
                   label: 'Receiver Phone',
-                  icon: Icons.phone,
+                  icon: Icons.phone_outlined,
                   hint: 'e.g. 0700000000',
                 ),
-                validator: (value) {
-                  final v = value?.trim() ?? '';
-                  if (v.isEmpty) return 'Phone required';
-                  if (v.length < 9) return 'Enter a valid phone';
+                validator: (v) {
+                  final s = v?.trim() ?? '';
+                  if (s.isEmpty) return 'Phone required';
+                  if (s.length < 9) return 'Enter a valid phone number';
                   return null;
                 },
               ),
-              const SizedBox(height: 16),
-              _section('Property'),
+
+              _sectionDivider(),
+
+              // ── Property section ────────────────────────────────────────
+              _sectionHeader('Property'),
               TextFormField(
                 controller: descriptionController,
                 textInputAction: TextInputAction.next,
                 decoration: _dec(
                   label: 'Item Description',
                   icon: Icons.inventory_2_outlined,
+                  hint: 'e.g. Electronics, Clothes, Documents',
                 ),
-                validator: (value) => (value == null || value.trim().isEmpty)
+                validator: (v) => (v == null || v.trim().isEmpty)
                     ? 'Description required'
                     : null,
               ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: itemCountController,
-                keyboardType: TextInputType.number,
-                textInputAction: TextInputAction.next,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(3),
+              const SizedBox(height: 14),
+
+              // ── Item count stepper ──────────────────────────────────────
+              Row(
+                children: [
+                  const Icon(
+                    Icons.format_list_numbered,
+                    size: 22,
+                    color: Colors.grey,
+                  ),
+                  const SizedBox(width: 12),
+                  const Text(
+                    'Number of Items',
+                    style: TextStyle(fontSize: 15),
+                  ),
+                  const Spacer(),
+                  // Decrement
+                  _stepperButton(
+                    icon: Icons.remove,
+                    onTap: _decrementCount,
+                    enabled: _itemCount > 1,
+                    cs: cs,
+                  ),
+                  const SizedBox(width: 12),
+                  // Count display
+                  SizedBox(
+                    width: 36,
+                    child: Text(
+                      '$_itemCount',
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  // Increment
+                  _stepperButton(
+                    icon: Icons.add,
+                    onTap: _incrementCount,
+                    enabled: _itemCount < 999,
+                    cs: cs,
+                  ),
                 ],
-                decoration: _dec(
-                  label: 'Number of Items',
-                  icon: Icons.format_list_numbered,
-                ),
-                validator: (value) {
-                  final t = value?.trim() ?? '';
-                  if (t.isEmpty) return 'Number of items required';
-                  final n = int.tryParse(t);
-                  if (n == null) return 'Enter a valid number';
-                  if (n < 1) return 'Must be at least 1';
-                  if (n > 999) return 'Too many items';
-                  return null;
-                },
               ),
-              const SizedBox(height: 12),
+
+              const SizedBox(height: 14),
+
+              // ── Destination with autocomplete ───────────────────────────
               Autocomplete<String>(
                 optionsBuilder: (TextEditingValue textEditingValue) {
                   return searchCheckpointNames(
@@ -304,43 +373,138 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
                     decoration: _dec(
                       label: 'Destination',
                       icon: Icons.location_on_outlined,
-                      hint: 'Start typing destination...',
+                      hint: 'e.g. Bumala, Juba, Nairobi',
+                      helper: 'Type the destination town or station name',
                     ),
                     onChanged: (v) {
                       destinationController.text = v;
                       setState(() {});
                     },
-                    validator: (value) {
-                      final v = value?.trim() ?? '';
-                      if (v.isEmpty) return 'Destination required';
-
-                      if (findRoutesByDestination(v).isEmpty) {
+                    validator: (v) {
+                      final s = v?.trim() ?? '';
+                      if (s.isEmpty) return 'Destination required';
+                      if (findRoutesByDestination(s).isEmpty) {
                         return 'No transport route configured for this destination';
                       }
-
                       return null;
                     },
                   );
                 },
               ),
-              const SizedBox(height: 12),
-              Card(
-                child: ListTile(
-                  leading: const Icon(Icons.route),
-                  title: const Text('Route Resolution'),
-                  subtitle: Text(routeMessage),
+
+              // ── Route resolution card — only shown after typing ─────────
+              if (destTyped) ...[
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    color: !routeFound
+                        ? cs.errorContainer.withValues(alpha: 0.45)
+                        : routeAmbiguous
+                            ? const Color(0xFFFFF8E1)
+                            : cs.primaryContainer.withValues(alpha: 0.45),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: !routeFound
+                          ? cs.error.withValues(alpha: 0.35)
+                          : routeAmbiguous
+                              ? const Color(0xFFF57F17).withValues(alpha: 0.35)
+                              : cs.primary.withValues(alpha: 0.35),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        !routeFound
+                            ? Icons.error_outline
+                            : routeAmbiguous
+                                ? Icons.alt_route
+                                : Icons.check_circle_outline,
+                        size: 20,
+                        color: !routeFound
+                            ? cs.error
+                            : routeAmbiguous
+                                ? const Color(0xFFF57F17)
+                                : cs.primary,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              !routeFound
+                                  ? 'No route found'
+                                  : routeAmbiguous
+                                      ? 'Multiple routes matched'
+                                      : 'Route confirmed',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
+                                color: !routeFound
+                                    ? cs.error
+                                    : routeAmbiguous
+                                        ? const Color(0xFFF57F17)
+                                        : cs.primary,
+                              ),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              routeMessage,
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: !routeFound
+                                    ? cs.onErrorContainer
+                                    : cs.onSurface.withValues(alpha: 0.75),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
+              ],
+
+              // Bottom padding so last field clears the pinned button
               const SizedBox(height: 24),
-              ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                onPressed: _saving ? null : _submit,
-                child: Text(_saving ? 'Saving...' : 'Submit'),
-              ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  static Widget _stepperButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    required bool enabled,
+    required ColorScheme cs,
+  }) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 36,
+        height: 36,
+        decoration: BoxDecoration(
+          color: enabled
+              ? cs.primary.withValues(alpha: 0.10)
+              : cs.onSurface.withValues(alpha: 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: enabled
+                ? cs.primary.withValues(alpha: 0.35)
+                : cs.onSurface.withValues(alpha: 0.15),
+          ),
+        ),
+        child: Icon(
+          icon,
+          size: 18,
+          color: enabled ? cs.primary : cs.onSurface.withValues(alpha: 0.30),
         ),
       ),
     );

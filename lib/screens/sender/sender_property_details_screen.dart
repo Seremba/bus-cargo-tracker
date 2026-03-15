@@ -81,6 +81,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         propertyBox.listenable(),
         tripBox.listenable(),
         payBox.listenable(),
+        HiveService.userBox().listenable(),
       ]),
       builder: (context, _) {
         final p = propertyBox.values.firstWhere(
@@ -166,7 +167,15 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             pickupQrPayload != null;
 
         final loadedStation = (p.loadedAtStation).trim();
-        final loadedBy = (p.loadedByUserId).trim();
+        final loadedByRaw = p.loadedByUserId.trim();
+        final loadedByUser = HiveService.userBox().values
+            .where((u) => u.id == loadedByRaw)
+            .firstOrNull;
+        final loadedBy = loadedByUser?.fullName.trim().isNotEmpty == true
+            ? loadedByUser!.fullName.trim()
+            : loadedByRaw.isEmpty
+            ? ''
+            : loadedByRaw;
 
         final bool loadedDone =
             p.loadedAt != null ||
@@ -293,7 +302,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   child: Padding(
                     padding: EdgeInsets.all(12),
                     child: Text(
-                      'Trip not started yet. You’ll see progress once the driver loads your cargo.',
+                      'Trip not started yet. Progress will appear once the driver departs.',
                     ),
                   ),
                 )

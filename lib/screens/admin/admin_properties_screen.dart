@@ -335,6 +335,10 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               child: Text('Pending'),
             ),
             DropdownMenuItem(
+              value: PropertyStatus.loaded,
+              child: Text('Loaded'),
+            ),
+            DropdownMenuItem(
               value: PropertyStatus.inTransit,
               child: Text('In Transit'),
             ),

@@ -12,8 +12,8 @@ import 'sync_service.dart';
 
 class PropertyItemTripCounts {
   final int total;
-  final int loadedForTrip;
-  final int remainingAtStation;
+  final int loadedForTrip; // items assigned to this trip (loaded/inTransit/etc)
+  final int remainingAtStation; // items still left behind
 
   const PropertyItemTripCounts({
     required this.total,
@@ -27,40 +27,37 @@ class PropertyItemService {
 
   PropertyItemService(this._itemsBox);
 
+  /// Creates PropertyItems (1..itemCount) if missing.
+  /// Idempotent: safe to call many times.
   Future<void> ensureItemsForProperty({
     required String propertyKey,
     required String trackingCode,
     required int itemCount,
   }) async {
-    final cleanPropertyKey = propertyKey.trim();
+    final existingCount = _itemsBox.values
+        .where((x) => x.propertyKey == propertyKey)
+        .length;
+
+    if (existingCount > 0) return;
+
     final cleanTracking = trackingCode.trim();
 
-    if (cleanPropertyKey.isEmpty || itemCount <= 0) return;
-
-    final existing = getItemsForProperty(cleanPropertyKey);
-    final existingNos = existing.map((x) => x.itemNo).toSet();
-
     for (int i = 1; i <= itemCount; i++) {
-      if (existingNos.contains(i)) continue;
-
-      final itemKey = _itemKey(cleanPropertyKey, i);
+      final itemKey = _itemKey(propertyKey, i);
       final item = PropertyItem(
         itemKey: itemKey,
-        propertyKey: cleanPropertyKey,
+        propertyKey: propertyKey,
         itemNo: i,
         status: PropertyItemStatus.pending,
         labelCode: _buildLabelCode(cleanTracking, i),
       );
-
       await _itemsBox.put(itemKey, item);
     }
   }
 
   List<PropertyItem> getItemsForProperty(String propertyKey) {
-    final cleanPropertyKey = propertyKey.trim();
-
     final list = _itemsBox.values
-        .where((x) => x.propertyKey == cleanPropertyKey)
+        .where((x) => x.propertyKey == propertyKey)
         .cast<PropertyItem>()
         .toList();
 
@@ -68,17 +65,26 @@ class PropertyItemService {
     return list;
   }
 
+  /// Desk selects which items to load today (does NOT move inTransit yet).
+  /// Only pending -> loaded is allowed.
   Future<void> markSelectedItemsLoaded({
     required String propertyKey,
     required List<int> itemNos,
     required DateTime now,
   }) async {
     final items = getItemsForProperty(propertyKey);
+    final validNos = items.map((x) => x.itemNo).toSet();
 
     for (final no in itemNos) {
-      final matches = items.where((x) => x.itemNo == no);
-      if (matches.isEmpty) continue;
-      final item = matches.first;
+      if (!validNos.contains(no)) {
+        throw StateError(
+          'Item number $no does not exist for property $propertyKey',
+        );
+      }
+    }
+
+    for (final no in itemNos) {
+      final item = items.firstWhere((x) => x.itemNo == no);
 
       if (item.status != PropertyItemStatus.pending) {
         continue;
@@ -96,6 +102,7 @@ class PropertyItemService {
     }
   }
 
+  /// Driver starts trip: move only loaded items assigned to this trip -> inTransit
   Future<void> onTripStartMoveLoadedToInTransit({
     required String tripId,
     required DateTime now,
@@ -110,6 +117,7 @@ class PropertyItemService {
       final item = raw as PropertyItem;
       item.status = PropertyItemStatus.inTransit;
       item.inTransitAt = now;
+      item.loadedAt ??= now;
       await item.save();
 
       await _emitItemEvent(
@@ -130,14 +138,17 @@ class PropertyItemService {
 
     final onThisTrip = items.where((x) {
       if (x.tripId.trim() != trip) return false;
-      return x.status == PropertyItemStatus.inTransit ||
+
+      return x.status == PropertyItemStatus.loaded ||
+          x.status == PropertyItemStatus.inTransit ||
           x.status == PropertyItemStatus.delivered ||
           x.status == PropertyItemStatus.pickedUp;
     }).length;
 
-    final remainingAtStation = items
-        .where((x) => x.status == PropertyItemStatus.pending)
-        .length;
+    final remainingAtStation = items.where((x) {
+      return x.status == PropertyItemStatus.pending ||
+          (x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty);
+    }).length;
 
     return PropertyItemTripCounts(
       total: total,
@@ -146,45 +157,54 @@ class PropertyItemService {
     );
   }
 
+  /// Keeps Property aggregate status consistent with item reality.
   Future<void> recomputePropertyAggregate({required Property property}) async {
     final items = getItemsForProperty(property.key.toString());
     if (items.isEmpty) return;
 
-    final bool anyLoaded = items.any(
-      (x) => x.status == PropertyItemStatus.loaded,
+    final bool allPickedUp = items.every(
+      (x) => x.status == PropertyItemStatus.pickedUp,
+    );
+
+    final bool allDeliveredOrPickedUp = items.every(
+      (x) =>
+          x.status == PropertyItemStatus.delivered ||
+          x.status == PropertyItemStatus.pickedUp,
     );
 
     final bool anyInTransit = items.any(
       (x) => x.status == PropertyItemStatus.inTransit,
     );
 
-    final bool allDelivered = items.every(
-      (x) =>
-          x.status == PropertyItemStatus.delivered ||
-          x.status == PropertyItemStatus.pickedUp,
+    final bool anyLoaded = items.any(
+      (x) => x.status == PropertyItemStatus.loaded,
     );
 
-    final bool allPickedUp = items.every(
-      (x) => x.status == PropertyItemStatus.pickedUp,
+    final bool allPending = items.every(
+      (x) => x.status == PropertyItemStatus.pending,
     );
 
     PropertyStatus newStatus;
-
     if (allPickedUp) {
       newStatus = PropertyStatus.pickedUp;
-    } else if (allDelivered) {
+    } else if (allDeliveredOrPickedUp) {
       newStatus = PropertyStatus.delivered;
     } else if (anyInTransit) {
       newStatus = PropertyStatus.inTransit;
     } else if (anyLoaded) {
       newStatus = PropertyStatus.loaded;
-    } else {
+    } else if (allPending) {
       newStatus = PropertyStatus.pending;
+    } else {
+      // mixed edge case, e.g. pending + loaded
+      newStatus = PropertyStatus.loaded;
     }
+
+    bool changed = false;
 
     if (property.status != newStatus) {
       property.status = newStatus;
-      await property.save();
+      changed = true;
     }
 
     if (property.loadedAt == null) {
@@ -197,8 +217,54 @@ class PropertyItemService {
 
       if (loadedTimes.isNotEmpty) {
         property.loadedAt = loadedTimes.first;
-        await property.save();
+        changed = true;
       }
+    }
+
+    if (newStatus == PropertyStatus.inTransit && property.inTransitAt == null) {
+      final inTransitTimes =
+          items
+              .where((x) => x.inTransitAt != null)
+              .map((x) => x.inTransitAt!)
+              .toList()
+            ..sort();
+
+      if (inTransitTimes.isNotEmpty) {
+        property.inTransitAt = inTransitTimes.first;
+        changed = true;
+      }
+    }
+
+    if (newStatus == PropertyStatus.delivered && property.deliveredAt == null) {
+      final deliveredTimes =
+          items
+              .where((x) => x.deliveredAt != null)
+              .map((x) => x.deliveredAt!)
+              .toList()
+            ..sort();
+
+      if (deliveredTimes.isNotEmpty) {
+        property.deliveredAt = deliveredTimes.first;
+        changed = true;
+      }
+    }
+
+    if (newStatus == PropertyStatus.pickedUp && property.pickedUpAt == null) {
+      final pickedUpTimes =
+          items
+              .where((x) => x.pickedUpAt != null)
+              .map((x) => x.pickedUpAt!)
+              .toList()
+            ..sort();
+
+      if (pickedUpTimes.isNotEmpty) {
+        property.pickedUpAt = pickedUpTimes.first;
+        changed = true;
+      }
+    }
+
+    if (changed) {
+      await property.save();
     }
   }
 
@@ -221,6 +287,7 @@ class PropertyItemService {
       item.tripId = trip;
       item.status = PropertyItemStatus.inTransit;
       item.inTransitAt = now;
+      item.loadedAt ??= now;
       await item.save();
 
       await _emitItemEvent(
@@ -237,11 +304,18 @@ class PropertyItemService {
     required DateTime now,
   }) async {
     final items = getItemsForProperty(propertyKey);
+    final validNos = items.map((x) => x.itemNo).toSet();
 
     for (final no in itemNos) {
-      final matches = items.where((x) => x.itemNo == no);
-      if (matches.isEmpty) continue;
-      final item = matches.first;
+      if (!validNos.contains(no)) {
+        throw StateError(
+          'Item number $no does not exist for property $propertyKey',
+        );
+      }
+    }
+
+    for (final no in itemNos) {
+      final item = items.firstWhere((x) => x.itemNo == no);
 
       if (item.status != PropertyItemStatus.inTransit) {
         continue;
@@ -249,6 +323,8 @@ class PropertyItemService {
 
       item.status = PropertyItemStatus.delivered;
       item.deliveredAt = now;
+      item.inTransitAt ??= now;
+      item.loadedAt ??= item.inTransitAt;
       await item.save();
 
       await _emitItemEvent(
@@ -265,11 +341,18 @@ class PropertyItemService {
     required DateTime now,
   }) async {
     final items = getItemsForProperty(propertyKey);
+    final validNos = items.map((x) => x.itemNo).toSet();
 
     for (final no in itemNos) {
-      final matches = items.where((x) => x.itemNo == no);
-      if (matches.isEmpty) continue;
-      final item = matches.first;
+      if (!validNos.contains(no)) {
+        throw StateError(
+          'Item number $no does not exist for property $propertyKey',
+        );
+      }
+    }
+
+    for (final no in itemNos) {
+      final item = items.firstWhere((x) => x.itemNo == no);
 
       if (item.status != PropertyItemStatus.delivered) {
         continue;
@@ -277,6 +360,9 @@ class PropertyItemService {
 
       item.status = PropertyItemStatus.pickedUp;
       item.pickedUpAt = now;
+      item.deliveredAt ??= now;
+      item.inTransitAt ??= item.deliveredAt;
+      item.loadedAt ??= item.inTransitAt;
       await item.save();
 
       await _emitItemEvent(
@@ -358,6 +444,7 @@ class PropertyItemService {
         _parseDate(event.payload['inTransitAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
+    item.loadedAt ??= item.inTransitAt;
 
     await item.save();
   }
@@ -377,6 +464,8 @@ class PropertyItemService {
         _parseDate(event.payload['deliveredAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
+    item.inTransitAt ??= item.deliveredAt;
+    item.loadedAt ??= item.inTransitAt;
 
     await item.save();
   }
@@ -393,6 +482,9 @@ class PropertyItemService {
         _parseDate(event.payload['pickedUpAt']) ??
         _parseDate(event.payload['eventAt']) ??
         DateTime.now();
+    item.deliveredAt ??= item.pickedUpAt;
+    item.inTransitAt ??= item.deliveredAt;
+    item.loadedAt ??= item.inTransitAt;
 
     await item.save();
   }

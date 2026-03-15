@@ -86,7 +86,13 @@ Future<Property> _seedLoadedProperty({
 void main() {
   late Directory tempDir;
 
-  setUpAll(() {
+  setUp(() async {
+    tempDir = await Directory.systemTemp.createTemp(
+      'bebeto_property_in_transit_test_',
+    );
+
+    Hive.init(tempDir.path);
+
     if (!Hive.isAdapterRegistered(CheckpointAdapter().typeId)) {
       Hive.registerAdapter(CheckpointAdapter());
     }
@@ -96,11 +102,11 @@ void main() {
     if (!Hive.isAdapterRegistered(PropertyAdapter().typeId)) {
       Hive.registerAdapter(PropertyAdapter());
     }
-    if (!Hive.isAdapterRegistered(TripAdapter().typeId)) {
-      Hive.registerAdapter(TripAdapter());
-    }
     if (!Hive.isAdapterRegistered(TripStatusAdapter().typeId)) {
       Hive.registerAdapter(TripStatusAdapter());
+    }
+    if (!Hive.isAdapterRegistered(TripAdapter().typeId)) {
+      Hive.registerAdapter(TripAdapter());
     }
     if (!Hive.isAdapterRegistered(NotificationItemAdapter().typeId)) {
       Hive.registerAdapter(NotificationItemAdapter());
@@ -114,23 +120,15 @@ void main() {
     if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
       Hive.registerAdapter(SyncEventAdapter());
     }
-    if (!Hive.isAdapterRegistered(PropertyItemAdapter().typeId)) {
-      Hive.registerAdapter(PropertyItemAdapter());
-    }
     if (!Hive.isAdapterRegistered(PropertyItemStatusAdapter().typeId)) {
       Hive.registerAdapter(PropertyItemStatusAdapter());
+    }
+    if (!Hive.isAdapterRegistered(PropertyItemAdapter().typeId)) {
+      Hive.registerAdapter(PropertyItemAdapter());
     }
     if (!Hive.isAdapterRegistered(PaymentRecordAdapter().typeId)) {
       Hive.registerAdapter(PaymentRecordAdapter());
     }
-  });
-
-  setUp(() async {
-    tempDir = await Directory.systemTemp.createTemp(
-      'bebeto_property_in_transit_test_',
-    );
-
-    Hive.init(tempDir.path);
 
     await HiveService.openPropertyBox();
     await HiveService.openPropertyItemBox();

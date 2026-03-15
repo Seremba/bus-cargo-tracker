@@ -8,7 +8,7 @@ part of 'trip_status.dart';
 
 class TripStatusAdapter extends TypeAdapter<TripStatus> {
   @override
-  final int typeId = 6;
+  final int typeId = 9;
 
   @override
   TripStatus read(BinaryReader reader) {

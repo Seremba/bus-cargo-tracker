@@ -2,7 +2,7 @@ import 'package:hive/hive.dart';
 
 part 'trip_status.g.dart';
 
-@HiveType(typeId: 6)
+@HiveType(typeId: 9)
 enum TripStatus {
   @HiveField(0)
   active,

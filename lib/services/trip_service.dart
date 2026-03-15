@@ -101,7 +101,6 @@ class TripService {
 
     await box.add(trip);
 
-    // IMPORTANT: local trip creation must survive sync failures
     try {
       await SyncService.enqueueTripStarted(
         tripId: trip.tripId,
@@ -129,17 +128,8 @@ class TripService {
               .toList(),
         },
       );
-    } catch (e) {
-      // Do not block the local workflow
-      try {
-        await NotificationService.notify(
-          targetUserId: NotificationService.adminInbox,
-          title: 'Trip sync queue failed',
-          message:
-              'Trip ${trip.routeName} was created locally for driver $driverId, '
-              'but enqueueTripStarted failed.\nError: $e',
-        );
-      } catch (_) {}
+    } catch (_) {
+      // Local-first: trip already exists locally even if sync queueing fails.
     }
 
     return trip;

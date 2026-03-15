@@ -22,19 +22,19 @@ void main() {
 
     Hive.init(tempDir.path);
 
-    if (!Hive.isAdapterRegistered(2)) {
+    if (!Hive.isAdapterRegistered(CheckpointAdapter().typeId)) {
       Hive.registerAdapter(CheckpointAdapter());
     }
-    if (!Hive.isAdapterRegistered(6)) {
+    if (!Hive.isAdapterRegistered(TripStatusAdapter().typeId)) {
       Hive.registerAdapter(TripStatusAdapter());
     }
-    if (!Hive.isAdapterRegistered(7)) {
+    if (!Hive.isAdapterRegistered(TripAdapter().typeId)) {
       Hive.registerAdapter(TripAdapter());
     }
-    if (!Hive.isAdapterRegistered(16)) {
+    if (!Hive.isAdapterRegistered(SyncEventTypeAdapter().typeId)) {
       Hive.registerAdapter(SyncEventTypeAdapter());
     }
-    if (!Hive.isAdapterRegistered(17)) {
+    if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
       Hive.registerAdapter(SyncEventAdapter());
     }
 

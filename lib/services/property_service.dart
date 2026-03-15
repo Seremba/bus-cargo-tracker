@@ -1,10 +1,8 @@
-import '../data/routes.dart';
 import '../data/routes_helpers.dart';
 import '../models/property.dart';
 import '../models/property_item_status.dart';
 import '../models/property_status.dart';
 import '../models/sync_event.dart';
-import '../models/sync_event_type.dart';
 import '../models/trip.dart';
 import '../models/user_role.dart';
 
@@ -12,7 +10,6 @@ import 'audit_service.dart';
 import 'hive_service.dart';
 import 'notification_service.dart';
 import 'outbound_message_service.dart';
-import 'payment_service.dart';
 import 'pickup_qr_service.dart';
 import 'property_item_service.dart';
 import 'receiver_tracking_service.dart';
@@ -477,7 +474,6 @@ class PropertyService {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
     final impliesLoaded =
-        fresh.status == PropertyStatus.loaded ||
         fresh.status == PropertyStatus.inTransit ||
         fresh.status == PropertyStatus.delivered ||
         fresh.status == PropertyStatus.pickedUp;
@@ -575,7 +571,7 @@ class PropertyService {
     final refreshed = box.get(fresh.key) ?? fresh;
     refreshed.deliveredAt ??= now;
     refreshed.inTransitAt ??= now;
-    refreshed.loadedAt ??= now;
+    refreshed.loadedAt ??= refreshed.inTransitAt;
     await refreshed.save();
 
     await SyncService.enqueuePropertyDelivered(
@@ -881,17 +877,7 @@ class PropertyService {
       return;
     }
 
-    AppRoute? route = findRouteById(fresh.routeId);
-
-    if (route == null) {
-      final assigned = findRouteById(Session.currentAssignedRouteId);
-      if (assigned != null) {
-        route = assigned;
-        fresh.routeId = assigned.id;
-        fresh.routeName = assigned.name;
-      }
-    }
-
+    final route = findRouteById(fresh.routeId);
     if (route == null) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
@@ -915,24 +901,20 @@ class PropertyService {
 
     final itemBox = HiveService.propertyItemBox();
     final itemSvc = PropertyItemService(itemBox);
-    final propertyKey = fresh.key.toString();
 
     await itemSvc.ensureItemsForProperty(
-      propertyKey: propertyKey,
+      propertyKey: fresh.key.toString(),
       trackingCode: fresh.trackingCode,
       itemCount: fresh.itemCount,
     );
 
-    final itemsBefore = itemSvc.getItemsForProperty(propertyKey);
+    final beforeItems = itemSvc.getItemsForProperty(fresh.key.toString());
 
-    final readyToMove = itemsBefore
-        .where(
-          (x) =>
-              x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
-        )
-        .toList();
+    final hasLoaded = beforeItems.any(
+      (x) => x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
+    );
 
-    if (readyToMove.isEmpty) {
+    if (!hasLoaded) {
       await NotificationService.notify(
         targetUserId: NotificationService.adminInbox,
         title: 'No loaded items',
@@ -942,126 +924,64 @@ class PropertyService {
       return;
     }
 
-    final active = TripService.getActiveTripForCurrentDriver();
-    if (active != null && active.routeId != route.id) {
-      await NotificationService.notify(
-        targetUserId: NotificationService.adminInbox,
-        title: 'Route mismatch blocked',
-        message:
-            'Driver has an active trip (${active.routeName}) but tried to load cargo for route (${route.name}).\nBlocked to avoid mixing routes.',
-      );
-      return;
-    }
+    final activeSameRoute = TripService.getActiveTripForCurrentDriver(
+      routeId: route.id,
+    );
 
-    final now = DateTime.now();
-
-    Trip? trip = TripService.getActiveTripForCurrentDriver(routeId: route.id);
-
-    if (trip == null) {
-      try {
-        trip = await TripService.ensureActiveTrip(
-          routeId: route.id,
-          routeName: route.name,
-          checkpoints: cps,
+    if (activeSameRoute == null) {
+      final activeAnyRoute = TripService.getActiveTripForCurrentDriver();
+      if (activeAnyRoute != null && activeAnyRoute.routeId != route.id) {
+        await NotificationService.notify(
+          targetUserId: NotificationService.adminInbox,
+          title: 'Route mismatch blocked',
+          message:
+              'Driver has an active trip (${activeAnyRoute.routeName}) but tried to load cargo for route (${route.name}).\nBlocked to avoid mixing routes.',
         );
-      } catch (e, st) {
-        trip = TripService.getActiveTripForCurrentDriver(routeId: route.id);
-
-        if (trip == null) {
-          await AuditService.log(
-            action: 'trip_ensure_failed',
-            propertyKey: propertyKey,
-            details: 'ensureActiveTrip failed: $e\n$st',
-          );
-
-          await NotificationService.notify(
-            targetUserId: NotificationService.adminInbox,
-            title: 'Trip start failed',
-            message:
-                'Failed to start trip for route "${route.name}".\nError: $e',
-          );
-          return;
-        }
+        return;
       }
     }
 
+    final now = DateTime.now();
+    Trip trip;
+
+    try {
+      trip = await TripService.ensureActiveTrip(
+        routeId: route.id,
+        routeName: route.name,
+        checkpoints: cps,
+      );
+    } catch (e, st) {
+      throw StateError('markInTransit ensureActiveTrip failed: $e\n$st');
+    }
+
     await itemSvc.onTripStartedMoveLoadedToInTransitForProperty(
-      propertyKey: propertyKey,
+      propertyKey: fresh.key.toString(),
       tripId: trip.tripId,
       now: now,
     );
 
-    var refreshedItems = itemSvc.getItemsForProperty(propertyKey);
-    var movedCount = refreshedItems
-        .where(
-          (x) =>
-              x.tripId.trim() == trip!.tripId &&
-              x.status == PropertyItemStatus.inTransit,
-        )
-        .length;
+    final afterItems = itemSvc.getItemsForProperty(fresh.key.toString());
 
-    if (movedCount == 0) {
-      for (final item in readyToMove) {
-        final live = HiveService.propertyItemBox().get(item.itemKey);
-        if (live == null) continue;
+    final movedCount = afterItems.where((x) {
+      return x.tripId.trim() == trip.tripId &&
+          x.status == PropertyItemStatus.inTransit;
+    }).length;
 
-        if (live.status == PropertyItemStatus.loaded &&
-            live.tripId.trim().isEmpty) {
-          live.tripId = trip.tripId;
-          live.status = PropertyItemStatus.inTransit;
-          live.inTransitAt = now;
-          await live.save();
-
-          try {
-            await SyncService.enqueueItemEvent(
-              type: SyncEventType.propertyItemInTransit,
-              itemId: live.itemKey,
-              actorUserId: (Session.currentUserId ?? '').trim().isEmpty
-                  ? 'system'
-                  : (Session.currentUserId ?? '').trim(),
-              payload: {
-                'itemKey': live.itemKey,
-                'propertyKey': live.propertyKey,
-                'propertyCode': fresh.propertyCode,
-                'itemNo': live.itemNo,
-                'status': 'inTransit',
-                'tripId': live.tripId,
-                'labelCode': live.labelCode,
-                'loadedAt': live.loadedAt?.toIso8601String(),
-                'inTransitAt': live.inTransitAt?.toIso8601String(),
-                'deliveredAt': live.deliveredAt?.toIso8601String(),
-                'pickedUpAt': live.pickedUpAt?.toIso8601String(),
-                'eventAt': now.toIso8601String(),
-              },
-            );
-          } catch (_) {}
-        }
-      }
-
-      refreshedItems = itemSvc.getItemsForProperty(propertyKey);
-      movedCount = refreshedItems
-          .where(
-            (x) =>
-                x.tripId.trim() == trip!.tripId &&
-                x.status == PropertyItemStatus.inTransit,
-          )
-          .length;
-    }
-
-    if (movedCount == 0) {
+    if (movedCount <= 0) {
       await AuditService.log(
-        action: 'mark_in_transit_no_items_moved',
-        propertyKey: propertyKey,
+        action: 'property_in_transit_no_items_moved',
+        propertyKey: fresh.key.toString(),
         details:
-            'Trip ${trip.tripId} created/found, but no loaded items moved to inTransit.',
+            'Trip ${trip.tripId} started but no items moved to inTransit for property ${fresh.propertyCode}.',
       );
       return;
     }
 
-    final counts = itemSvc.computeTripCounts(
-      propertyKey: propertyKey,
-      tripId: trip.tripId,
-    );
+    final total = afterItems.length;
+    final remainingAtStation = afterItems.where((x) {
+      return x.status == PropertyItemStatus.pending ||
+          (x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty);
+    }).length;
 
     fresh.routeId = route.id;
     fresh.routeName = route.name;
@@ -1072,37 +992,28 @@ class PropertyService {
     fresh.aggregateVersion += 1;
     await fresh.save();
 
-    try {
-      await SyncService.enqueuePropertyInTransit(
-        propertyId: fresh.propertyCode.trim(),
-        actorUserId: (Session.currentUserId ?? '').trim().isEmpty
-            ? fresh.createdByUserId
-            : (Session.currentUserId ?? '').trim(),
-        aggregateVersion: fresh.aggregateVersion,
-        payload: {
-          'propertyCode': fresh.propertyCode,
-          'tripId': trip.tripId,
-          'routeId': fresh.routeId,
-          'routeName': fresh.routeName,
-          'inTransitAt': now.toIso8601String(),
-          'loadedForTrip': counts.loadedForTrip,
-          'remainingAtStation': counts.remainingAtStation,
-          'total': counts.total,
-          'aggregateVersion': fresh.aggregateVersion,
-        },
-      );
-    } catch (e) {
-      await AuditService.log(
-        action: 'property_in_transit_sync_enqueue_failed',
-        propertyKey: propertyKey,
-        details:
-            'Local transition succeeded, but enqueuePropertyInTransit failed: $e',
-      );
-    }
+    await SyncService.enqueuePropertyInTransit(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? fresh.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'tripId': trip.tripId,
+        'routeId': fresh.routeId,
+        'routeName': fresh.routeName,
+        'inTransitAt': now.toIso8601String(),
+        'loadedForTrip': movedCount,
+        'remainingAtStation': remainingAtStation,
+        'total': total,
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
 
     final msg =
-        'Departed today: ${counts.loadedForTrip}/${counts.total}\n'
-        'Remaining at station: ${counts.remainingAtStation}/${counts.total}\n'
+        'Departed today: $movedCount/$total\n'
+        'Remaining at station: $remainingAtStation/$total\n'
         'Route: ${route.name}';
 
     await NotificationService.notify(
@@ -1117,10 +1028,14 @@ class PropertyService {
       message: 'Property for ${fresh.receiverName} is in transit.\n$msg',
     );
 
-    if (counts.remainingAtStation > 0) {
+    if (remainingAtStation > 0) {
       await _safeNotifyReceiverPartialLoad(
         fresh: fresh,
-        counts: counts,
+        counts: PropertyItemTripCounts(
+          total: total,
+          loadedForTrip: movedCount,
+          remainingAtStation: remainingAtStation,
+        ),
         routeName: route.name,
       );
     } else {
@@ -1173,7 +1088,6 @@ class PropertyService {
       now: inTransitAt,
     );
 
-    property.status = PropertyStatus.inTransit;
     property.tripId = tripId;
     if (routeId.isNotEmpty) property.routeId = routeId;
     if (routeName.isNotEmpty) property.routeName = routeName;
@@ -1183,16 +1097,6 @@ class PropertyService {
 
     await property.save();
     await itemSvc.recomputePropertyAggregate(property: property);
-
-    final refreshed = pBox.get(property.key) ?? property;
-    refreshed.status = PropertyStatus.inTransit;
-    refreshed.tripId = tripId;
-    if (routeId.isNotEmpty) refreshed.routeId = routeId;
-    if (routeName.isNotEmpty) refreshed.routeName = routeName;
-    refreshed.inTransitAt ??= inTransitAt;
-    refreshed.loadedAt ??= inTransitAt;
-    refreshed.aggregateVersion = incomingVersion;
-    await refreshed.save();
   }
 
   static Future<void> applyPropertyDeliveredFromSync(SyncEvent event) async {
@@ -1288,17 +1192,14 @@ class PropertyService {
       return false;
     }
 
-    final propertyKey = fresh.key.toString();
+    // Local payment gate
+    final hasPayment =
+        fresh.amountPaidTotal > 0 ||
+        HiveService.paymentBox().values.any(
+          (x) => x.propertyKey.trim() == fresh.key.toString(),
+        );
 
-    final isPaid = PaymentService.hasValidPaymentForProperty(propertyKey);
-    if (!isPaid) {
-      await AuditService.log(
-        action: 'desk_mark_loaded_blocked_unpaid',
-        propertyKey: propertyKey,
-        details:
-            'Blocked loading because no valid payment exists for property '
-            '${fresh.propertyCode.trim().isEmpty ? propertyKey : fresh.propertyCode.trim()}',
-      );
+    if (!hasPayment) {
       return false;
     }
 
@@ -1306,7 +1207,7 @@ class PropertyService {
     final itemSvc = PropertyItemService(itemBox);
 
     await itemSvc.ensureItemsForProperty(
-      propertyKey: propertyKey,
+      propertyKey: fresh.key.toString(),
       trackingCode: fresh.trackingCode,
       itemCount: fresh.itemCount,
     );
@@ -1320,7 +1221,7 @@ class PropertyService {
     final now = DateTime.now();
 
     await itemSvc.markSelectedItemsLoaded(
-      propertyKey: propertyKey,
+      propertyKey: fresh.key.toString(),
       itemNos: selectedNos,
       now: now,
     );
@@ -1333,7 +1234,7 @@ class PropertyService {
 
     await itemSvc.recomputePropertyAggregate(property: fresh);
 
-    final items = itemSvc.getItemsForProperty(propertyKey);
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
     final loadedCount = items
         .where((x) => x.status == PropertyItemStatus.loaded)
         .length;
@@ -1343,7 +1244,7 @@ class PropertyService {
 
     await AuditService.log(
       action: 'desk_mark_loaded_items',
-      propertyKey: propertyKey,
+      propertyKey: fresh.key.toString(),
       details:
           'Loaded items: ${selectedNos.join(",")} at station: ${fresh.loadedAtStation}',
     );
@@ -1356,7 +1257,7 @@ class PropertyService {
       aggregateVersion: fresh.aggregateVersion,
       payload: {
         'propertyCode': fresh.propertyCode,
-        'propertyKey': propertyKey,
+        'propertyKey': fresh.key.toString(),
         'itemNos': selectedNos,
         'loadedCount': loadedCount,
         'remainingCount': remainingCount,
@@ -1704,7 +1605,10 @@ class PropertyService {
   }
 
   static Future<Trip?> startRouteTrip({required String routeId}) async {
-    if (!RoleGuard.hasAny({UserRole.driver, UserRole.admin})) return null;
+    final currentRole = Session.currentRole;
+    if (currentRole != UserRole.driver && currentRole != UserRole.admin) {
+      return null;
+    }
 
     final route = findRouteById(routeId);
     if (route == null) {
@@ -1730,11 +1634,8 @@ class PropertyService {
 
     final candidates = pBox.values.where((p) {
       if (p.routeId != route.id) return false;
-      if (p.status != PropertyStatus.pending &&
-          p.status != PropertyStatus.loaded) {
-        return false;
-      }
-      return true;
+      return p.status == PropertyStatus.pending ||
+          p.status == PropertyStatus.loaded;
     }).toList();
 
     for (final property in candidates) {
@@ -1762,6 +1663,8 @@ class PropertyService {
         propertyKey: property.key.toString(),
         tripId: trip.tripId,
       );
+
+      if (counts.loadedForTrip <= 0) continue;
 
       property.status = PropertyStatus.inTransit;
       property.inTransitAt = now;

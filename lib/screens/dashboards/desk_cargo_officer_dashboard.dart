@@ -1,3 +1,4 @@
+import 'package:bus_cargo_tracker/ui/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -32,6 +33,18 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
   String _fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
 
+  // Format numbers with commas e.g. 500000 → 500,000
+  String _fmtAmount(int n) {
+    final s = n.toString();
+    final buffer = StringBuffer();
+    final offset = s.length % 3;
+    for (int i = 0; i < s.length; i++) {
+      if (i != 0 && (i - offset) % 3 == 0) buffer.write(',');
+      buffer.write(s[i]);
+    }
+    return buffer.toString();
+  }
+
   Future<void> _openOutboundMessagesSms() async {
     if (_openingOutbound) return;
     setState(() => _openingOutbound = true);
@@ -50,9 +63,11 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     }
   }
 
+  // SMS badge
+
   Widget _badgePill(String text) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: Colors.red,
         borderRadius: BorderRadius.circular(999),
@@ -61,7 +76,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
         text,
         style: const TextStyle(
           color: Colors.white,
-          fontSize: 11,
+          fontSize: 10,
           fontWeight: FontWeight.w800,
         ),
       ),
@@ -71,20 +86,41 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   Widget _smsBadge({required int queuedSms, required int failedSms}) {
     if (queuedSms <= 0 && failedSms <= 0) return const SizedBox.shrink();
     String fmt(int n) => n > 99 ? '99+' : n.toString();
-    final text = '${fmt(queuedSms)}/${fmt(failedSms)}';
-
-    return Positioned(right: 6, top: 6, child: _badgePill(text));
+    return Positioned(
+      right: 6,
+      top: 6,
+      child: _badgePill('${fmt(queuedSms)}/${fmt(failedSms)}'),
+    );
   }
 
-  Widget _sectionTitle(String text) {
+  // Section title: 3px primary left border + icon + bold text
+
+  Widget _sectionTitle(IconData icon, String text) {
     return Padding(
-      padding: const EdgeInsets.only(left: 2, bottom: 8),
-      child: Text(
-        text,
-        style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 20,
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(icon, size: 17, color: AppColors.primary),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+          ),
+        ],
       ),
     );
   }
+
+  // Build
 
   @override
   Widget build(BuildContext context) {
@@ -98,9 +134,10 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
     final name = (Session.currentUserFullName ?? '—').trim();
     final station = (Session.currentStationName ?? '').trim();
-
     final headline = name.isEmpty ? 'Desk Cargo Officer' : name;
     final subtitle = station.isEmpty ? 'Desk Cargo Officer' : 'Desk • $station';
+
+    final cs = Theme.of(context).colorScheme;
 
     return DefaultTabController(
       length: 2,
@@ -119,11 +156,23 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 ),
               ),
               const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: const TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w400,
+              // Role badge pill
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 2,
+                ),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.orange,
+                  ),
                 ),
               ),
             ],
@@ -135,27 +184,22 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             ],
           ),
           actions: [
+            // SMS badge button
             ValueListenableBuilder(
               valueListenable: outBox.listenable(),
               builder: (context, Box b, _) {
                 int queuedSms = 0;
                 int failedSms = 0;
-
-                // Count only actionable SMS (attempts < maxAttempts)
                 for (final m in b.values) {
                   if (m is! OutboundMessage) continue;
-                  final ch = m.channel.trim().toLowerCase();
-                  if (ch != 'sms') continue;
-
+                  if (m.channel.trim().toLowerCase() != 'sms') continue;
                   if (m.attempts >= OutboundMessageService.maxAttempts) {
                     continue;
                   }
-
                   final st = m.status.trim().toLowerCase();
                   if (st == OutboundMessageService.statusQueued) queuedSms++;
                   if (st == OutboundMessageService.statusFailed) failedSms++;
                 }
-
                 return Tooltip(
                   message: 'SMS — Queued: $queuedSms • Failed: $failedSms',
                   child: Stack(
@@ -176,44 +220,39 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 );
               },
             ),
+            // Export menu
             PopupMenuButton(
               tooltip: 'Export',
               icon: const Icon(Icons.download_outlined),
               onSelected: (v) async {
                 final messenger = ScaffoldMessenger.of(context);
-
-                final station = (Session.currentStationName ?? '').trim();
-                final stationLabel = station.isEmpty ? 'All stations' : station;
+                final st = (Session.currentStationName ?? '').trim();
+                final stationLabel = st.isEmpty ? 'All stations' : st;
 
                 final items = payBox.values.toList()
                   ..sort((a, c) => c.createdAt.compareTo(a.createdAt));
-
-                final stationItems = station.isEmpty
+                final stationItems = st.isEmpty
                     ? items
                     : items
                           .where(
                             (x) =>
                                 x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
+                                st.toLowerCase(),
                           )
                           .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
-
                 final todayItems = stationItems
                     .where((x) => x.createdAt.isAfter(todayStart))
                     .toList();
-
                 final todayTotal = todayItems.fold(
                   0,
                   (sum, x) => sum + x.amount,
                 );
 
-                final y = now.year.toString().padLeft(4, '0');
-                final m = now.month.toString().padLeft(2, '0');
-                final d = now.day.toString().padLeft(2, '0');
-                final slug = '$y$m$d';
+                final slug =
+                    '${now.year.toString().padLeft(4, '0')}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
 
                 if (v == 'csv_today') {
                   final csv = PaymentExportService.buildTodayCsv(
@@ -293,24 +332,43 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             const LogoutButton(),
           ],
         ),
+
+        // Tab bodies
         body: TabBarView(
           children: [
-            // TAB 1: Scan
+            // ── TAB 1: Scan ──
             ListView(
-              padding: const EdgeInsets.all(14),
+              padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
               children: [
-                _sectionTitle('Quick actions'),
+                _sectionTitle(Icons.bolt_outlined, 'Quick actions'),
                 Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
+                    padding: const EdgeInsets.all(14),
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // Scan QR button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton.icon(
-                            icon: const Icon(Icons.qr_code_scanner),
+                            icon: const Icon(
+                              Icons.qr_code_scanner_outlined,
+                              size: 20,
+                            ),
                             label: const Text(
                               'Scan Property QR (propertyCode)',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w700,
+                                fontSize: 14,
+                              ),
+                            ),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppColors.primary,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(14),
+                              ),
                             ),
                             onPressed: () async {
                               final raw = await Navigator.push<String?>(
@@ -321,7 +379,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                                 ),
                               );
                               if (raw == null || raw.trim().isEmpty) return;
-
                               if (!context.mounted) return;
                               Navigator.push(
                                 context,
@@ -335,140 +392,298 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                           ),
                         ),
                         const SizedBox(height: 10),
-                        Text(
-                          'Tip: scan the printed property QR to open details quickly.',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurface.withValues(alpha: 0.65),
-                          ),
+                        // Tip row: icon + text
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Icon(
+                              Icons.info_outline,
+                              size: 14,
+                              color: cs.onSurface.withValues(alpha: 0.45),
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                'Tip: scan the printed property QR to open details quickly.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: cs.onSurface.withValues(alpha: 0.60),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                       ],
                     ),
                   ),
                 ),
-                const SizedBox(height: 14),
-                _sectionTitle('Register & receive payment'),
+                const SizedBox(height: 16),
+                _sectionTitle(
+                  Icons.point_of_sale_outlined,
+                  'Register & receive payment',
+                ),
                 const DeskScanAndPayScreen(),
               ],
             ),
 
-            // TAB 2: Recent
+            // ── TAB 2: Recent ──
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),
                 propBox.listenable(),
               ]),
               builder: (context, _) {
-                final station = (Session.currentStationName ?? '').trim();
+                final st = (Session.currentStationName ?? '').trim();
 
                 final items = payBox.values.toList()
                   ..sort((a, c) => c.createdAt.compareTo(a.createdAt));
 
-                final stationItems = station.isEmpty
+                final stationItems = st.isEmpty
                     ? items
                     : items
                           .where(
                             (x) =>
                                 x.station.trim().toLowerCase() ==
-                                station.toLowerCase(),
+                                st.toLowerCase(),
                           )
                           .toList();
 
                 final now = DateTime.now();
                 final todayStart = DateTime(now.year, now.month, now.day);
-
                 final todayItems = stationItems
                     .where((x) => x.createdAt.isAfter(todayStart))
                     .toList();
-
                 final todayTotal = todayItems.fold(
                   0,
                   (sum, x) => sum + x.amount,
                 );
-
                 final allTotal = stationItems.fold(
                   0,
                   (sum, x) => sum + x.amount,
                 );
 
                 if (stationItems.isEmpty) {
-                  return ListView(
-                    padding: const EdgeInsets.all(14),
-                    children: const [
-                      Card(
-                        child: Padding(
-                          padding: EdgeInsets.all(12),
-                          child: Text('No payments recorded yet.'),
+                  return Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.receipt_long_outlined,
+                          size: 16,
+                          color: Colors.black38,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        const Text(
+                          'No payments recorded yet.',
+                          style: TextStyle(color: Colors.black54, fontSize: 13),
+                        ),
+                      ],
+                    ),
                   );
                 }
 
                 return ListView(
-                  padding: const EdgeInsets.all(14),
+                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
                   children: [
-                    _sectionTitle('Summary'),
+                    // ── Summary section ──
+                    _sectionTitle(Icons.bar_chart_outlined, 'Summary'),
                     Card(
                       child: Padding(
-                        padding: const EdgeInsets.all(12),
+                        padding: const EdgeInsets.all(14),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Text(
-                              station.isEmpty
+                              st.isEmpty
                                   ? 'Totals (All stations)'
-                                  : 'Totals — $station',
+                                  : 'Totals — $st',
                               style: const TextStyle(
-                                fontWeight: FontWeight.w800,
+                                fontWeight: FontWeight.w700,
+                                fontSize: 13,
                               ),
                             ),
-                            const SizedBox(height: 8),
-                            Text(
-                              'Today: UGX $todayTotal • Payments: ${todayItems.length}',
+                            const SizedBox(height: 10),
+                            // Today row
+                            _summaryRow(
+                              icon: Icons.today_outlined,
+                              label: 'Today',
+                              amount: todayTotal,
+                              count: todayItems.length,
+                              color: AppColors.primary,
                             ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'All time: UGX $allTotal • Payments: ${stationItems.length}',
+                            const SizedBox(height: 6),
+                            // All time row
+                            _summaryRow(
+                              icon: Icons.history_outlined,
+                              label: 'All time',
+                              amount: allTotal,
+                              count: stationItems.length,
+                              color: Colors.blue,
                             ),
                           ],
                         ),
                       ),
                     ),
-                    const SizedBox(height: 14),
-                    _sectionTitle('Latest payments'),
+                    const SizedBox(height: 16),
+
+                    // ── Latest payments ──
+                    _sectionTitle(
+                      Icons.receipt_long_outlined,
+                      'Latest payments',
+                    ),
                     for (final x in stationItems.take(50))
-                      Card(
-                        child: ListTile(
-                          leading: const Icon(Icons.receipt_long),
-                          title: Text(
-                            'UGX ${x.amount} • ${x.method.trim().isEmpty ? '—' : x.method.trim()}',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: () {
-                            final prop = propBox.get(
-                              int.tryParse(x.propertyKey),
-                            );
-                            final code =
-                                (prop?.propertyCode.trim().isNotEmpty ?? false)
-                                ? prop!.propertyCode.trim()
-                                : '—';
-                            return Text(
-                              'Property: $code\nTxnRef: ${x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim()}',
-                              style: const TextStyle(fontSize: 12),
-                            );
-                          }(),
-                          trailing: Text(
-                            _fmt16(x.createdAt),
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ),
-                      ),
+                      _paymentTile(x, propBox),
                   ],
                 );
               },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // Summary row helper
+
+  Widget _summaryRow({
+    required IconData icon,
+    required String label,
+    required int amount,
+    required int count,
+    required Color color,
+  }) {
+    return Row(
+      children: [
+        Container(
+          width: 32,
+          height: 32,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: Icon(icon, size: 16, color: color),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: Text(
+            label,
+            style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+          ),
+        ),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            Text(
+              'UGX ${_fmtAmount(amount)}',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
+            ),
+            Text(
+              '$count payment${count == 1 ? '' : 's'}',
+              style: TextStyle(
+                fontSize: 11,
+                color: Theme.of(
+                  context,
+                ).colorScheme.onSurface.withValues(alpha: 0.50),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  // Payment tile
+
+  Widget _paymentTile(dynamic x, dynamic propBox) {
+    final prop = propBox.get(int.tryParse(x.propertyKey));
+    final code = (prop?.propertyCode.trim().isNotEmpty ?? false)
+        ? prop!.propertyCode.trim()
+        : '—';
+    final method = x.method.trim().isEmpty ? '—' : x.method.trim();
+    final txnRef = x.txnRef.trim().isEmpty ? '—' : x.txnRef.trim();
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Receipt icon avatar
+            Container(
+              width: 40,
+              height: 40,
+              decoration: BoxDecoration(
+                color: AppColors.primary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(
+                Icons.receipt_long_outlined,
+                size: 20,
+                color: AppColors.primary,
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'UGX ${_fmtAmount(x.amount)}  •  $method',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 14,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Row(
+                    children: [
+                      Icon(Icons.inventory_2_outlined, size: 12, color: muted),
+                      const SizedBox(width: 3),
+                      Text(
+                        'Property: $code',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: muted),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 2),
+                  Row(
+                    children: [
+                      Icon(Icons.tag_outlined, size: 12, color: muted),
+                      const SizedBox(width: 3),
+                      Expanded(
+                        child: Text(
+                          'Ref: $txnRef',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(fontSize: 12, color: muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      Icon(Icons.access_time_outlined, size: 12, color: muted),
+                      const SizedBox(width: 3),
+                      Text(
+                        _fmt16(x.createdAt),
+                        style: TextStyle(fontSize: 11, color: muted),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
             ),
           ],
         ),

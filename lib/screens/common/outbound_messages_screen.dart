@@ -1,3 +1,4 @@
+import 'package:bus_cargo_tracker/ui/app_colors.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -10,7 +11,6 @@ import '../../services/role_guard.dart';
 
 class OutboundMessagesScreen extends StatefulWidget {
   final String? channelFilter;
-
   final String? title;
 
   const OutboundMessagesScreen({super.key, this.channelFilter, this.title});
@@ -43,7 +43,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   void initState() {
     super.initState();
     _controller = TabController(length: 4, vsync: this);
-
     final initial = (widget.channelFilter ?? '').trim().toLowerCase();
     _channelMode = (initial == 'sms' || initial == 'whatsapp')
         ? initial
@@ -73,14 +72,12 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
   bool _passesChannel(OutboundMessage m) {
     if (_channelMode == 'all') return true;
-    final ch = m.channel.trim().toLowerCase();
-    return ch == _channelMode;
+    return m.channel.trim().toLowerCase() == _channelMode;
   }
 
   int _countForStatus(Box<OutboundMessage> box, String status) {
     return box.values.where((m) {
-      final st = m.status.trim().toLowerCase();
-      if (st != status) return false;
+      if (m.status.trim().toLowerCase() != status) return false;
       return _passesChannel(m);
     }).length;
   }
@@ -88,27 +85,29 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   Future<void> _requeueOpenedNow() async {
     if (_busy) return;
     setState(() => _busy = true);
-
     try {
       final box = HiveService.outboundMessageBox();
-
-      final beforeOpened = box.values.where((m) {
-        final st = m.status.trim().toLowerCase();
-        if (st != OutboundMessageService.statusOpened) return false;
-        return _passesChannel(m);
-      }).length;
+      final beforeOpened = box.values
+          .where(
+            (m) =>
+                m.status.trim().toLowerCase() ==
+                    OutboundMessageService.statusOpened &&
+                _passesChannel(m),
+          )
+          .length;
 
       await OutboundMessageService.requeueOpenedMessages();
 
       if (!mounted) return;
-
-      final afterOpened = box.values.where((m) {
-        final st = m.status.trim().toLowerCase();
-        if (st != OutboundMessageService.statusOpened) return false;
-        return _passesChannel(m);
-      }).length;
-
-      final n = (beforeOpened - afterOpened);
+      final afterOpened = box.values
+          .where(
+            (m) =>
+                m.status.trim().toLowerCase() ==
+                    OutboundMessageService.statusOpened &&
+                _passesChannel(m),
+          )
+          .length;
+      final n = beforeOpened - afterOpened;
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
@@ -119,7 +118,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           ),
         ),
       );
-
       _controller.animateTo(0);
     } catch (e) {
       if (!mounted) return;
@@ -134,14 +132,11 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   Future<void> _openNext() async {
     if (_busy) return;
     setState(() => _busy = true);
-
     try {
       final msg = await OutboundMessageService.processQueueOpenNext(
         channelFilter: _channelMode == 'all' ? null : _channelMode,
       );
-
       if (!mounted) return;
-
       if (msg == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -154,12 +149,10 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         );
         return;
       }
-
       final st = msg.status.trim().toLowerCase();
       final ch = msg.channel.trim().isEmpty
           ? 'whatsapp'
           : msg.channel.trim().toLowerCase();
-
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -190,18 +183,14 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
   Future<void> _openSpecific(OutboundMessage msg) async {
     if (_busy) return;
     setState(() => _busy = true);
-
     try {
       final res = await OutboundMessageService.openSpecific(msg);
-
       if (!mounted) return;
       if (res == null) return;
-
       final st = res.status.trim().toLowerCase();
       final ch = res.channel.trim().isEmpty
           ? 'whatsapp'
           : res.channel.trim().toLowerCase();
-
       if (st == OutboundMessageService.statusOpened) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -235,7 +224,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     try {
       await OutboundMessageService.markSent(msg);
       if (!mounted) return;
-
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Marked as sent ✅')));
@@ -259,7 +247,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
         reason: 'Operator marked failed',
       );
       if (!mounted) return;
-
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('Marked as failed ⚠️')));
@@ -284,74 +271,101 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
 
   Widget _buildTab(Box<OutboundMessage> box, String status) {
     final items = box.values.where((m) {
-      final st = m.status.trim().toLowerCase();
-      if (st != status) return false;
+      if (m.status.trim().toLowerCase() != status) return false;
       return _passesChannel(m);
     }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final channelLabel = _channelMode == 'all'
+        ? ''
+        : ' · ${_channelMode.toUpperCase()}';
 
-    String headerLabel;
-    if (status == OutboundMessageService.statusQueued) {
-      headerLabel = 'Queued';
-    } else if (status == OutboundMessageService.statusOpened) {
-      headerLabel = 'Opened';
-    } else if (status == OutboundMessageService.statusFailed) {
-      headerLabel = 'Failed';
-    } else {
-      headerLabel = 'Sent';
+    String statusLabel;
+    switch (status) {
+      case 'queued':
+        statusLabel = 'Queued';
+        break;
+      case 'opened':
+        statusLabel = 'Opened';
+        break;
+      case 'failed':
+        statusLabel = 'Failed';
+        break;
+      default:
+        statusLabel = 'Sent';
     }
-
-    final header = _channelMode == 'all'
-        ? headerLabel
-        : '$headerLabel ${_channelMode.toUpperCase()}';
 
     return Column(
       children: [
+        // ── Info + action bar ──
         Padding(
-          padding: const EdgeInsets.all(12),
-          child: Card(
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      '$header: ${items.length}',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: Theme.of(context).colorScheme.outlineVariant,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.info_outline, size: 18, color: AppColors.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    '$statusLabel$channelLabel: ${items.length}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 13,
                     ),
                   ),
-                  if (_isAdmin)
-                    TextButton.icon(
-                      onPressed: _busy ? null : _requeueOpenedNow,
-                      icon: const Icon(Icons.refresh, size: 18),
-                      label: const Text('Requeue'),
-                    ),
+                ),
+                if (_isAdmin) ...[
                   const SizedBox(width: 6),
-                  ElevatedButton.icon(
-                    onPressed: _busy ? null : _openNext,
-                    icon: const Icon(Icons.open_in_new),
-                    label: Text(_busy ? 'Working...' : 'Open next'),
+                  _actionButton(
+                    label: 'Requeue',
+                    icon: Icons.refresh_outlined,
+                    onTap: _busy ? null : _requeueOpenedNow,
+                    outlined: true,
                   ),
                 ],
-              ),
+                const SizedBox(width: 8),
+                _actionButton(
+                  label: _busy ? 'Working…' : 'Open next',
+                  icon: Icons.open_in_new_outlined,
+                  onTap: _busy ? null : _openNext,
+                  outlined: false,
+                ),
+              ],
             ),
           ),
         ),
+
+        // ── Channel filter pills ──
+        Padding(
+          padding: const EdgeInsets.fromLTRB(12, 6, 12, 4),
+          child: Row(
+            children: [
+              _channelPill('all', 'All'),
+              const SizedBox(width: 6),
+              _channelPill('sms', 'SMS'),
+              const SizedBox(width: 6),
+              _channelPill('whatsapp', 'WhatsApp'),
+            ],
+          ),
+        ),
+
+        // ── List ──
         Expanded(
           child: items.isEmpty
-              ? Center(
-                  child: Text(
-                    'No messages here.',
-                    style: TextStyle(color: muted),
-                  ),
-                )
+              ? _emptyState(Icons.mail_outline, 'No messages here.')
               : ListView.builder(
-                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 32),
                   itemCount: items.length,
                   itemBuilder: (_, i) => _tile(items[i]),
                 ),
@@ -360,14 +374,72 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
     );
   }
 
+  // ── Compact action button ──
+  Widget _actionButton({
+    required String label,
+    required IconData icon,
+    required VoidCallback? onTap,
+    required bool outlined,
+  }) {
+    if (outlined) {
+      return OutlinedButton.icon(
+        onPressed: onTap,
+        icon: Icon(icon, size: 15),
+        label: Text(label, style: const TextStyle(fontSize: 12)),
+        style: OutlinedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          minimumSize: Size.zero,
+          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+          side: BorderSide(color: AppColors.primary),
+          foregroundColor: AppColors.primary,
+        ),
+      );
+    }
+    return ElevatedButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 15),
+      label: Text(label, style: const TextStyle(fontSize: 12)),
+      style: ElevatedButton.styleFrom(
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: Size.zero,
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
+    );
+  }
+
+  // ── Channel pill (replaces DropdownButton) ──
+  Widget _channelPill(String mode, String label) {
+    final active = _channelMode == mode;
+    return GestureDetector(
+      onTap: () => setState(() => _channelMode = mode),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 5),
+        decoration: BoxDecoration(
+          color: active
+              ? AppColors.primary
+              : AppColors.primary.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+            color: active ? Colors.white : AppColors.primary,
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _tile(OutboundMessage m) {
     final when = m.createdAt.toLocal().toString().substring(0, 16);
     final st = m.status.trim().toLowerCase();
     final ch = m.channel.trim().isEmpty ? 'whatsapp' : m.channel.trim();
-
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -377,41 +449,38 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           final choice = await showModalBottomSheet<String>(
             context: context,
             showDragHandle: true,
-            builder: (ctx) {
-              return SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    ListTile(
-                      leading: const Icon(Icons.copy),
-                      title: const Text('Copy phone'),
-                      subtitle: Text(m.toPhone),
-                      onTap: () => Navigator.pop(ctx, 'phone'),
+            builder: (ctx) => SafeArea(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.copy_outlined),
+                    title: const Text('Copy phone'),
+                    subtitle: Text(m.toPhone),
+                    onTap: () => Navigator.pop(ctx, 'phone'),
+                  ),
+                  ListTile(
+                    leading: const Icon(Icons.copy_outlined),
+                    title: const Text('Copy message'),
+                    subtitle: Text(
+                      m.body.length > 60
+                          ? '${m.body.substring(0, 60)}…'
+                          : m.body,
                     ),
+                    onTap: () => Navigator.pop(ctx, 'body'),
+                  ),
+                  if (m.propertyKey.trim().isNotEmpty)
                     ListTile(
-                      leading: const Icon(Icons.copy),
-                      title: const Text('Copy message'),
-                      subtitle: Text(
-                        m.body.length > 60
-                            ? '${m.body.substring(0, 60)}…'
-                            : m.body,
-                      ),
-                      onTap: () => Navigator.pop(ctx, 'body'),
+                      leading: const Icon(Icons.copy_outlined),
+                      title: const Text('Copy property key'),
+                      subtitle: Text(m.propertyKey),
+                      onTap: () => Navigator.pop(ctx, 'property'),
                     ),
-                    if (m.propertyKey.trim().isNotEmpty)
-                      ListTile(
-                        leading: const Icon(Icons.copy),
-                        title: const Text('Copy property key'),
-                        subtitle: Text(m.propertyKey),
-                        onTap: () => Navigator.pop(ctx, 'property'),
-                      ),
-                    const SizedBox(height: 6),
-                  ],
-                ),
-              );
-            },
+                  const SizedBox(height: 6),
+                ],
+              ),
+            ),
           );
-
           if (choice == 'phone') {
             await _copyToClipboard(m.toPhone, toast: 'Phone copied ✅');
           } else if (choice == 'body') {
@@ -424,51 +493,114 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
           }
         },
         child: Padding(
-          padding: const EdgeInsets.all(10),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ── Header row: channel avatar + phone + timestamp ──
               Row(
                 children: [
+                  _channelAvatar(ch),
+                  const SizedBox(width: 10),
                   Expanded(
-                    child: Text(
-                      '${ch.toUpperCase()} → ${m.toPhone}',
-                      style: const TextStyle(fontWeight: FontWeight.w800),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          m.toPhone,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            fontSize: 14,
+                          ),
+                        ),
+                        Text(
+                          ch.toUpperCase(),
+                          style: TextStyle(
+                            fontSize: 11,
+                            color: _channelColor(ch),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  Text(when, style: TextStyle(fontSize: 12, color: muted)),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      _statusPill(m.status),
+                      const SizedBox(height: 4),
+                      Text(when, style: TextStyle(fontSize: 10, color: muted)),
+                    ],
+                  ),
                 ],
               ),
-              const SizedBox(height: 6),
-              Text(
-                'Property: ${m.propertyKey.trim().isEmpty ? '—' : m.propertyKey}',
-                style: TextStyle(color: muted),
-              ),
+
               const SizedBox(height: 8),
-              Text(m.body),
-              const SizedBox(height: 10),
+
+              // ── Property key row ──
+              if (m.propertyKey.trim().isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.inventory_2_outlined, size: 13, color: muted),
+                      const SizedBox(width: 4),
+                      Text(
+                        m.propertyKey,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: muted),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // ── Message body ──
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(m.body, style: const TextStyle(fontSize: 13)),
+              ),
+
+              const SizedBox(height: 8),
+
+              // ── Footer row: attempts + action buttons ──
               Row(
                 children: [
+                  Icon(Icons.repeat_outlined, size: 13, color: muted),
+                  const SizedBox(width: 4),
                   Text(
-                    'Status: ${m.status} | Attempts: ${m.attempts}',
+                    'Attempts: ${m.attempts}',
                     style: TextStyle(fontSize: 12, color: muted),
                   ),
                   const Spacer(),
                   if (st == OutboundMessageService.statusQueued ||
                       st == OutboundMessageService.statusFailed)
-                    OutlinedButton(
-                      onPressed: _busy ? null : () => _openSpecific(m),
-                      child: const Text('Open'),
+                    _actionButton(
+                      label: 'Open',
+                      icon: Icons.open_in_new_outlined,
+                      onTap: _busy ? null : () => _openSpecific(m),
+                      outlined: true,
                     ),
                   if (st == OutboundMessageService.statusOpened) ...[
-                    OutlinedButton(
-                      onPressed: _busy ? null : () => _markFailed(m),
-                      child: const Text('Mark failed'),
+                    _actionButton(
+                      label: 'Mark failed',
+                      icon: Icons.cancel_outlined,
+                      onTap: _busy ? null : () => _markFailed(m),
+                      outlined: true,
                     ),
                     const SizedBox(width: 8),
-                    ElevatedButton(
-                      onPressed: _busy ? null : () => _markSent(m),
-                      child: const Text('Mark sent'),
+                    _actionButton(
+                      label: 'Mark sent',
+                      icon: Icons.check_circle_outline,
+                      onTap: _busy ? null : () => _markSent(m),
+                      outlined: false,
                     ),
                   ],
                 ],
@@ -476,6 +608,80 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _channelAvatar(String ch) {
+    final color = _channelColor(ch);
+    IconData icon;
+    if (ch.toLowerCase() == 'sms') {
+      icon = Icons.sms_outlined;
+    } else {
+      icon = Icons.chat_outlined;
+    }
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Icon(icon, size: 20, color: color),
+    );
+  }
+
+  Color _channelColor(String ch) {
+    return ch.toLowerCase() == 'sms' ? Colors.blue : Colors.green;
+  }
+
+  Widget _statusPill(String status) {
+    final color = _statusColor(status.toLowerCase());
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        status,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: color,
+        ),
+      ),
+    );
+  }
+
+  Color _statusColor(String s) {
+    switch (s) {
+      case 'queued':
+        return Colors.amber.shade700;
+      case 'opened':
+        return Colors.blue;
+      case 'sent':
+        return Colors.green;
+      case 'failed':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  /// Empty state: icon + message (never plain text alone)
+  Widget _emptyState(IconData icon, String message) {
+    return Center(
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 18, color: Colors.black38),
+          const SizedBox(width: 8),
+          Text(
+            message,
+            style: const TextStyle(color: Colors.black54, fontSize: 14),
+          ),
+        ],
       ),
     );
   }
@@ -492,6 +698,19 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
       appBar: AppBar(
         centerTitle: true,
         title: Text(_screenTitle),
+        actions: [
+          if (_isAdmin)
+            IconButton(
+              tooltip: _busy ? 'Working...' : 'Requeue opened',
+              icon: const Icon(Icons.refresh_outlined),
+              onPressed: _busy ? null : _requeueOpenedNow,
+            ),
+          IconButton(
+            tooltip: _busy ? 'Working...' : 'Open next',
+            icon: const Icon(Icons.send_outlined),
+            onPressed: _busy ? null : _openNext,
+          ),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(48),
           child: ValueListenableBuilder(
@@ -501,7 +720,6 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
               final o = _countForStatus(b, OutboundMessageService.statusOpened);
               final f = _countForStatus(b, OutboundMessageService.statusFailed);
               final s = _countForStatus(b, OutboundMessageService.statusSent);
-
               return TabBar(
                 controller: _controller,
                 tabs: [
@@ -514,47 +732,13 @@ class _OutboundMessagesScreenState extends State<OutboundMessagesScreen>
             },
           ),
         ),
-        actions: [
-          if (_isAdmin)
-            IconButton(
-              tooltip: _busy ? 'Working...' : 'Requeue opened',
-              icon: const Icon(Icons.refresh),
-              onPressed: _busy ? null : _requeueOpenedNow,
-            ),
-          DropdownButtonHideUnderline(
-            child: Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: DropdownButton<String>(
-                value: _channelMode,
-                dropdownColor: Theme.of(context).colorScheme.surface,
-                icon: const Icon(Icons.filter_list),
-                items: const [
-                  DropdownMenuItem(value: 'all', child: Text('All')),
-                  DropdownMenuItem(value: 'sms', child: Text('SMS')),
-                  DropdownMenuItem(value: 'whatsapp', child: Text('WhatsApp')),
-                ],
-                onChanged: (v) {
-                  if (v == null) return;
-                  setState(() => _channelMode = v);
-                },
-              ),
-            ),
-          ),
-          IconButton(
-            tooltip: _busy ? 'Working...' : 'Open next',
-            icon: const Icon(Icons.send_outlined),
-            onPressed: _busy ? null : _openNext,
-          ),
-        ],
       ),
-
       body: ValueListenableBuilder(
         valueListenable: box.listenable(),
         builder: (context, Box<OutboundMessage> b, _) {
           return TabBarView(
             controller: _controller,
-            physics:
-                const NeverScrollableScrollPhysics(), // optional but recommended
+            physics: const NeverScrollableScrollPhysics(),
             children: [
               _buildTab(b, _statusForTab(0)),
               _buildTab(b, _statusForTab(1)),

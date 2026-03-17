@@ -35,6 +35,12 @@ class User extends HiveObject {
   @HiveField(9)
   String? assignedRouteName;
 
+  @HiveField(10)
+  String? passwordSalt;
+
+  @HiveField(11, defaultValue: false)
+  bool phoneVerified;
+
   User({
     required this.id,
     required this.fullName,
@@ -46,5 +52,7 @@ class User extends HiveObject {
     this.photoPath,
     this.assignedRouteId,
     this.assignedRouteName,
+    this.passwordSalt,
+    this.phoneVerified = false,
   });
 }

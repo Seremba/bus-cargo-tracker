@@ -3,7 +3,9 @@ import 'package:flutter/services.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../services/property_lookup_service.dart';
 import '../../services/property_qr_service.dart';
+import '../../services/property_service.dart';
 
 class PropertyQrDisplayScreen extends StatefulWidget {
   final String propertyCode;
@@ -20,12 +22,27 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
   void initState() {
     super.initState();
 
-    // ✅ Kill any SnackBars queued during transition from previous screen.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+
+      // Clear any SnackBars queued during transition from previous screen
       final m = ScaffoldMessenger.of(context);
       m.clearSnackBars();
       m.hideCurrentSnackBar();
+
+      // S2: lock the property the moment the sender sees the QR.
+      // From this point on, core fields (receiver, destination, item count,
+      // route) are committed and verified by a SHA-256 hash at desk scan.
+      // We look up by code because this screen only receives a String.
+      final property = PropertyLookupService.findByPropertyCode(
+        widget.propertyCode.trim(),
+      );
+      if (property != null) {
+        // Fire-and-forget — locking is non-blocking and low-risk.
+        // If it fails (e.g. Hive write error) the property stays unlocked
+        // and the desk scan will simply skip hash verification.
+        PropertyService.lockProperty(property).catchError((_) {});
+      }
     });
   }
 
@@ -55,7 +72,6 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
     m.hideCurrentSnackBar();
 
     if (Navigator.canPop(context)) {
-      // ✅ return "true" to tell previous screen to go to My Properties
       Navigator.pop(context, true);
     }
   }

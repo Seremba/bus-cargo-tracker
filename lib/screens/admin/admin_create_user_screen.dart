@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/routes.dart';
 import '../../models/user_role.dart';
@@ -21,6 +22,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
   final _station = TextEditingController();
 
   bool _loading = false;
+  bool _hidePass = true;
   UserRole _role = UserRole.staff;
   AppRoute? _selectedRoute;
 
@@ -40,32 +42,90 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
   bool get _routeEnabled => _role == UserRole.driver;
 
-  Widget _notAuthorized() =>
-      const Scaffold(body: Center(child: Text('Not authorized')));
+  String get _roleHelperText {
+    switch (_role) {
+      case UserRole.staff:
+        return 'Can mark cargo delivered and confirm pickups. Station required.';
+      case UserRole.driver:
+        return 'Can start trips and track checkpoints. Route assignment required.';
+      case UserRole.deskCargoOfficer:
+        return 'Can mark cargo as loaded at the station. Station optional.';
+      default:
+        return '';
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
-    if (!RoleGuard.hasRole(UserRole.admin)) return _notAuthorized();
+    if (!RoleGuard.hasRole(UserRole.admin)) {
+      return const Scaffold(body: Center(child: Text('Not authorized')));
+    }
+
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Create User')),
+      bottomNavigationBar: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+          child: ElevatedButton.icon(
+            onPressed: _loading ? null : _submit,
+            style: ElevatedButton.styleFrom(
+              minimumSize: const Size.fromHeight(50),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            icon: _loading
+                ? const SizedBox(
+                    width: 18,
+                    height: 18,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.person_add_outlined),
+            label: Text(
+              _loading ? 'Creating...' : 'Create user',
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ),
+      ),
       body: Padding(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.symmetric(horizontal: 16),
         child: Form(
           key: _formKey,
           child: ListView(
             children: [
-              const Text(
-                'Create a new user account',
-                style: TextStyle(fontWeight: FontWeight.w700),
-              ),
               const SizedBox(height: 12),
 
+              const Text(
+                'New user account',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'Fill in the details below to create a staff, driver, or desk officer account.',
+                style: TextStyle(fontSize: 13, color: muted),
+              ),
+
+              const SizedBox(height: 20),
+
+              // Full Name
               TextFormField(
                 controller: _name,
-                decoration: const InputDecoration(
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
                   labelText: 'Full Name',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.person_outline),
+                  filled: true,
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                 ),
                 validator: (v) {
                   final t = v?.trim() ?? '';
@@ -76,28 +136,59 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
               ),
               const SizedBox(height: 12),
 
+              // Phone
               TextFormField(
                 controller: _phone,
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(
+                textInputAction: TextInputAction.next,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(15),
+                ],
+                decoration: InputDecoration(
                   labelText: 'Phone',
-                  border: OutlineInputBorder(),
+                  hintText: 'e.g. 0700000000',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.phone_outlined),
+                  filled: true,
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                 ),
                 validator: (v) {
                   final t = v?.trim() ?? '';
                   if (t.isEmpty) return 'Phone required';
-                  if (t.length < 9) return 'Enter a valid phone';
+                  if (t.length < 9) return 'Enter a valid phone number';
                   return null;
                 },
               ),
               const SizedBox(height: 12),
 
+              // Temporary Password
               TextFormField(
                 controller: _password,
-                obscureText: true,
-                decoration: const InputDecoration(
+                obscureText: _hidePass,
+                textInputAction: TextInputAction.next,
+                decoration: InputDecoration(
                   labelText: 'Temporary Password',
-                  border: OutlineInputBorder(),
+                  helperText:
+                      'Share this with the user — they can change it later.',
+                  helperMaxLines: 2,
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  filled: true,
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  suffixIcon: IconButton(
+                    tooltip:
+                        _hidePass ? 'Show password' : 'Hide password',
+                    icon: Icon(
+                      _hidePass
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                    onPressed: () =>
+                        setState(() => _hidePass = !_hidePass),
+                  ),
                 ),
                 validator: (v) {
                   final t = v?.trim() ?? '';
@@ -106,26 +197,41 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   return null;
                 },
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 16),
 
+              const Divider(height: 1),
+              const SizedBox(height: 16),
+
+              // Role dropdown
               DropdownButtonFormField<UserRole>(
-                initialValue: _role,
-                decoration: const InputDecoration(
+                value: _role,
+                isExpanded: true,
+                decoration: InputDecoration(
                   labelText: 'Role',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.badge_outlined),
+                  filled: true,
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                 ),
                 items: const [
                   DropdownMenuItem(
                     value: UserRole.staff,
-                    child: Text('Staff (Station required)'),
+                    child: Text('Staff',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
                   ),
                   DropdownMenuItem(
                     value: UserRole.driver,
-                    child: Text('Driver'),
+                    child: Text('Driver',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
                   ),
                   DropdownMenuItem(
                     value: UserRole.deskCargoOfficer,
-                    child: Text('Desk Cargo Officer'),
+                    child: Text('Desk Cargo Officer',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis),
                   ),
                 ],
                 onChanged: (v) {
@@ -136,59 +242,123 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   });
                 },
               ),
+
+              // Role helper text
+              if (_roleHelperText.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.info_outline,
+                          size: 14, color: cs.primary),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          _roleHelperText,
+                          style: TextStyle(
+                              fontSize: 12, color: cs.primary),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               const SizedBox(height: 12),
 
-              TextFormField(
-                controller: _station,
-                enabled: _stationEnabled,
-                decoration: InputDecoration(
-                  labelText: _stationRequired
-                      ? 'Station Name (required)'
-                      : (_stationEnabled
-                            ? 'Station Name (optional)'
-                            : 'Station Name (not applicable)'),
-                  border: const OutlineInputBorder(),
+              // Station field
+              if (_stationEnabled) ...[
+                TextFormField(
+                  controller: _station,
+                  textInputAction: TextInputAction.next,
+                  decoration: InputDecoration(
+                    labelText: _stationRequired
+                        ? 'Station Name'
+                        : 'Station Name (optional)',
+                    hintText: 'e.g. Kampala, Juba',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.location_on_outlined),
+                    filled: true,
+                    fillColor: cs.surfaceContainerHighest
+                        .withValues(alpha: 0.30),
+                  ),
+                  validator: (v) {
+                    if (!_stationRequired) return null;
+                    final t = v?.trim() ?? '';
+                    if (t.isEmpty) return 'Station is required for staff';
+                    return null;
+                  },
                 ),
-                validator: (v) {
-                  if (!_stationRequired) return null;
-                  final t = v?.trim() ?? '';
-                  if (t.isEmpty) return 'Station required for staff';
-                  return null;
-                },
+                const SizedBox(height: 12),
+              ],
+
+              // ── Route dropdown: isExpanded + ellipsis fixes overflow ──
+              if (_routeEnabled) ...[
+                DropdownButtonFormField<AppRoute>(
+                  value: _selectedRoute,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    labelText: 'Assigned Route',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.route_outlined),
+                    filled: true,
+                    fillColor: cs.surfaceContainerHighest
+                        .withValues(alpha: 0.30),
+                  ),
+                  items: routes
+                      .map(
+                        (r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(
+                            r.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: (v) => setState(() => _selectedRoute = v),
+                  validator: (v) {
+                    if (_role != UserRole.driver) return null;
+                    return v == null
+                        ? 'Route is required for drivers'
+                        : null;
+                  },
+                ),
+                const SizedBox(height: 12),
+              ],
+
+              const SizedBox(height: 8),
+
+              // Info note
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(
+                    color: cs.outlineVariant.withValues(alpha: 0.50),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline, size: 16, color: muted),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Only staff, driver, and desk officer accounts can be created here. '
+                        'Sender accounts are self-registered via the app.',
+                        style: TextStyle(fontSize: 12, color: muted),
+                      ),
+                    ),
+                  ],
+                ),
               ),
 
-              const SizedBox(height: 12),
-
-              DropdownButtonFormField<AppRoute>(
-                initialValue: _selectedRoute,
-                decoration: const InputDecoration(
-                  labelText: 'Assigned Route (drivers only)',
-                  border: OutlineInputBorder(),
-                ),
-                items: routes
-                    .map((r) => DropdownMenuItem(value: r, child: Text(r.name)))
-                    .toList(),
-                onChanged: _routeEnabled
-                    ? (v) => setState(() => _selectedRoute = v)
-                    : null,
-                validator: (v) {
-                  if (_role != UserRole.driver) return null;
-                  return v == null
-                      ? 'Assigned route required for driver'
-                      : null;
-                },
-              ),
-
-              const SizedBox(height: 18),
-
-              ElevatedButton.icon(
-                onPressed: _loading ? null : _submit,
-                style: ElevatedButton.styleFrom(
-                  minimumSize: const Size.fromHeight(48),
-                ),
-                icon: const Icon(Icons.person_add),
-                label: Text(_loading ? 'Creating...' : 'Create user'),
-              ),
+              const SizedBox(height: 24),
             ],
           ),
         ),
@@ -202,17 +372,17 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
     setState(() => _loading = true);
     try {
       final user = await AuthService.adminCreateUser(
-        fullName: _name.text,
-        phone: _phone.text,
-        password: _password.text,
+        fullName: _name.text.trim(),
+        phone: _phone.text.trim(),
+        password: _password.text.trim(),
         role: _role,
         stationName: _stationEnabled && _station.text.trim().isNotEmpty
             ? _station.text.trim()
             : null,
-        assignedRouteId: _role == UserRole.driver ? _selectedRoute?.id : null,
-        assignedRouteName: _role == UserRole.driver
-            ? _selectedRoute?.name
-            : null,
+        assignedRouteId:
+            _role == UserRole.driver ? _selectedRoute?.id : null,
+        assignedRouteName:
+            _role == UserRole.driver ? _selectedRoute?.name : null,
       );
 
       if (!mounted) return;
@@ -220,7 +390,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
       if (user == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Failed ❌ Phone already exists (or not allowed)'),
+            content: Text(
+                'Failed ❌ Phone already exists or not allowed.'),
           ),
         );
         return;
@@ -228,7 +399,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('User created ✅ ${user.fullName} (${user.role.name})'),
+          content: Text(
+              'User created ✅ ${user.fullName} (${user.role.name})'),
         ),
       );
 

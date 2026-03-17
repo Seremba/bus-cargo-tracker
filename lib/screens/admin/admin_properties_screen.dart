@@ -5,15 +5,11 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
 import '../../models/property_status.dart';
+import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/property_service.dart';
 import '../../services/role_guard.dart';
-
-import '../../theme/status_colors.dart';
-import '../../widgets/status_chip.dart';
-
-import '../../ui/status_labels.dart';
 
 class AdminPropertiesScreen extends StatefulWidget {
   const AdminPropertiesScreen({super.key});
@@ -24,16 +20,8 @@ class AdminPropertiesScreen extends StatefulWidget {
 
 class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   final Set<dynamic> _repairedKeys = <dynamic>{};
-
   bool _autoRepairScheduled = false;
   bool _isRepairing = false;
-
-  String _s(String? v) => v ?? '';
-
-  String _dashIfEmpty(String? v) {
-    final t = (v ?? '').trim();
-    return t.isEmpty ? '—' : t;
-  }
 
   String _fmt16(DateTime? d) {
     if (d == null) return '—';
@@ -49,15 +37,69 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     return impliesLoaded && p.loadedAt == null;
   }
 
+  // Resolve a userId to a display name from the user box
+  String _resolveSender(String userId) {
+    final raw = userId.trim();
+    if (raw.isEmpty) return '—';
+    try {
+      final user =
+          HiveService.userBox().values.firstWhere((u) => (u as User).id == raw)
+              as User;
+      final name = user.fullName.trim();
+      return name.isEmpty ? raw : name;
+    } catch (_) {
+      return raw;
+    }
+  }
+
+  // Returns (label, background, foreground) for each status
+  static ({String label, Color bg, Color fg}) _statusStyle(
+    BuildContext context,
+    PropertyStatus status,
+  ) {
+    switch (status) {
+      case PropertyStatus.pending:
+        return (
+          label: 'Pending',
+          bg: const Color(0xFFFFF8E1),
+          fg: const Color(0xFFF57F17),
+        );
+      case PropertyStatus.loaded:
+        return (
+          label: 'Loaded',
+          bg: const Color(0xFFFFF3E0),
+          fg: const Color(0xFFE65100),
+        );
+      case PropertyStatus.inTransit:
+        return (
+          label: 'In Transit',
+          bg: const Color(0xFFE3F2FD),
+          fg: const Color(0xFF1565C0),
+        );
+      case PropertyStatus.delivered:
+        return (
+          label: 'Delivered',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF2E7D32),
+        );
+      case PropertyStatus.pickedUp:
+        return (
+          label: 'Picked Up',
+          bg: const Color(0xFFE8F5E9),
+          fg: const Color(0xFF1B5E20),
+        );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!RoleGuard.hasRole(UserRole.admin)) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
-    final box = HiveService.propertyBox();
+    final propertyBox = HiveService.propertyBox();
     final cs = Theme.of(context).colorScheme;
-    final muted = cs.onSurface.withValues(alpha: 0.60);
+    final muted = cs.onSurface.withValues(alpha: 0.55);
 
     return Scaffold(
       appBar: AppBar(
@@ -74,32 +116,37 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.build_circle_outlined),
-            onPressed: _isRepairing ? null : () => _manualRepairAll(box),
+            onPressed: _isRepairing
+                ? null
+                : () => _manualRepairAll(propertyBox),
           ),
           const SizedBox(width: 6),
         ],
       ),
-      body: ValueListenableBuilder(
-        valueListenable: box.listenable(),
-        builder: (context, Box<Property> box, _) {
-          final items = box.values.toList()
+      body: AnimatedBuilder(
+        animation: Listenable.merge([
+          propertyBox.listenable(),
+          HiveService.userBox().listenable(),
+        ]),
+        builder: (context, _) {
+          final items = propertyBox.values.toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
           if (items.isEmpty) {
             return const Center(child: Text('No properties yet.'));
           }
 
-          // Auto-repair opportunistically (ONCE) outside build
           _scheduleAutoRepairOnce(items);
 
           final brokenCount = items.where(_isLegacyBrokenLoaded).length;
 
           return ListView(
-            padding: const EdgeInsets.only(bottom: 12),
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
+              // Legacy repair warning banner
               if (brokenCount > 0)
                 Card(
-                  margin: const EdgeInsets.all(12),
+                  margin: const EdgeInsets.only(bottom: 8),
                   color: cs.tertiary.withValues(alpha: 0.12),
                   child: Padding(
                     padding: const EdgeInsets.all(12),
@@ -109,134 +156,181 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                         const SizedBox(width: 10),
                         Expanded(
                           child: Text(
-                            '$brokenCount old record(s) are missing Loaded milestone.\n'
-                            'They will be repaired automatically when you open this screen.',
+                            '$brokenCount old record(s) missing Loaded milestone.',
                             style: TextStyle(fontSize: 12, color: muted),
                           ),
                         ),
                         TextButton.icon(
                           onPressed: _isRepairing
                               ? null
-                              : () => _manualRepairAll(box),
+                              : () => _manualRepairAll(propertyBox),
                           icon: const Icon(Icons.build, size: 18),
-                          label: const Text('Repair now'),
+                          label: const Text('Repair'),
                         ),
                       ],
                     ),
                   ),
                 ),
-              ListView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                itemCount: items.length,
-                itemBuilder: (context, index) {
-                  final p = items[index];
 
-                  final routeText = _dashIfEmpty(p.routeName);
-                  final senderText = _dashIfEmpty(p.createdByUserId);
-
-                  final legacyBroken = _isLegacyBrokenLoaded(p);
-                  final loadedDone =
-                      p.loadedAt != null ||
-                      p.status == PropertyStatus.inTransit ||
-                      p.status == PropertyStatus.delivered ||
-                      p.status == PropertyStatus.pickedUp;
-
-                  final bg = PropertyStatusColors.background(p.status);
-                  final fg = PropertyStatusColors.foreground(p.status);
-
-                  return Card(
-                    margin: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 8,
-                      ),
-                      title: Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              _s(p.receiverName),
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          StatusChip(
-                            text: PropertyStatusLabels.text(p.status),
-                            bgColor: bg,
-                            fgColor: fg,
-                          ),
-                        ],
-                      ),
-                      subtitle: Padding(
-                        padding: const EdgeInsets.only(top: 8),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '${_s(p.destination)} • ${_s(p.receiverPhone)}',
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              'Items: ${p.itemCount} • Route: $routeText',
-                              style: TextStyle(fontSize: 12, color: muted),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Sender: $senderText',
-                              style: TextStyle(fontSize: 12, color: muted),
-                            ),
-                            const SizedBox(height: 4),
-                            Text(
-                              'Created: ${_fmt16(p.createdAt)}',
-                              style: TextStyle(fontSize: 12, color: muted),
-                            ),
-                            const SizedBox(height: 10),
-
-                            Row(
-                              children: [
-                                Icon(
-                                  loadedDone
-                                      ? Icons.check_circle
-                                      : Icons.radio_button_unchecked,
-                                  size: 16,
-                                  color: loadedDone ? cs.primary : muted,
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    'Loaded: ${_fmt16(p.loadedAt)}',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: muted,
-                                    ),
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                                if (legacyBroken) ...[
-                                  const SizedBox(width: 8),
-                                  const _WarnBadge(text: 'Legacy fix needed'),
-                                ],
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      trailing: const Icon(Icons.edit),
-                      onTap: () => _adminChangeStatus(context, p),
-                      onLongPress: legacyBroken ? () => _repairOne(p) : null,
-                    ),
-                  );
-                },
-              ),
+              for (final p in items) _propertyCard(context, p, cs, muted),
             ],
           );
         },
+      ),
+    );
+  }
+
+  Widget _propertyCard(
+    BuildContext context,
+    Property p,
+    ColorScheme cs,
+    Color muted,
+  ) {
+    final style = _statusStyle(context, p.status);
+    final legacyBroken = _isLegacyBrokenLoaded(p);
+
+    final routeText = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
+    final senderName = _resolveSender(p.createdByUserId);
+
+    final loadedDone =
+        p.loadedAt != null ||
+        p.status == PropertyStatus.inTransit ||
+        p.status == PropertyStatus.delivered ||
+        p.status == PropertyStatus.pickedUp;
+
+    // Only show loaded row when there's something meaningful to show
+    final showLoadedRow =
+        p.loadedAt != null ||
+        p.status == PropertyStatus.inTransit ||
+        p.status == PropertyStatus.delivered ||
+        p.status == PropertyStatus.pickedUp;
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => _adminChangeStatus(context, p),
+        onLongPress: legacyBroken ? () => _repairOne(p) : null,
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // ── Row 1: receiver name + status chip + edit icon ──────────
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Expanded(
+                    child: Text(
+                      p.receiverName.trim().isEmpty ? '—' : p.receiverName,
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Consistent colored pill chip
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: style.bg,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      style.label,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: style.fg,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Edit icon with a proper tap target
+                  InkWell(
+                    borderRadius: BorderRadius.circular(8),
+                    onTap: () => _adminChangeStatus(context, p),
+                    child: Padding(
+                      padding: const EdgeInsets.all(4),
+                      child: Icon(Icons.edit_outlined, size: 18, color: muted),
+                    ),
+                  ),
+                ],
+              ),
+
+              const SizedBox(height: 8),
+
+              // ── Row 2: destination + phone ──────────────────────────────
+              Text(
+                '📍 ${p.destination.trim().isEmpty ? '—' : p.destination}  •  ${p.receiverPhone.trim().isEmpty ? '—' : p.receiverPhone}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+
+              const SizedBox(height: 4),
+
+              // ── Row 3: items + route (no wrap) ──────────────────────────
+              Text(
+                '${p.itemCount} item${p.itemCount == 1 ? '' : 's'}  •  $routeText',
+                style: TextStyle(fontSize: 12, color: muted),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+
+              const SizedBox(height: 4),
+
+              // ── Row 4: sender (resolved to name) ───────────────────────
+              Text(
+                'Sender: $senderName',
+                style: TextStyle(fontSize: 12, color: muted),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+
+              const SizedBox(height: 4),
+
+              // ── Row 5: created date ─────────────────────────────────────
+              Text(
+                'Created: ${_fmt16(p.createdAt)}',
+                style: TextStyle(fontSize: 12, color: muted),
+              ),
+
+              // ── Row 6: loaded milestone (hidden when not relevant) ──────
+              if (showLoadedRow) ...[
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Icon(
+                      loadedDone
+                          ? Icons.check_circle
+                          : Icons.radio_button_unchecked,
+                      size: 15,
+                      color: loadedDone ? Colors.green : muted,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        'Loaded: ${_fmt16(p.loadedAt)}',
+                        style: TextStyle(fontSize: 12, color: muted),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (legacyBroken) ...[
+                      const SizedBox(width: 8),
+                      const _WarnBadge(text: 'Legacy fix needed'),
+                    ],
+                  ],
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -254,10 +348,8 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
       for (final p in items) {
         if (repaired >= cap) break;
         if (!_isLegacyBrokenLoaded(p)) continue;
-
         final key = p.key;
         if (_repairedKeys.contains(key)) continue;
-
         final did = await PropertyService.repairMissingLoadedMilestone(p);
         _repairedKeys.add(key);
         if (did) repaired++;
@@ -285,19 +377,14 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
 
   Future<void> _manualRepairAll(Box<Property> box) async {
     if (_isRepairing) return;
-
     setState(() => _isRepairing = true);
     int repaired = 0;
 
     try {
-      final items = box.values.toList();
-
-      for (final p in items) {
+      for (final p in box.values.toList()) {
         if (!_isLegacyBrokenLoaded(p)) continue;
-
         final key = p.key;
         if (_repairedKeys.contains(key)) continue;
-
         final did = await PropertyService.repairMissingLoadedMilestone(p);
         _repairedKeys.add(key);
         if (did) repaired++;
@@ -326,7 +413,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     final result = await showDialog<PropertyStatus>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Admin: Change Status'),
+        title: const Text('Change Status'),
         content: DropdownButtonFormField<PropertyStatus>(
           initialValue: selected,
           items: const [
@@ -384,7 +471,6 @@ class _WarnBadge extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(

@@ -135,6 +135,18 @@ class Property extends HiveObject {
   @HiveField(41, defaultValue: true)
   bool routeConfirmed;
 
+  /// S2 — true once the sender has viewed/shared their QR or property code.
+  /// After locking, core fields are immutable and verified by [commitHash].
+  /// Set via PropertyService.lockProperty(); default false for existing records.
+  @HiveField(42, defaultValue: false)
+  bool isLocked;
+
+  /// S2 — SHA-256 of the canonical field string recorded at lock time.
+  /// Verified by PropertyService.verifyCommitHash() during desk officer scan.
+  /// Null on records created before this field was introduced.
+  @HiveField(43)
+  String? commitHash;
+
   Property({
     required this.receiverName,
     required this.receiverPhone,
@@ -178,6 +190,8 @@ class Property extends HiveObject {
     this.aggregateVersion = 1,
     this.routeConfirmed = true,
     String? receiverNotifyChannel,
+    this.isLocked = false,
+    this.commitHash,
   }) : loadedAtStation = (loadedAtStation ?? '').trim(),
        loadedByUserId = (loadedByUserId ?? '').trim(),
        routeId = routeId ?? '',

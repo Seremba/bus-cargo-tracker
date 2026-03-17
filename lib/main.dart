@@ -1,3 +1,4 @@
+import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -23,7 +24,6 @@ import 'services/auth_service.dart';
 import 'services/auto_sync_service.dart';
 import 'services/hive_service.dart';
 import 'services/route_decider_service.dart';
-
 import 'services/sync_service.dart';
 import 'ui/app_colors.dart';
 
@@ -80,7 +80,6 @@ void main() async {
   if (!Hive.isAdapterRegistered(SyncEventTypeAdapter().typeId)) {
     Hive.registerAdapter(SyncEventTypeAdapter());
   }
-
   if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
     Hive.registerAdapter(SyncEventAdapter());
   }
@@ -154,6 +153,12 @@ class MyApp extends StatelessWidget {
       title: 'Bebeto Cargo',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
+      // S5: SessionGuard wraps every screen built by the navigator.
+      // It is a no-op when no session is active (splash, login, register)
+      // because Session.isExpired returns false when currentUserId is null.
+      builder: (context, child) {
+        return SessionGuard(child: child ?? const SizedBox.shrink());
+      },
       home: SplashScreen(nextBuilder: RouteDeciderService.nextWidget),
     );
   }

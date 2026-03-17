@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:bus_cargo_tracker/ui/app_colors.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -17,6 +18,7 @@ import '../../services/session.dart';
 import '../../services/trip_service.dart';
 
 import '../admin/driver_load_overview_screen.dart';
+
 
 import '../../theme/status_colors.dart';
 import '../../ui/status_labels.dart';
@@ -55,7 +57,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   @override
   void initState() {
     super.initState();
-
     if (_canUseDriverTools) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
@@ -76,10 +77,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   Future<void> _startGps() async {
     if (!_canUseDriverTools) return;
     if (_sub != null) return;
-
     try {
       final ok = await LocationService.ensurePermission();
-
       if (!ok) {
         if (mounted) {
           setState(() => _gpsStatus = 'GPS: permission denied / location off');
@@ -87,33 +86,27 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         _scheduleRetry();
         return;
       }
-
       if (mounted) setState(() => _gpsStatus = 'GPS: listening...');
 
       _sub = LocationService.positionStream().listen(
         (Position pos) async {
           if (!mounted) return;
-
           _lastGpsAt = DateTime.now();
-
           final activeTrip = TripService.getActiveTripForCurrentDriver();
           if (activeTrip == null) _lastSnackCheckpointIndex = -1;
 
           setState(() {
             final coords =
                 '${pos.latitude.toStringAsFixed(4)}, ${pos.longitude.toStringAsFixed(4)}';
-
             final acc = pos.accuracy.isNaN
                 ? '—'
                 : '${pos.accuracy.toStringAsFixed(0)}m';
-
             _gpsStatus = activeTrip == null
                 ? 'GPS: $coords (±$acc) (no active trip)'
                 : 'GPS: $coords (±$acc) (tracking trip: ${activeTrip.routeName})';
           });
 
           if (activeTrip == null) return;
-
           final now = DateTime.now();
           if (now.difference(_lastCheckpointCheck).inSeconds < 8) return;
           _lastCheckpointCheck = now;
@@ -123,7 +116,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
             lng: pos.longitude,
             accuracyMeters: pos.accuracy,
           );
-
           if (!mounted) return;
 
           final updatedTrip = TripService.getActiveTripForCurrentDriver();
@@ -131,14 +123,12 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
           if (reached && currentIndex > _lastSnackCheckpointIndex) {
             _lastSnackCheckpointIndex = currentIndex;
-
             final cpName =
                 (updatedTrip != null &&
                     currentIndex >= 0 &&
                     currentIndex < updatedTrip.checkpoints.length)
                 ? updatedTrip.checkpoints[currentIndex].name
                 : 'Checkpoint';
-
             ScaffoldMessenger.of(
               context,
             ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
@@ -152,9 +142,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         cancelOnError: false,
       );
     } catch (e) {
-      if (mounted) {
-        setState(() => _gpsStatus = 'GPS startup failed: $e');
-      }
+      if (mounted) setState(() => _gpsStatus = 'GPS startup failed: $e');
       _restartGps();
     }
   }
@@ -178,69 +166,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     return 'Last GPS: ${_lastGpsAt!.toLocal().toString().substring(0, 19)}';
   }
 
-  Widget _emptyHint(BuildContext context, String text) {
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(text, style: TextStyle(color: muted)),
-    );
-  }
-
-  Widget _gpsPanel(BuildContext context) {
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
-
-    final isError =
-        _gpsStatus.toLowerCase().contains('error') ||
-        _gpsStatus.toLowerCase().contains('failed') ||
-        _gpsStatus.toLowerCase().contains('denied');
-
-    final icon = isError ? Icons.gps_off : Icons.gps_fixed;
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(icon, size: 20, color: isError ? muted : null),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    _gpsStatus,
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _lastGpsText(),
-                    style: TextStyle(fontSize: 12, color: muted),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 10),
-            OutlinedButton(
-              onPressed: () {
-                setState(() => _gpsStatus = 'GPS: retrying...');
-                _restartGps();
-              },
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _startAssignedRouteTrip() async {
     final routeId = _assignedRouteId;
     if (routeId == null || routeId.isEmpty) {
@@ -249,15 +174,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       );
       return;
     }
-
     if (_startingTrip) return;
     setState(() => _startingTrip = true);
-
     try {
       final trip = await PropertyService.startRouteTrip(routeId: routeId);
-
       if (!mounted) return;
-
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -277,6 +198,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     }
   }
 
+  // =========================
+  // Build
+  // =========================
   @override
   Widget build(BuildContext context) {
     if (Session.currentUserId == null ||
@@ -302,10 +226,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
     final pBox = HiveService.propertyBox();
     final iBox = HiveService.propertyItemBox();
-
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
       appBar: AppBar(
@@ -317,7 +239,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         animation: Listenable.merge([pBox.listenable(), iBox.listenable()]),
         builder: (context, _) {
           final itemSvc = PropertyItemService(iBox);
-
           final routeProperties =
               pBox.values.where((p) => p.routeId == assignedRouteId).toList()
                 ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
@@ -328,7 +249,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
           for (final p in routeProperties) {
             final items = itemSvc.getItemsForProperty(p.key.toString());
-
             final loadedReady = items
                 .where(
                   (x) =>
@@ -336,73 +256,156 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                       x.tripId.trim().isEmpty,
                 )
                 .length;
-
             final remaining = items
                 .where((x) => x.status == PropertyItemStatus.pending)
                 .length;
-
             if (loadedReady > 0) {
               readyProperties += 1;
               readyItems += loadedReady;
             }
-
             remainingItems += remaining;
           }
 
           return ListView(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
             children: [
+              // ── Active trip panel ──
               _activeTripPanel(context),
               const SizedBox(height: 10),
 
+              // ── View Load Overview button ──
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  icon: const Icon(Icons.inventory_2_outlined),
-                  label: const Text('View Load Overview'),
-                  onPressed: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const DriverLoadOverviewScreen(),
-                      ),
-                    );
-                  },
+                  icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                  label: const Text(
+                    'View Load Overview',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 13),
+                    side: BorderSide(color: AppColors.primary),
+                    foregroundColor: AppColors.primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const DriverLoadOverviewScreen(),
+                    ),
+                  ),
                 ),
               ),
 
               const SizedBox(height: 10),
+
+              // ── GPS panel ──
               _gpsPanel(context),
 
               const SizedBox(height: 14),
+
+              // ── Assigned Route card ──
               Card(
                 child: Padding(
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text(
-                        'Assigned Route',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
+                      // Section title
+                      Row(
+                        children: [
+                          Container(
+                            width: 3,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              color: AppColors.primary,
+                              borderRadius: BorderRadius.circular(2),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Icon(
+                            Icons.route_outlined,
+                            size: 17,
+                            color: AppColors.primary,
+                          ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'Assigned Route',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(height: 8),
-                      Text(_dashIfEmpty(assignedRouteName)),
-                      const SizedBox(height: 8),
-                      Text('Ready properties: $readyProperties'),
-                      Text('Ready loaded items: $readyItems'),
-                      Text('Remaining at station: $remainingItems'),
+                      const SizedBox(height: 10),
+
+                      // Route name
+                      Text(
+                        _dashIfEmpty(assignedRouteName),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 13, color: muted),
+                      ),
+                      const SizedBox(height: 10),
+
+                      // Stat pills row
+                      Row(
+                        children: [
+                          Expanded(
+                            child: _statPill(
+                              icon: Icons.inventory_2_outlined,
+                              label: 'Ready props',
+                              value: '$readyProperties',
+                              color: Colors.green,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _statPill(
+                              icon: Icons.check_circle_outline,
+                              label: 'Loaded items',
+                              value: '$readyItems',
+                              color: AppColors.primary,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: _statPill(
+                              icon: Icons.hourglass_top_outlined,
+                              label: 'Remaining',
+                              value: '$remainingItems',
+                              color: Colors.amber.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+
                       const SizedBox(height: 12),
+
+                      // Start Trip button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
                           onPressed: (_startingTrip || readyItems <= 0)
                               ? null
                               : _startAssignedRouteTrip,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: AppColors.primary,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
                           child: Text(
                             _startingTrip ? 'Starting...' : 'Start Trip',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                              fontSize: 15,
+                            ),
                           ),
                         ),
                       ),
@@ -411,22 +414,57 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                 ),
               ),
 
-              const SizedBox(height: 14),
-              const Text(
-                'Route Manifest',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              const SizedBox(height: 16),
+
+              // ── Route Manifest section title ──
+              Row(
+                children: [
+                  Container(
+                    width: 3,
+                    height: 20,
+                    decoration: BoxDecoration(
+                      color: AppColors.primary,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Icon(
+                    Icons.list_alt_outlined,
+                    size: 17,
+                    color: AppColors.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  const Text(
+                    'Route Manifest',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ],
               ),
               const SizedBox(height: 4),
-              Text(
-                'Showing cargo for your assigned route only.',
-                style: TextStyle(fontSize: 12, color: muted),
+              Row(
+                children: [
+                  Icon(Icons.info_outline, size: 13, color: muted),
+                  const SizedBox(width: 4),
+                  Expanded(
+                    child: Text(
+                      'Showing cargo for your assigned route only.',
+                      style: TextStyle(fontSize: 12, color: muted),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 10),
 
               if (routeProperties.isEmpty)
-                _emptyHint(
-                  context,
-                  'No cargo found yet for your assigned route.',
+                Row(
+                  children: [
+                    Icon(Icons.inbox_outlined, size: 16, color: Colors.black38),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'No cargo found yet for your assigned route.',
+                      style: TextStyle(color: Colors.black54, fontSize: 13),
+                    ),
+                  ],
                 ),
 
               for (final p in routeProperties)
@@ -438,32 +476,246 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
+  // =========================
+  // GPS panel
+  // =========================
+  Widget _gpsPanel(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
+
+    final isError =
+        _gpsStatus.toLowerCase().contains('error') ||
+        _gpsStatus.toLowerCase().contains('failed') ||
+        _gpsStatus.toLowerCase().contains('denied');
+
+    final iconColor = isError ? Colors.red : Colors.green;
+    final icon = isError ? Icons.gps_off : Icons.gps_fixed;
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outlineVariant),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, size: 18, color: iconColor),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _gpsStatus,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  _lastGpsText(),
+                  style: TextStyle(fontSize: 11, color: muted),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 10),
+          OutlinedButton(
+            onPressed: () {
+              setState(() => _gpsStatus = 'GPS: retrying...');
+              _restartGps();
+            },
+            style: OutlinedButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              side: BorderSide(color: AppColors.primary),
+              foregroundColor: AppColors.primary,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(8),
+              ),
+            ),
+            child: const Text('Retry', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // =========================
+  // Active trip panel
+  // =========================
+  Widget _activeTripPanel(BuildContext context) {
+    final trip = TripService.getActiveTripForCurrentDriver();
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
+
+    if (trip == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: cs.outlineVariant),
+        ),
+        child: Row(
+          children: [
+            Icon(Icons.info_outline, size: 16, color: muted),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text(
+                'No active trip yet. Start your assigned route trip.',
+                style: TextStyle(fontSize: 13),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final total = trip.checkpoints.length;
+    final reachedCount = (trip.lastCheckpointIndex + 1).clamp(0, total);
+    final progress = total > 0 ? reachedCount / total : 0.0;
+
+    final nextName = total == 0
+        ? '—'
+        : (trip.lastCheckpointIndex + 1 >= total)
+        ? '— (all checkpoints reached)'
+        : trip.checkpoints[trip.lastCheckpointIndex + 1].name;
+
+    final tripBg = TripStatusColors.background(trip.status);
+    final tripFg = TripStatusColors.foreground(trip.status);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Section title
+            Row(
+              children: [
+                Container(
+                  width: 3,
+                  height: 20,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Icon(
+                  Icons.directions_bus_outlined,
+                  size: 17,
+                  color: AppColors.primary,
+                ),
+                const SizedBox(width: 6),
+                const Expanded(
+                  child: Text(
+                    'Active Trip',
+                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                StatusChip(
+                  text: TripStatusLabels.text(trip.status),
+                  bgColor: tripBg,
+                  fgColor: tripFg,
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                Icon(Icons.route_outlined, size: 13, color: muted),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    trip.routeName,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: muted),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.place_outlined, size: 13, color: muted),
+                const SizedBox(width: 4),
+                Expanded(
+                  child: Text(
+                    'Next: $nextName',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(fontSize: 13, color: muted),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            // Checkpoint progress bar
+            Row(
+              children: [
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(4),
+                    child: LinearProgressIndicator(
+                      value: progress,
+                      minHeight: 6,
+                      backgroundColor: AppColors.primary.withValues(
+                        alpha: 0.12,
+                      ),
+                      valueColor: AlwaysStoppedAnimation<Color>(
+                        AppColors.primary,
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Text(
+                  '$reachedCount / $total',
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: muted,
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // =========================
+  // Manifest card
+  // =========================
   Widget _manifestCard(
     BuildContext context,
     Property p, {
     required PropertyItemService itemSvc,
   }) {
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.60);
 
     final items = itemSvc.getItemsForProperty(p.key.toString());
-
     final loadedReady = items
         .where(
           (x) =>
               x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
         )
         .length;
-
     final inTransitCount = items
         .where((x) => x.status == PropertyItemStatus.inTransit)
         .length;
-
     final deliveredCount = items
         .where((x) => x.status == PropertyItemStatus.delivered)
         .length;
-
     final pickedUpCount = items
         .where((x) => x.status == PropertyItemStatus.pickedUp)
         .length;
@@ -472,16 +724,60 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     final fg = PropertyStatusColors.foreground(p.status);
 
     return Card(
+      margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(12),
         child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Header ──
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
+                // Initials avatar
+                _initialsAvatar(_s(p.receiverName)),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    _s(p.receiverName),
-                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        _s(p.receiverName),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 14,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Icon(Icons.place_outlined, size: 12, color: muted),
+                          const SizedBox(width: 3),
+                          Expanded(
+                            child: Text(
+                              _s(p.destination),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(fontSize: 12, color: muted),
+                            ),
+                          ),
+                        ],
+                      ),
+                      Row(
+                        children: [
+                          Icon(Icons.phone_outlined, size: 12, color: muted),
+                          const SizedBox(width: 3),
+                          Text(
+                            _s(p.receiverPhone),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: muted),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -492,26 +788,26 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                 ),
               ],
             ),
+
+            const SizedBox(height: 10),
+            Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.5)),
             const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text('${_s(p.destination)} • ${_s(p.receiverPhone)}'),
-            ),
-            const SizedBox(height: 4),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Items: ${p.itemCount} • Route: ${_dashIfEmpty(p.routeName)}',
-                style: TextStyle(fontSize: 12, color: muted),
-              ),
-            ),
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Text(
-                'Ready: $loadedReady • In transit: $inTransitCount • Delivered: $deliveredCount • Picked up: $pickedUpCount',
-                style: TextStyle(fontSize: 12, color: muted),
-              ),
+
+            // ── Item counts ──
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                _countChip('${p.itemCount} total', Colors.grey.shade600),
+                if (loadedReady > 0)
+                  _countChip('$loadedReady loaded', Colors.green),
+                if (inTransitCount > 0)
+                  _countChip('$inTransitCount in transit', Colors.blue),
+                if (deliveredCount > 0)
+                  _countChip('$deliveredCount delivered', Colors.teal),
+                if (pickedUpCount > 0)
+                  _countChip('$pickedUpCount picked up', Colors.purple),
+              ],
             ),
           ],
         ),
@@ -519,79 +815,92 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  Widget _activeTripPanel(BuildContext context) {
-    final trip = TripService.getActiveTripForCurrentDriver();
+  // =========================
+  // Small helpers
+  // =========================
 
-    final muted = Theme.of(
-      context,
-    ).colorScheme.onSurface.withValues(alpha: 0.60);
-    final surface = Theme.of(context).colorScheme.surface;
+  Widget _initialsAvatar(String fullName) {
+    final parts = fullName.trim().split(' ');
+    final initials = parts.length >= 2
+        ? '${parts.first[0]}${parts.last[0]}'.toUpperCase()
+        : fullName.isNotEmpty
+        ? fullName.substring(0, fullName.length.clamp(0, 2)).toUpperCase()
+        : '??';
+    return Container(
+      width: 38,
+      height: 38,
+      decoration: BoxDecoration(
+        color: AppColors.primary.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      alignment: Alignment.center,
+      child: Text(
+        initials,
+        style: TextStyle(
+          color: AppColors.primary,
+          fontWeight: FontWeight.bold,
+          fontSize: 13,
+        ),
+      ),
+    );
+  }
 
-    if (trip == null) {
-      return Card(
-        color: surface,
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
+  Widget _statPill({
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Icon(Icons.info_outline, size: 18, color: muted),
-              const SizedBox(width: 8),
-              const Expanded(
+              Icon(icon, size: 12, color: color),
+              const SizedBox(width: 4),
+              Expanded(
                 child: Text(
-                  'No active trip yet. Start your assigned route trip.',
+                  label,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(fontSize: 10, color: color),
                 ),
               ),
             ],
           ),
-        ),
-      );
-    }
-
-    final total = trip.checkpoints.length;
-    final reachedCount = (trip.lastCheckpointIndex + 1).clamp(0, total);
-
-    String nextName;
-    if (total == 0) {
-      nextName = '—';
-    } else if (trip.lastCheckpointIndex + 1 >= total) {
-      nextName = '— (all checkpoints reached)';
-    } else {
-      nextName = trip.checkpoints[trip.lastCheckpointIndex + 1].name;
-    }
-
-    final tripBg = TripStatusColors.background(trip.status);
-    final tripFg = TripStatusColors.foreground(trip.status);
-
-    return Card(
-      color: surface,
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Expanded(
-                  child: Text(
-                    'Active Trip',
-                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                StatusChip(
-                  text: TripStatusLabels.text(trip.status),
-                  bgColor: tripBg,
-                  fgColor: tripFg,
-                ),
-              ],
+          const SizedBox(height: 2),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: color,
             ),
-            const SizedBox(height: 8),
-            Text('Route: ${trip.routeName}'),
-            Text('Next checkpoint: $nextName'),
-            Text(
-              'Progress: $reachedCount / $total',
-              style: TextStyle(fontSize: 12, color: muted),
-            ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _countChip(String label, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(20),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          color: color,
         ),
       ),
     );

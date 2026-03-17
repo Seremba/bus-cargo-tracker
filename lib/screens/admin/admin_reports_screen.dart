@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../models/payment_record.dart';
 import '../../models/property_status.dart';
 import '../../models/trip_status.dart';
 
@@ -17,8 +18,8 @@ class AdminReportsScreen extends StatefulWidget {
 }
 
 class _AdminReportsScreenState extends State<AdminReportsScreen> {
-  DateTime? _start; // inclusive
-  DateTime? _end; // inclusive
+  DateTime? _start;
+  DateTime? _end;
   _QuickRange _quick = _QuickRange.last7Days;
 
   @override
@@ -41,7 +42,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       _start = todayStart.subtract(const Duration(days: 29));
       _end = todayStart;
     }
-
     setState(() => _quick = r);
   }
 
@@ -58,11 +58,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
 
     if (picked == null) return;
-
-    // normalize to date-only (midnight)
     final s = DateTime(picked.start.year, picked.start.month, picked.start.day);
     final e = DateTime(picked.end.year, picked.end.month, picked.end.day);
-
     setState(() {
       _start = s;
       _end = e;
@@ -74,30 +71,35 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     final s = _start;
     final e = _end;
     if (s == null || e == null) return true;
-
-    // compare by date only
     final d = DateTime(dt.year, dt.month, dt.day);
     return !d.isBefore(s) && !d.isAfter(e);
-    // inclusive
   }
 
   String _rangeLabel() {
     final s = _start;
     final e = _end;
     if (s == null || e == null) return 'All time';
-
     String fmt(DateTime d) =>
         '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-
     if (s.year == e.year && s.month == e.month && s.day == e.day) {
       return fmt(s);
     }
     return '${fmt(s)} → ${fmt(e)}';
   }
 
+  // Format numbers with commas
+  String _fmt(int n) {
+    final s = n.abs().toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return n < 0 ? '-${buf.toString()}' : buf.toString();
+  }
+
   @override
   Widget build(BuildContext context) {
-    // ✅ UI guard (admin only)
     if (!RoleGuard.hasRole(UserRole.admin)) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
@@ -105,6 +107,9 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     final pBox = HiveService.propertyBox();
     final tBox = HiveService.tripBox();
     final aBox = HiveService.auditBox();
+    final payBox = HiveService.paymentBox();
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
 
     return Scaffold(
       appBar: AppBar(
@@ -124,98 +129,307 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           pBox.listenable(),
           tBox.listenable(),
           aBox.listenable(),
+          payBox.listenable(),
         ]),
         builder: (context, _) {
           final propertiesAll = pBox.values.toList();
           final tripsAll = tBox.values.toList();
           final auditsAll = aBox.values.toList();
+          final paymentsAll = payBox.values.toList();
 
-          final properties = propertiesAll.where((p) => _inRange(p.createdAt)).toList();
+          final properties = propertiesAll
+              .where((p) => _inRange(p.createdAt))
+              .toList();
           final trips = tripsAll.where((t) => _inRange(t.startedAt)).toList();
           final audits = auditsAll.where((a) => _inRange(a.at)).toList();
+
+          // Payments in range
+          final paymentsInRange = paymentsAll
+              .whereType<PaymentRecord>()
+              .where((x) => _inRange(x.createdAt))
+              .toList();
+          final totalCollected = paymentsInRange
+              .where((x) => x.amount > 0)
+              .fold<int>(0, (s, x) => s + x.amount);
+          final totalRefunded = paymentsInRange
+              .where((x) => x.amount < 0)
+              .fold<int>(0, (s, x) => s + x.amount.abs());
+          final totalNet = totalCollected - totalRefunded;
 
           int countStatus(PropertyStatus s) =>
               properties.where((p) => p.status == s).length;
 
           final pending = countStatus(PropertyStatus.pending);
+          final loaded = countStatus(PropertyStatus.loaded);
           final inTransit = countStatus(PropertyStatus.inTransit);
           final delivered = countStatus(PropertyStatus.delivered);
           final pickedUp = countStatus(PropertyStatus.pickedUp);
 
-          // Delivered/Picked in-range based on timestamps (more accurate than createdAt)
           int deliveredInRange() => propertiesAll.where((p) {
-                final at = p.deliveredAt;
-                return at != null && _inRange(at);
-              }).length;
+            final at = p.deliveredAt;
+            return at != null && _inRange(at);
+          }).length;
 
           int pickedUpInRange() => propertiesAll.where((p) {
-                final at = p.pickedUpAt;
-                return at != null && _inRange(at);
-              }).length;
+            final at = p.pickedUpAt;
+            return at != null && _inRange(at);
+          }).length;
 
           final otpLockedCount = propertiesAll.where((p) {
-            // Only meaningful when waiting pickup
             if (p.status != PropertyStatus.delivered) return false;
-            return PropertyService.isOtpLocked(p) && _inRange(p.deliveredAt ?? p.createdAt);
+            return PropertyService.isOtpLocked(p) &&
+                _inRange(p.deliveredAt ?? p.createdAt);
           }).length;
 
           final otpExpiredCount = propertiesAll.where((p) {
             if (p.status != PropertyStatus.delivered) return false;
-            return PropertyService.isOtpExpired(p) && _inRange(p.deliveredAt ?? p.createdAt);
+            return PropertyService.isOtpExpired(p) &&
+                _inRange(p.deliveredAt ?? p.createdAt);
           }).length;
 
-          int tripCount(TripStatus s) => trips.where((t) => t.status == s).length;
+          final hasOtpIssues = otpLockedCount > 0 || otpExpiredCount > 0;
+
+          int tripCount(TripStatus s) =>
+              trips.where((t) => t.status == s).length;
 
           final activeTrips = tripCount(TripStatus.active);
           final endedTrips = tripCount(TripStatus.ended);
           final cancelledTrips = tripCount(TripStatus.cancelled);
 
           return ListView(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
             children: [
               _rangeHeader(),
-              const SizedBox(height: 10),
+              const SizedBox(height: 14),
 
-              _kpiRow([
-                _kpi('Properties', properties.length.toString()),
-                _kpi('Delivered', deliveredInRange().toString()),
-                _kpi('Picked up', pickedUpInRange().toString()),
-              ]),
-              const SizedBox(height: 10),
-
-              _sectionTitle('Property status (by created date in range)'),
+              _sectionTitle(context, 'Summary', Icons.summarize_outlined, cs),
               const SizedBox(height: 8),
               _kpiRow([
-                _kpi('Pending', pending.toString()),
-                _kpi('In Transit', inTransit.toString()),
-                _kpi('Delivered', delivered.toString()),
-              ]),
-              const SizedBox(height: 8),
-              _kpiRow([
-                _kpi('Picked Up', pickedUp.toString()),
-                _kpi('OTP locked', otpLockedCount.toString()),
-                _kpi('OTP expired', otpExpiredCount.toString()),
+                _kpi(
+                  label: 'Properties',
+                  value: _fmt(properties.length),
+                  color: cs.primary,
+                  bg: cs.primary.withValues(alpha: 0.08),
+                ),
+                _kpi(
+                  label: 'Delivered',
+                  value: _fmt(deliveredInRange()),
+                  color: Colors.green.shade700,
+                  bg: Colors.green.withValues(alpha: 0.08),
+                ),
+                _kpi(
+                  label: 'Picked up',
+                  value: _fmt(pickedUpInRange()),
+                  color: Colors.teal.shade700,
+                  bg: Colors.teal.withValues(alpha: 0.08),
+                ),
               ]),
 
               const SizedBox(height: 16),
-              _sectionTitle('Trips (by started date in range)'),
-              const SizedBox(height: 8),
-              _kpiRow([
-                _kpi('Active', activeTrips.toString()),
-                _kpi('Ended', endedTrips.toString()),
-                _kpi('Cancelled', cancelledTrips.toString()),
-              ]),
 
-              const SizedBox(height: 16),
-              _sectionTitle('Audit'),
+              _sectionTitle(context, 'Finance', Icons.payments_outlined, cs),
               const SizedBox(height: 8),
               Card(
-                child: ListTile(
-                  title: const Text('Audit events in range'),
-                  subtitle: Text('Range: ${_rangeLabel()}'),
-                  trailing: Text(
-                    audits.length.toString(),
-                    style: const TextStyle(fontWeight: FontWeight.bold),
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: Column(
+                    children: [
+                      _financeRow(
+                        label: 'Collected',
+                        value: 'UGX ${_fmt(totalCollected)}',
+                        color: Colors.green.shade700,
+                        muted: muted,
+                      ),
+                      if (totalRefunded > 0) ...[
+                        const SizedBox(height: 6),
+                        _financeRow(
+                          label: 'Refunded',
+                          value: 'UGX ${_fmt(totalRefunded)}',
+                          color: Colors.red.shade600,
+                          muted: muted,
+                        ),
+                      ],
+                      const SizedBox(height: 8),
+                      Divider(
+                        height: 1,
+                        color: cs.outlineVariant.withValues(alpha: 0.4),
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text(
+                            'Net',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          Text(
+                            'UGX ${_fmt(totalNet)}',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w900,
+                              fontSize: 18,
+                              color: cs.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '${paymentsInRange.length} payment record${paymentsInRange.length == 1 ? '' : 's'}',
+                          style: TextStyle(fontSize: 12, color: muted),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 16),
+
+              _sectionTitle(
+                context,
+                'Property status',
+                Icons.inventory_2_outlined,
+                cs,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'By created date in range',
+                style: TextStyle(fontSize: 11, color: muted),
+              ),
+              const SizedBox(height: 8),
+              _kpiRow([
+                _kpi(
+                  label: 'Pending',
+                  value: _fmt(pending),
+                  color: const Color(0xFFF57F17),
+                  bg: const Color(0xFFFFF8E1),
+                ),
+                _kpi(
+                  label: 'Loaded',
+                  value: _fmt(loaded),
+                  color: const Color(0xFFE65100),
+                  bg: const Color(0xFFFFF3E0),
+                ),
+                _kpi(
+                  label: 'In Transit',
+                  value: _fmt(inTransit),
+                  color: const Color(0xFF1565C0),
+                  bg: const Color(0xFFE3F2FD),
+                ),
+              ]),
+              const SizedBox(height: 8),
+              _kpiRow([
+                _kpi(
+                  label: 'Delivered',
+                  value: _fmt(delivered),
+                  color: Colors.green.shade700,
+                  bg: Colors.green.withValues(alpha: 0.08),
+                ),
+                _kpi(
+                  label: 'Picked Up',
+                  value: _fmt(pickedUp),
+                  color: Colors.teal.shade700,
+                  bg: Colors.teal.withValues(alpha: 0.08),
+                ),
+                // Empty spacer to keep grid aligned
+                const Expanded(child: SizedBox()),
+              ]),
+
+              // OTP issues — only shown when non-zero
+              if (hasOtpIssues) ...[
+                const SizedBox(height: 8),
+                _kpiRow([
+                  _kpi(
+                    label: 'OTP locked',
+                    value: _fmt(otpLockedCount),
+                    color: Colors.red.shade600,
+                    bg: Colors.red.withValues(alpha: 0.08),
+                  ),
+                  _kpi(
+                    label: 'OTP expired',
+                    value: _fmt(otpExpiredCount),
+                    color: Colors.orange.shade700,
+                    bg: Colors.orange.withValues(alpha: 0.08),
+                  ),
+                  const Expanded(child: SizedBox()),
+                ]),
+              ],
+
+              const SizedBox(height: 16),
+
+              _sectionTitle(
+                context,
+                'Trips',
+                Icons.local_shipping_outlined,
+                cs,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'By started date in range',
+                style: TextStyle(fontSize: 11, color: muted),
+              ),
+              const SizedBox(height: 8),
+              _kpiRow([
+                _kpi(
+                  label: 'Active',
+                  value: _fmt(activeTrips),
+                  color: Colors.green.shade700,
+                  bg: Colors.green.withValues(alpha: 0.08),
+                ),
+                _kpi(
+                  label: 'Ended',
+                  value: _fmt(endedTrips),
+                  color: muted,
+                  bg: cs.surfaceContainerHighest.withValues(alpha: 0.35),
+                ),
+                _kpi(
+                  label: 'Cancelled',
+                  value: _fmt(cancelledTrips),
+                  color: Colors.red.shade600,
+                  bg: Colors.red.withValues(alpha: 0.08),
+                ),
+              ]),
+
+              const SizedBox(height: 16),
+
+              _sectionTitle(context, 'Audit', Icons.history_outlined, cs),
+              const SizedBox(height: 8),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 12,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(Icons.receipt_long_outlined, color: muted, size: 20),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'Audit events in range',
+                              style: TextStyle(fontWeight: FontWeight.w600),
+                            ),
+                            Text(
+                              _rangeLabel(),
+                              style: TextStyle(fontSize: 12, color: muted),
+                            ),
+                          ],
+                        ),
+                      ),
+                      Text(
+                        _fmt(audits.length),
+                        style: TextStyle(
+                          fontWeight: FontWeight.w900,
+                          fontSize: 22,
+                          color: cs.primary,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ),
@@ -227,42 +441,62 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
   }
 
   Widget _rangeHeader() {
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
+
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Date range',
-              style: TextStyle(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 6),
-            Text(_rangeLabel(), style: const TextStyle(fontSize: 12)),
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
+            // Row 1: label left, date range right
+            Row(
               children: [
-                ChoiceChip(
-                  label: const Text('Today'),
-                  selected: _quick == _QuickRange.today,
-                  onSelected: (_) => _applyQuick(_QuickRange.today),
+                Icon(Icons.date_range, size: 15, color: cs.primary),
+                const SizedBox(width: 6),
+                Text(
+                  'Date range',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    color: cs.onSurface,
+                  ),
                 ),
-                ChoiceChip(
-                  label: const Text('Last 7 days'),
-                  selected: _quick == _QuickRange.last7Days,
-                  onSelected: (_) => _applyQuick(_QuickRange.last7Days),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 3,
+                  ),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(20),
+                  ),
+                  child: Text(
+                    _rangeLabel(),
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                      color: cs.primary,
+                    ),
+                  ),
                 ),
-                ChoiceChip(
-                  label: const Text('Last 30 days'),
-                  selected: _quick == _QuickRange.last30Days,
-                  onSelected: (_) => _applyQuick(_QuickRange.last30Days),
-                ),
-                ActionChip(
-                  label: const Text('Custom…'),
-                  onPressed: _pickCustomRange,
-                ),
+              ],
+            ),
+
+            const SizedBox(height: 10),
+
+            // Row 2: all 4 chips share width equally — never wraps
+            Row(
+              children: [
+                _expandedChip('Today', _QuickRange.today, cs),
+                const SizedBox(width: 6),
+                _expandedChip('7 days', _QuickRange.last7Days, cs),
+                const SizedBox(width: 6),
+                _expandedChip('30 days', _QuickRange.last30Days, cs),
+                const SizedBox(width: 6),
+                _expandedChip('Custom', _QuickRange.custom, cs, isAction: true),
               ],
             ),
           ],
@@ -271,30 +505,135 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
   }
 
-  Widget _sectionTitle(String text) => Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Text(
-          text,
-          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-        ),
-      );
-
-  Widget _kpi(String label, String value) {
+  // Expanded chip — all chips share equal width in the row
+  Widget _expandedChip(
+    String label,
+    _QuickRange range,
+    ColorScheme cs, {
+    bool isAction = false,
+  }) {
+    final selected = _quick == range;
     return Expanded(
-      child: Card(
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(label, style: const TextStyle(fontSize: 12)),
-              const SizedBox(height: 6),
-              Text(
-                value,
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w800),
-              ),
-            ],
+      child: GestureDetector(
+        onTap: () => isAction ? _pickCustomRange() : _applyQuick(range),
+        child: Container(
+          padding: const EdgeInsets.symmetric(vertical: 7),
+          decoration: BoxDecoration(
+            color: selected
+                ? cs.primary
+                : cs.surfaceContainerHighest.withValues(alpha: 0.40),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(
+              color: selected
+                  ? cs.primary
+                  : cs.outlineVariant.withValues(alpha: 0.50),
+            ),
           ),
+          alignment: Alignment.center,
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: selected ? cs.onPrimary : cs.onSurface,
+            ),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _sectionTitle(
+    BuildContext context,
+    String text,
+    IconData icon,
+    ColorScheme cs,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        children: [
+          Container(
+            width: 3,
+            height: 18,
+            decoration: BoxDecoration(
+              color: cs.primary,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Icon(icon, size: 16, color: cs.primary),
+          const SizedBox(width: 6),
+          Text(
+            text,
+            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _financeRow({
+    required String label,
+    required String value,
+    required Color color,
+    required Color muted,
+  }) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(label, style: TextStyle(fontSize: 13, color: muted)),
+        Text(
+          value,
+          style: TextStyle(
+            fontSize: 13,
+            fontWeight: FontWeight.w700,
+            color: color,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _kpi({
+    required String label,
+    required String value,
+    required Color color,
+    required Color bg,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: color.withValues(alpha: 0.20)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 11,
+                color: color,
+                fontWeight: FontWeight.w600,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w900,
+                color: color,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -305,7 +644,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
       children: [
         for (int i = 0; i < children.length; i++) ...[
           children[i],
-          if (i != children.length - 1) const SizedBox(width: 10),
+          if (i != children.length - 1) const SizedBox(width: 8),
         ],
       ],
     );

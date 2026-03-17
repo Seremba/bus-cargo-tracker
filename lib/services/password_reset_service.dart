@@ -1,4 +1,7 @@
+import 'dart:convert';
 import 'dart:math';
+
+import 'package:crypto/crypto.dart';
 
 import '../models/user.dart';
 import 'audit_service.dart';
@@ -17,22 +20,27 @@ class PasswordResetService {
   static const Duration resendCooldown = Duration(seconds: 60);
 
   // ====== Device rate limiting (per device/app install) ======
-  // Prevents one device from spamming SMS resets.
   static const Duration deviceCooldown = Duration(seconds: 30);
   static const Duration deviceWindow = Duration(hours: 1);
   static const int deviceMaxInWindow = 8;
 
   static const String _deviceRateKey = 'PWDRESET_DEVICE_RATE';
 
+  // ─── OTP hashing ─────────────────────────────────────────────────────────
+  // Reset OTPs are short-lived (10 min), stored in a temporary record that
+  // is deleted on success or expiry, and already protected by attempt
+  // limiting. Plain SHA-256 is sufficient here — no salt needed.
+  static String _hashOtp(String otp) {
+    return sha256.convert(utf8.encode(otp.trim())).toString();
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+
   static Map<String, dynamic> _readDeviceRate() {
     final box = HiveService.appSettingsBox();
     final v = box.get(_deviceRateKey);
     if (v is Map) return Map<String, dynamic>.from(v);
-    return <String, dynamic>{
-      'windowStartMs': 0,
-      'count': 0,
-      'lastMs': 0,
-    };
+    return <String, dynamic>{'windowStartMs': 0, 'count': 0, 'lastMs': 0};
   }
 
   static Future<void> _writeDeviceRate(Map<String, dynamic> v) async {
@@ -44,11 +52,8 @@ class PasswordResetService {
 
   static String _newOtp6() {
     final r = Random.secure();
-    final n = r.nextInt(900000) + 100000; // 100000..999999
-    return n.toString();
+    return (r.nextInt(900000) + 100000).toString();
   }
-
-  static String _hashOtp(String otp) => AuthService.hashPassword(otp);
 
   static String _digitsKey(String rawPhone) =>
       PhoneNormalizer.digitsOnly(rawPhone);
@@ -64,9 +69,7 @@ class PasswordResetService {
   }
 
   /// Step 1: Request OTP (queues SMS) and stores reset record in Hive.
-  static Future<ResetResult> requestOtp({
-    required String rawPhone,
-  }) async {
+  static Future<ResetResult> requestOtp({required String rawPhone}) async {
     final phoneDigits = _digitsKey(rawPhone);
     if (phoneDigits.isEmpty) {
       return const ResetResult(false, 'Phone number is required.');
@@ -75,7 +78,6 @@ class PasswordResetService {
       return const ResetResult(false, 'Enter a valid phone number.');
     }
 
-    // Must be message-ready for SMS OTP
     final msgPhone = PhoneNormalizer.normalizeForMessaging(rawPhone);
     if (msgPhone.isEmpty) {
       return const ResetResult(
@@ -96,8 +98,7 @@ class PasswordResetService {
     final key = _k(phoneDigits);
     final now = DateTime.now();
 
-    // ====== 2B) Device-level rate limiting (early) ======
-    // Cooldown + per-hour cap to prevent OTP spam from the same device.
+    // Device-level rate limiting
     final deviceRate = _readDeviceRate();
 
     final lastMs = (deviceRate['lastMs'] as int?) ?? 0;
@@ -130,7 +131,6 @@ class PasswordResetService {
         'Too many OTP requests. Please try again later.',
       );
     }
-    // ====== end device rate limiting ======
 
     final existing = box.get(key);
     if (existing is Map) {
@@ -153,7 +153,6 @@ class PasswordResetService {
 
     final otp = _newOtp6();
 
-    // Save/overwrite reset record
     await box.put(key, <String, dynamic>{
       'phoneDigits': phoneDigits,
       'otpHash': _hashOtp(otp),
@@ -163,8 +162,8 @@ class PasswordResetService {
       'lastSentAtMs': now.millisecondsSinceEpoch,
     });
 
-    // ✅ Recommended branded OTP SMS format
-    final body = '''
+    final body =
+        '''
 Bebeto Cargo
 
 Your password reset OTP is: $otp
@@ -180,18 +179,13 @@ This code expires in ${otpExpiry.inMinutes} minutes.
       propertyKey: key,
     );
 
-    // ====== 2C) Update device rate counters only AFTER successful queue ======
+    // Update device rate counters only after successful queue
     final dr = _readDeviceRate();
-
-    // Ensure window is initialized
     final ws2 = (dr['windowStartMs'] as int?) ?? 0;
     if (ws2 <= 0) dr['windowStartMs'] = now.millisecondsSinceEpoch;
-
     dr['lastMs'] = now.millisecondsSinceEpoch;
     dr['count'] = ((dr['count'] as int?) ?? 0) + 1;
-
     await _writeDeviceRate(dr);
-    // ====== end device rate update ======
 
     await AuditService.log(
       action: 'PWD_RESET_OTP_QUEUED',
@@ -219,12 +213,18 @@ This code expires in ${otpExpiry.inMinutes} minutes.
 
     final cleanPass = newPassword.trim();
     if (cleanPass.length < 6) {
-      return const ResetResult(false, 'Password must be at least 6 characters.');
+      return const ResetResult(
+        false,
+        'Password must be at least 6 characters.',
+      );
     }
 
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
-      return const ResetResult(false, 'No account found for that phone number.');
+      return const ResetResult(
+        false,
+        'No account found for that phone number.',
+      );
     }
 
     final box = HiveService.passwordResetBox();
@@ -291,15 +291,22 @@ This code expires in ${otpExpiry.inMinutes} minutes.
       return const ResetResult(false, 'Incorrect OTP. Try again.');
     }
 
-    // OTP ok -> update password
+    // OTP ok — update password using the new salted hash path
+    final (:hash, :salt) = AuthService.hashPasswordWithSalt(cleanPass);
+
     final updatedUser = User(
       id: user.id,
       fullName: user.fullName,
       phone: user.phone,
-      passwordHash: AuthService.hashPassword(cleanPass),
+      passwordHash: hash,
+      passwordSalt: salt,
       role: user.role,
       stationName: user.stationName,
       createdAt: user.createdAt,
+      photoPath: user.photoPath,
+      assignedRouteId: user.assignedRouteId,
+      assignedRouteName: user.assignedRouteName,
+      phoneVerified: user.phoneVerified,
     );
 
     await HiveService.userBox().put(user.id, updatedUser);

@@ -24,8 +24,8 @@ class TrackingLookupService {
     if (code.isEmpty) return null;
 
     final box = HiveService.propertyBox();
-
     Property? match;
+
     for (final p in box.values.whereType<Property>()) {
       if (p.trackingCode.trim().toUpperCase() == code) {
         match = p;
@@ -43,27 +43,23 @@ class TrackingLookupService {
   }
 
   static String _friendlyStatus(Property p) {
-    // your "loaded" milestone is timestamp-based
     final isLoadedMilestone =
         p.loadedAt != null && p.status == PropertyStatus.pending;
-
     if (isLoadedMilestone) return 'LOADED';
 
     switch (p.status) {
       case PropertyStatus.pending:
         return 'PENDING';
-
       case PropertyStatus.loaded:
         return 'LOADED';
-
       case PropertyStatus.inTransit:
         return 'IN TRANSIT';
-
       case PropertyStatus.delivered:
         return 'DELIVERED';
-
       case PropertyStatus.pickedUp:
         return 'PICKED UP';
+      case PropertyStatus.rejected:
+        return 'REJECTED';
     }
   }
 

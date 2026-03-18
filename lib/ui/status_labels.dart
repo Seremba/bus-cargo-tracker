@@ -14,6 +14,8 @@ class PropertyStatusLabels {
         return 'Delivered';
       case PropertyStatus.pickedUp:
         return 'Picked Up';
+      case PropertyStatus.rejected:
+        return 'Rejected';
     }
   }
 }

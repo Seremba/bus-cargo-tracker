@@ -23,7 +23,7 @@ import '../../ui/status_labels.dart';
 import '../../widgets/status_chip.dart';
 
 class DeskPropertyDetailsScreen extends StatefulWidget {
-  final String scannedCode; // propertyCode
+  final String scannedCode;
 
   const DeskPropertyDetailsScreen({super.key, required this.scannedCode});
 
@@ -32,7 +32,8 @@ class DeskPropertyDetailsScreen extends StatefulWidget {
       _DeskPropertyDetailsScreenState();
 }
 
-class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
+class _DeskPropertyDetailsScreenState
+    extends State<DeskPropertyDetailsScreen> {
   static String _fmt16(DateTime? d) {
     if (d == null) return '—';
     final s = d.toLocal().toString();
@@ -47,9 +48,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     if (normalized.isEmpty) return null;
 
     for (final p in box.values) {
-      if (p.propertyCode.trim().toLowerCase() == normalized) {
-        return p;
-      }
+      if (p.propertyCode.trim().toLowerCase() == normalized) return p;
     }
 
     final key = int.tryParse(normalized);
@@ -208,6 +207,125 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     );
   }
 
+  // ── F1: Reject dialog ─────────────────────────────────────────────────────
+  Future<void> _showRejectDialog(BuildContext context, Property p) async {
+    String selectedCategory = PropertyService.rejectionCategories.first;
+    final reasonController = TextEditingController();
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) {
+        return StatefulBuilder(
+          builder: (ctx, setDialogState) {
+            return AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.warning_amber_rounded, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Reject Property'),
+                ],
+              ),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text(
+                      'The physical items do not match the sender\'s '
+                      'declaration. Select a reason and confirm.',
+                      style: TextStyle(fontSize: 13, color: Colors.black54),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'Rejection reason',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    DropdownButtonFormField<String>(
+                      value: selectedCategory,
+                      decoration: const InputDecoration(
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                      ),
+                      items: PropertyService.rejectionCategories
+                          .map(
+                            (c) => DropdownMenuItem(
+                              value: c,
+                              child: Text(
+                                PropertyService.rejectionCategoryLabel(c),
+                              ),
+                            ),
+                          )
+                          .toList(),
+                      onChanged: (v) {
+                        if (v == null) return;
+                        setDialogState(() => selectedCategory = v);
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    const Text(
+                      'Additional details (optional)',
+                      style: TextStyle(fontWeight: FontWeight.w700),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      controller: reasonController,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                        hintText:
+                            'e.g. "Declared 10 boxes, only 7 presented"',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.all(12),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Cancel'),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.red,
+                    foregroundColor: Colors.white,
+                  ),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('Confirm Rejection'),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+
+    if (!context.mounted || confirmed != true) return;
+
+    final ok = await PropertyService.rejectProperty(
+      p,
+      category: selectedCategory,
+      reason: reasonController.text.trim(),
+    );
+
+    reasonController.dispose();
+
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'Property rejected ✅ — sender notified' : 'Cannot reject ❌',
+        ),
+      ),
+    );
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   Future<void> _recordPaymentDialog(BuildContext context, Property p) async {
     final station = (Session.currentStationName ?? '').trim();
 
@@ -295,9 +413,9 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
 
     final amount = int.tryParse(amountController.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Enter a valid amount')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter a valid amount')),
+      );
       return;
     }
 
@@ -311,14 +429,14 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
       );
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Payment recorded ✅')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Payment recorded ✅')),
+      );
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Payment failed: $e')),
+      );
     }
   }
 
@@ -367,6 +485,11 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               p.status == PropertyStatus.pending ||
               p.status == PropertyStatus.loaded;
 
+          // F1: can reject if pending or loaded (not yet in transit)
+          final canReject =
+              p.status == PropertyStatus.pending ||
+              p.status == PropertyStatus.loaded;
+
           return FutureBuilder<void>(
             future: () async {
               final itemBox = HiveService.propertyItemBox();
@@ -404,9 +527,8 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               final isPaid = PaymentService.hasValidPaymentForProperty(
                 p.key.toString(),
               );
-              final PaymentRecord? latestPayment = payments.isEmpty
-                  ? null
-                  : payments.first;
+              final PaymentRecord? latestPayment =
+                  payments.isEmpty ? null : payments.first;
 
               final loadedNotAssigned = items
                   .where(
@@ -426,6 +548,64 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               return ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
+                  // ── F1: Rejection banner ──────────────────────────────
+                  if (p.status == PropertyStatus.rejected) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(14),
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: Colors.red.withValues(alpha: 0.08),
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(
+                          color: Colors.red.withValues(alpha: 0.30),
+                        ),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Row(
+                            children: [
+                              Icon(
+                                Icons.cancel_outlined,
+                                color: Colors.red,
+                                size: 16,
+                              ),
+                              SizedBox(width: 6),
+                              Text(
+                                'Rejected',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.red,
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 6),
+                          if ((p.rejectionCategory ?? '').isNotEmpty)
+                            Text(
+                              'Reason: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory!)}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          if ((p.rejectionReason ?? '').trim().isNotEmpty)
+                            Text(
+                              'Details: ${p.rejectionReason!.trim()}',
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                          if (p.rejectedAt != null)
+                            Text(
+                              'Rejected at: ${_fmt16(p.rejectedAt)}',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.black54,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ],
+                  // ─────────────────────────────────────────────────────
+
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -618,9 +798,8 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                               );
 
                               if (!ctx.mounted) return;
-                              if (selectedNos == null || selectedNos.isEmpty) {
-                                return;
-                              }
+                              if (selectedNos == null ||
+                                  selectedNos.isEmpty) return;
 
                               final ok = await PropertyService.markLoaded(
                                 p,
@@ -629,7 +808,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                               );
 
                               if (!ctx.mounted) return;
-
                               ScaffoldMessenger.of(ctx).showSnackBar(
                                 SnackBar(
                                   content: Text(
@@ -643,6 +821,30 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                     ),
                   ),
                   const SizedBox(height: 12),
+
+                  // ── F1: Reject button ─────────────────────────────────
+                  if (canReject) ...[
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton.icon(
+                        icon: const Icon(
+                          Icons.cancel_outlined,
+                          color: Colors.red,
+                        ),
+                        label: const Text(
+                          'Reject Property',
+                          style: TextStyle(color: Colors.red),
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: Colors.red),
+                          foregroundColor: Colors.red,
+                        ),
+                        onPressed: () => _showRejectDialog(context, p),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  // ─────────────────────────────────────────────────────
 
                   SizedBox(
                     width: double.infinity,
@@ -691,11 +893,14 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                               all
                                   .where(
                                     (x) =>
-                                        x.status == PropertyItemStatus.loaded &&
+                                        x.status ==
+                                            PropertyItemStatus.loaded &&
                                         x.tripId.trim().isEmpty,
                                   )
                                   .toList()
-                                ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
+                                ..sort(
+                                  (a, b) => a.itemNo.compareTo(b.itemNo),
+                                );
 
                           if (!ctx.mounted) return;
 

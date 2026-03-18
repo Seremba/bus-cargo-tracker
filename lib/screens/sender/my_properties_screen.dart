@@ -21,7 +21,6 @@ class MyPropertiesScreen extends StatelessWidget {
     return '$currency $amount';
   }
 
-  // Returns (emoji, label, background, foreground) for each status
   static ({String emoji, String label, Color bg, Color fg}) _statusStyle(
     PropertyStatus status,
   ) {
@@ -60,6 +59,13 @@ class MyPropertiesScreen extends StatelessWidget {
           label: 'Picked Up',
           bg: const Color(0xFFE8F5E9),
           fg: const Color(0xFF1B5E20),
+        );
+      case PropertyStatus.rejected:
+        return (
+          emoji: '🔴',
+          label: 'Rejected',
+          bg: const Color(0xFFFFEBEE),
+          fg: const Color(0xFFC62828),
         );
     }
   }
@@ -167,7 +173,6 @@ class MyPropertiesScreen extends StatelessWidget {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ── Row 1: name + status chip ──────────────────
                         Row(
                           crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
@@ -204,7 +209,6 @@ class MyPropertiesScreen extends StatelessWidget {
 
                         const SizedBox(height: 8),
 
-                        // ── Row 2: destination (prominent) ─────────────
                         Text(
                           '📍 ${property.destination}',
                           style: const TextStyle(
@@ -215,7 +219,6 @@ class MyPropertiesScreen extends StatelessWidget {
 
                         const SizedBox(height: 4),
 
-                        // ── Row 3: phone ───────────────────────────────
                         Text(
                           '📞 ${property.receiverPhone}',
                           style: TextStyle(fontSize: 12, color: muted),
@@ -223,7 +226,6 @@ class MyPropertiesScreen extends StatelessWidget {
 
                         const SizedBox(height: 4),
 
-                        // ── Row 4: items + route (no wrapping) ─────────
                         Text(
                           '${property.itemCount} item${property.itemCount == 1 ? '' : 's'}  •  ${property.routeName.trim().isEmpty ? 'No route' : property.routeName}',
                           style: TextStyle(fontSize: 12, color: muted),
@@ -231,11 +233,24 @@ class MyPropertiesScreen extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
 
+                        // F1: rejection reason snippet
+                        if (property.status == PropertyStatus.rejected &&
+                            (property.rejectionCategory ?? '').isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(
+                            '⚠ Rejected — tap to view reason',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: const Color(0xFFC62828),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+
                         const SizedBox(height: 8),
                         Divider(height: 1, color: Colors.grey.shade200),
                         const SizedBox(height: 8),
 
-                        // ── Row 5: trip info ───────────────────────────
                         Row(
                           children: [
                             Icon(
@@ -257,7 +272,6 @@ class MyPropertiesScreen extends StatelessWidget {
 
                         const SizedBox(height: 4),
 
-                        // ── Row 6: payment ─────────────────────────────
                         Row(
                           children: [
                             Icon(
@@ -302,7 +316,6 @@ class MyPropertiesScreen extends StatelessWidget {
 
                         const SizedBox(height: 8),
 
-                        // ── Row 7: created date (labelled, bottom-right)
                         Align(
                           alignment: Alignment.bottomRight,
                           child: Text(

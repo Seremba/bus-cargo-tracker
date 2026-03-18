@@ -63,13 +63,17 @@ class PropertyAdapter extends TypeAdapter<Property> {
           fields[39] == null ? 'whatsapp' : fields[39] as String?,
       isLocked: fields[42] == null ? false : fields[42] as bool,
       commitHash: fields[43] as String?,
+      rejectionCategory: fields[44] as String?,
+      rejectionReason: fields[45] as String?,
+      rejectedByUserId: fields[46] as String?,
+      rejectedAt: fields[47] as DateTime?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Property obj) {
     writer
-      ..writeByte(44)
+      ..writeByte(48)
       ..writeByte(0)
       ..write(obj.receiverName)
       ..writeByte(1)
@@ -157,7 +161,15 @@ class PropertyAdapter extends TypeAdapter<Property> {
       ..writeByte(42)
       ..write(obj.isLocked)
       ..writeByte(43)
-      ..write(obj.commitHash);
+      ..write(obj.commitHash)
+      ..writeByte(44)
+      ..write(obj.rejectionCategory)
+      ..writeByte(45)
+      ..write(obj.rejectionReason)
+      ..writeByte(46)
+      ..write(obj.rejectedByUserId)
+      ..writeByte(47)
+      ..write(obj.rejectedAt);
   }
 
   @override

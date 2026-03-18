@@ -10,6 +10,7 @@ import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../services/hive_service.dart';
 import '../../services/pickup_qr_service.dart';
+import '../../services/property_service.dart';
 
 class SenderPropertyDetailsScreen extends StatelessWidget {
   final Property property;
@@ -32,6 +33,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     return null;
   }
 
+  // F1 + exhaustive switch fix
   String _statusText(PropertyStatus s) {
     switch (s) {
       case PropertyStatus.pending:
@@ -44,6 +46,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         return '🟢 Delivered';
       case PropertyStatus.pickedUp:
         return '✅ Picked Up';
+      case PropertyStatus.rejected:
+        return '🔴 Rejected';
     }
   }
 
@@ -94,7 +98,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           trip = _findTripById(tripBox.values, tripId.trim());
         }
 
-        // Trip progress
         final totalCps = trip?.checkpoints.length ?? 0;
         final lastIndex = trip?.lastCheckpointIndex ?? -1;
         final reachedCount = (lastIndex + 1).clamp(0, totalCps);
@@ -118,14 +121,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           }
         }
 
-        // OTP
-        final otp = p.pickupOtp;
-
-        // Payment summary
         final currency = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
         final paidTotal = p.amountPaidTotal;
 
-        // Payment history
         final propKeyStr = p.key.toString();
         final payments =
             payBox.values
@@ -133,11 +131,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 .toList()
               ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        // Pickup QR payload
         final int? propertyKeyInt = (p.key is int)
             ? (p.key as int)
             : int.tryParse(p.key.toString());
 
+        // pickupQrPayload is String? — all uses below are guarded by
+        // qrReadyForDisplay which checks pickupQrPayload != null, so no '!' needed
         final String? pickupQrPayload = (propertyKeyInt == null)
             ? null
             : PickupQrService.buildPayload(
@@ -145,15 +144,12 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 nonce: p.qrNonce,
               );
 
-        // QR expiry info
         final issuedAt = p.qrIssuedAt;
-        final expiresAt = (issuedAt == null)
-            ? null
-            : issuedAt.add(PickupQrService.ttl);
+        final expiresAt =
+            (issuedAt == null) ? null : issuedAt.add(PickupQrService.ttl);
 
-        final bool isQrExpired = (expiresAt != null)
-            ? now.isAfter(expiresAt)
-            : false;
+        final bool isQrExpired =
+            (expiresAt != null) ? now.isAfter(expiresAt) : false;
 
         final bool qrReadyForDisplay =
             p.status == PropertyStatus.delivered &&
@@ -164,12 +160,11 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
         final loadedStation = p.loadedAtStation.trim();
 
-        // Resolve loadedBy userId → full name
         final loadedByRaw = p.loadedByUserId.trim();
-        final loadedByUser = userBox.values
-            .where((u) => u.id == loadedByRaw)
-            .firstOrNull;
-        final loadedBy = (loadedByUser?.fullName.trim().isNotEmpty == true)
+        final loadedByUser =
+            userBox.values.where((u) => u.id == loadedByRaw).firstOrNull;
+        final loadedBy =
+            (loadedByUser?.fullName.trim().isNotEmpty == true)
             ? loadedByUser!.fullName.trim()
             : loadedByRaw.isEmpty
             ? ''
@@ -190,6 +185,102 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(12),
             children: [
+              // ── F1: Rejection banner ──────────────────────────────────
+              if (p.status == PropertyStatus.rejected) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: Colors.red.withValues(alpha: 0.30),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Icon(
+                            Icons.cancel_outlined,
+                            color: Colors.red,
+                            size: 16,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Property Rejected',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Colors.red,
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if ((p.rejectionCategory ?? '').isNotEmpty)
+                        Text(
+                          'Reason: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory!)}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      if ((p.rejectionReason ?? '').trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Details: ${p.rejectionReason!.trim()}',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                      ],
+                      if (p.rejectedAt != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          'Rejected at: ${_fmt16(p.rejectedAt)}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Colors.black54,
+                          ),
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Please correct your property details, then tap '
+                        '"Request Re-Review" to re-present at the desk.',
+                        style: TextStyle(fontSize: 13, color: Colors.black54),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.refresh_outlined),
+                          label: const Text('Request Re-Review'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange,
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () async {
+                            final ok =
+                                await PropertyService.requestReReview(p);
+                            if (!context.mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text(
+                                  ok
+                                      ? 'Re-review requested ✅ — present your '
+                                        'corrected property at the desk'
+                                      : 'Could not request re-review ❌',
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+              // ─────────────────────────────────────────────────────────
+
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -214,7 +305,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(20),
-                              color: Colors.blue.shade50,
+                              color: p.status == PropertyStatus.rejected
+                                  ? Colors.red.withValues(alpha: 0.10)
+                                  : Colors.blue.shade50,
                             ),
                             child: Text(
                               _statusText(p.status),
@@ -252,7 +345,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                              child: Text('Property Code: ${p.propertyCode}'),
+                              child: Text(
+                                'Property Code: ${p.propertyCode}',
+                              ),
                             ),
                             const SizedBox(width: 4),
                             IconButton(
@@ -279,7 +374,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         'Loaded at station: ${loadedStation.isEmpty ? '—' : loadedStation}',
                         style: const TextStyle(fontSize: 12),
                       ),
-                      // Only show "Loaded by" when we have something meaningful
                       if (loadedBy.isNotEmpty)
                         Text(
                           'Loaded by: $loadedBy',
@@ -336,30 +430,30 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              if (p.status == PropertyStatus.delivered &&
-                  otp != null &&
-                  otp.trim().isNotEmpty) ...[
-                const Text(
-                  'Pickup OTP',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                Card(
+              // S4 FIX: OTP is stored as a hash — never show it to the sender.
+              // The station staff holds the plaintext via adminResetOtp.
+              if (p.status == PropertyStatus.delivered) ...[
+                const Card(
                   child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Row(
+                    padding: EdgeInsets.all(12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Expanded(
-                          child: Text(
-                            'OTP: $otp\n\nShare this OTP with the receiver to pick up the property.',
-                            style: const TextStyle(fontWeight: FontWeight.w600),
+                        Text(
+                          'Pickup OTP',
+                          style: TextStyle(
+                            fontSize: 15,
+                            fontWeight: FontWeight.bold,
                           ),
                         ),
-                        const SizedBox(width: 10),
-                        ElevatedButton.icon(
-                          onPressed: () => _copy(context, 'OTP', otp),
-                          icon: const Icon(Icons.copy, size: 18),
-                          label: const Text('Copy'),
+                        SizedBox(height: 8),
+                        Text(
+                          'An OTP has been issued for pickup. '
+                          'The station staff will ask the receiver for their '
+                          'phone number and the OTP to confirm pickup.\n\n'
+                          'If the receiver has not received their OTP, '
+                          'ask the desk officer to resend it.',
+                          style: TextStyle(fontSize: 13),
                         ),
                       ],
                     ),
@@ -468,6 +562,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                     ),
                   )
                 else
+                  // qrReadyForDisplay == true means pickupQrPayload != null
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -478,7 +573,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 10),
                           Center(
                             child: QrImageView(
-                              data: pickupQrPayload!,
+                              // pickupQrPayload is non-null here — guarded by
+                              // qrReadyForDisplay check above
+                              data: pickupQrPayload as String,
                               version: QrVersions.auto,
                               size: 220,
                               gapless: false,
@@ -506,15 +603,20 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           SelectableText(
-                            pickupQrPayload!,
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                            pickupQrPayload as String,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                           const SizedBox(height: 10),
                           Align(
                             alignment: Alignment.centerLeft,
                             child: ElevatedButton.icon(
-                              onPressed: () =>
-                                  _copy(context, 'Pickup QR', pickupQrPayload!),
+                              onPressed: () => _copy(
+                                context,
+                                'Pickup QR',
+                                pickupQrPayload as String,
+                              ),
                               icon: const Icon(Icons.copy, size: 18),
                               label: const Text('Copy payload'),
                             ),
@@ -540,8 +642,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   ),
                 )
               else ...[
-                // Show summary only when there is no history to avoid redundancy,
-                // or when history has more than one entry (summary is then useful).
                 if (payments.length != 1)
                   Card(
                     child: Padding(
@@ -551,7 +651,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         children: [
                           Text(
                             'Total Paid: ${_money(currency, paidTotal)}',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w700,
+                            ),
                           ),
                           const SizedBox(height: 6),
                           Text(
@@ -648,6 +750,15 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       p.pickedUpAt,
                       p.pickedUpAt != null,
                     ),
+                    // F1: show rejected milestone if applicable
+                    if (p.status == PropertyStatus.rejected ||
+                        p.rejectedAt != null)
+                      _timelineRow(
+                        'Rejected',
+                        p.rejectedAt,
+                        true,
+                        color: Colors.red,
+                      ),
                     const SizedBox(height: 8),
                   ],
                 ),
@@ -661,15 +772,26 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     );
   }
 
-  static Widget _timelineRow(String label, DateTime? at, bool done) {
+  static Widget _timelineRow(
+    String label,
+    DateTime? at,
+    bool done, {
+    Color? color,
+  }) {
+    final effectiveColor = color ?? (done ? Colors.green : Colors.grey);
     return ListTile(
       dense: true,
       leading: Icon(
         done ? Icons.check_circle : Icons.radio_button_unchecked,
-        color: done ? Colors.green : Colors.grey,
+        color: effectiveColor,
       ),
-      title: Text(label),
-      // Hide subtitle entirely when there is no date — avoids the empty "—" rows
+      title: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontWeight: color != null ? FontWeight.w700 : null,
+        ),
+      ),
       subtitle: at != null
           ? Text(_fmt16(at), style: const TextStyle(fontSize: 12))
           : null,

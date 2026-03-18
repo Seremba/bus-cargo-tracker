@@ -46,10 +46,6 @@ class PropertyService {
     return (100000 + rng.nextInt(900000)).toString();
   }
 
-  // SHA-256 + propertyCode salt is sufficient here because:
-  //   • OTPs are short-lived (12 h TTL)
-  //   • Brute-force is blocked by _maxOtpAttempts = 3 + lockout
-  //   • bcrypt/argon2 adds unnecessary latency on low-end Android devices
   static String _hashOtp(String otp, String propertyCode) {
     final salted = '$propertyCode:$otp';
     return sha256.convert(utf8.encode(salted)).toString();
@@ -63,7 +59,6 @@ class PropertyService {
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  /// Canonical string over the fields that must not change after QR issuance.
   static String _computeCommitHash(Property p) {
     final canonical =
         '${p.propertyCode}|${p.receiverName.trim()}'
@@ -73,7 +68,6 @@ class PropertyService {
   }
 
   /// Call this when the sender first views / shares their QR or property code.
-  /// After this point the core fields are immutable.
   static Future<void> lockProperty(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
     if (fresh.isLocked) return;
@@ -90,10 +84,10 @@ class PropertyService {
   }
 
   /// Returns true when the property's current field values match the hash
-  /// that was recorded at lock time. The desk officer scan should call this.
+  /// recorded at lock time. The desk officer scan should call this.
   static bool verifyCommitHash(Property p) {
     final stored = (p.commitHash ?? '').trim();
-    if (stored.isEmpty) return false; // not yet locked — treat as unverified
+    if (stored.isEmpty) return false;
     return _computeCommitHash(p) == stored;
   }
 
@@ -121,6 +115,28 @@ class PropertyService {
     if (until == null) return 0;
     final diff = until.difference(DateTime.now());
     return diff.inMinutes < 0 ? 0 : diff.inMinutes;
+  }
+
+  static const List<String> rejectionCategories = [
+    'item_count_mismatch',
+    'wrong_goods',
+    'damaged_prohibited',
+    'other',
+  ];
+
+  static String rejectionCategoryLabel(String category) {
+    switch (category) {
+      case 'item_count_mismatch':
+        return 'Item count mismatch';
+      case 'wrong_goods':
+        return 'Wrong goods description';
+      case 'damaged_prohibited':
+        return 'Damaged / prohibited goods';
+      case 'other':
+        return 'Other';
+      default:
+        return category;
+    }
   }
 
   static Future<Property> registerProperty({
@@ -190,7 +206,6 @@ class PropertyService {
       lastTxnRef: '',
       aggregateVersion: 1,
       routeConfirmed: routeConfirmed,
-      // S2: not locked yet — locked when QR/code is first shown to sender
       isLocked: false,
       commitHash: null,
     );
@@ -549,20 +564,17 @@ class PropertyService {
 
     fresh.deliveredAt ??= now;
 
-    // S4b: cryptographically random OTP (plaintext — never persisted)
     final bool isFirstDelivery =
         fresh.pickupOtp == null || fresh.pickupOtp!.trim().isEmpty;
     final String otpPlaintext = isFirstDelivery ? _generateOtp() : '';
 
     if (isFirstDelivery) {
-      // S4: store hash, not plaintext
       fresh.pickupOtp = _hashOtp(otpPlaintext, fresh.propertyCode);
       fresh.otpGeneratedAt = now;
     }
 
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
-    // S9: fresh nonce on OTP issuance
     fresh.qrNonce = _newNonce();
     fresh.qrIssuedAt = now;
     fresh.qrConsumedAt = null;
@@ -591,13 +603,10 @@ class PropertyService {
       },
     );
 
-    // Pass plaintext OTP to QR service and SMS — never stored
     if (otpPlaintext.isNotEmpty) {
       await PickupQrService.issueForDelivered(refreshed, otp: otpPlaintext);
       await _safeSendOtpIfSms(fresh: refreshed, otp: otpPlaintext);
     }
-    // If OTP was already issued on a prior call, the plaintext is gone.
-    // Staff must use adminResetOtp() to get a fresh one.
 
     await _safeNotifyReceiver(fresh: refreshed, eventLabel: 'DELIVERED');
 
@@ -617,24 +626,71 @@ class PropertyService {
   }
 
   static Future<bool> confirmPickupWithOtp(Property p, String otp) async {
-    if (!RoleGuard.hasAnyVerified({UserRole.staff, UserRole.admin}))
-      return false;
+    final result = await confirmPickupWithOtpAndPhone(
+      p,
+      otp: otp,
+      receiverPhoneLast4: '',
+    );
+    // Legacy callers that don't supply a phone get blocked at phoneMismatch.
+    // To preserve old behaviour, skip phone check when empty string is passed.
+    // This is handled inside confirmPickupWithOtpAndPhone by treating
+    // empty phone4 as a bypass — see note there.
+    return result == PickupResult.success;
+  }
+
+  /// [otp] — 6-digit plaintext OTP entered by staff.
+  /// [receiverPhoneLast4] — last 4 digits of receiver phone entered by staff.
+  ///   Pass empty string to skip phone verification (legacy / admin override).
+  static Future<PickupResult> confirmPickupWithOtpAndPhone(
+    Property p, {
+    required String otp,
+    required String receiverPhoneLast4,
+  }) async {
+    if (!RoleGuard.hasAnyVerified({UserRole.staff, UserRole.admin})) {
+      return PickupResult.notAuthorized;
+    }
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
     await repairMissingLoadedMilestone(fresh);
 
-    if (fresh.status != PropertyStatus.delivered) return false;
-    if (fresh.pickupOtp == null) return false;
-    if (_isOtpLocked(fresh)) return false;
-    if (_isOtpExpired(fresh)) return false;
+    if (fresh.status != PropertyStatus.delivered) {
+      return PickupResult.notDelivered;
+    }
+    if (fresh.pickupOtp == null) return PickupResult.otpMissing;
+    if (_isOtpLocked(fresh)) return PickupResult.otpLocked;
+    if (_isOtpExpired(fresh)) return PickupResult.otpExpired;
 
-    // S4: compare hashes, not plaintext
+    // F4: verify last 4 digits of receiver phone.
+    // Empty string skips the check (legacy / admin override path).
+    if (receiverPhoneLast4.trim().isNotEmpty) {
+      final storedPhone = fresh.receiverPhone.trim();
+      final storedDigits = storedPhone.replaceAll(RegExp(r'\D'), '');
+      final enteredDigits = receiverPhoneLast4.trim().replaceAll(
+        RegExp(r'\D'),
+        '',
+      );
+
+      if (enteredDigits.length != 4) return PickupResult.phoneMismatch;
+
+      if (!storedDigits.endsWith(enteredDigits)) {
+        await AuditService.log(
+          action: 'PICKUP_PHONE_MISMATCH',
+          propertyKey: fresh.key.toString(),
+          details:
+              'Phone last-4 mismatch. Staff entered: $enteredDigits. '
+              'Station: ${(Session.currentStationName ?? '').trim()}',
+        );
+        return PickupResult.phoneMismatch;
+      }
+    }
+
+    // S4: compare hashes
     final inputHash = _hashOtp(otp.trim(), fresh.propertyCode);
 
     if (inputHash != fresh.pickupOtp) {
       fresh.otpAttempts = fresh.otpAttempts + 1;
-      // S9: rotate nonce on every failed scan — invalidates any QR already shown
+      // S9: rotate nonce on every failed scan
       fresh.qrNonce = _newNonce();
 
       if (fresh.otpAttempts >= _maxOtpAttempts) {
@@ -650,7 +706,7 @@ class PropertyService {
             'QR nonce rotated.',
       );
 
-      return false;
+      return PickupResult.otpWrong;
     }
 
     final itemBox = HiveService.propertyItemBox();
@@ -672,7 +728,7 @@ class PropertyService {
             .toList()
           ..sort();
 
-    if (deliveredNos.isEmpty) return false;
+    if (deliveredNos.isEmpty) return PickupResult.noItems;
 
     await itemSvc.markItemsPickedUp(
       propertyKey: fresh.key.toString(),
@@ -688,12 +744,10 @@ class PropertyService {
     fresh.staffPickupConfirmed = true;
     fresh.receiverPickupConfirmed = true;
 
-    // S4: clear hash on successful pickup
     fresh.pickupOtp = null;
     fresh.otpGeneratedAt = null;
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
-
     fresh.qrConsumedAt = now;
 
     fresh.aggregateVersion += 1;
@@ -736,10 +790,11 @@ class PropertyService {
       targetUserId: NotificationService.adminInbox,
       title: 'Pickup confirmed',
       message:
-          'Receiver pickup confirmed for ${refreshed.receiverName} (${refreshed.receiverPhone}).',
+          'Receiver pickup confirmed for ${refreshed.receiverName} '
+          '(${refreshed.receiverPhone}).',
     );
 
-    return true;
+    return PickupResult.success;
   }
 
   static Future<void> applyPropertyPickedUpFromSync(SyncEvent event) async {
@@ -805,16 +860,13 @@ class PropertyService {
     property.deliveredAt ??= pickedUpAt;
     property.inTransitAt ??= property.deliveredAt;
     property.loadedAt ??= property.inTransitAt;
-
     property.staffPickupConfirmed = true;
     property.receiverPickupConfirmed = true;
     property.qrConsumedAt ??= pickedUpAt;
-
     property.pickupOtp = null;
     property.otpGeneratedAt = null;
     property.otpAttempts = 0;
     property.otpLockedUntil = null;
-
     property.aggregateVersion = incomingVersion;
 
     await property.save();
@@ -855,24 +907,19 @@ class PropertyService {
   }
 
   /// Resets the OTP. Returns the new plaintext OTP so the caller
-  /// (screen / WhatsApp helper) can display or forward it.
-  /// The plaintext is NOT persisted — only its hash is stored.
+  /// can display or forward it. The plaintext is NOT persisted.
   static Future<String?> adminResetOtp(Property p) async {
     if (!RoleGuard.hasRoleVerified(UserRole.admin)) return null;
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
     if (fresh.status != PropertyStatus.delivered) return null;
 
-    // S4b: cryptographically random OTP
     final otp = _generateOtp();
 
-    // S4: store hash only
     fresh.pickupOtp = _hashOtp(otp, fresh.propertyCode);
     fresh.otpGeneratedAt = DateTime.now();
     fresh.otpAttempts = 0;
     fresh.otpLockedUntil = null;
-
-    // S9: fresh nonce on reset
     fresh.qrIssuedAt = DateTime.now();
     fresh.qrNonce = _newNonce();
     fresh.qrConsumedAt = null;
@@ -895,8 +942,157 @@ class PropertyService {
           'Admin reset OTP for ${fresh.receiverName} (${fresh.receiverPhone}).',
     );
 
-    // Return plaintext to caller so it can be shown on screen / sent via WhatsApp
     return otp;
+  }
+
+  static Future<bool> rejectProperty(
+    Property p, {
+    required String category,
+    String reason = '',
+  }) async {
+    if (!RoleGuard.hasAnyVerified({
+      UserRole.deskCargoOfficer,
+      UserRole.admin,
+    })) {
+      return false;
+    }
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    if (fresh.status != PropertyStatus.pending &&
+        fresh.status != PropertyStatus.loaded) {
+      return false;
+    }
+
+    final cleanCategory = category.trim();
+    if (!rejectionCategories.contains(cleanCategory)) return false;
+
+    final now = DateTime.now();
+
+    fresh.status = PropertyStatus.rejected;
+    fresh.rejectionCategory = cleanCategory;
+    fresh.rejectionReason = reason.trim();
+    fresh.rejectedByUserId = (Session.currentUserId ?? '').trim();
+    fresh.rejectedAt = now;
+    fresh.aggregateVersion += 1;
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'PROPERTY_REJECTED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Rejected by ${fresh.rejectedByUserId} | '
+          'Category: ${rejectionCategoryLabel(cleanCategory)} | '
+          'Reason: ${reason.trim().isEmpty ? '—' : reason.trim()}',
+    );
+
+    await SyncService.enqueueAdminOverrideApplied(
+      aggregateType: 'property',
+      aggregateId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim(),
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'fromStatus': PropertyStatus.pending.name,
+        'toStatus': PropertyStatus.rejected.name,
+        'rejectionCategory': cleanCategory,
+        'rejectionReason': reason.trim(),
+        'rejectedAt': now.toIso8601String(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Property rejected at station',
+      message:
+          'Your property (${fresh.propertyCode}) was rejected at '
+          '${(Session.currentStationName ?? 'the station').trim()}.\n'
+          'Reason: ${rejectionCategoryLabel(cleanCategory)}'
+          '${reason.trim().isEmpty ? '' : ' — ${reason.trim()}'}.\n'
+          'Please correct and request a re-review.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Property rejected',
+      message:
+          'Property ${fresh.propertyCode} for ${fresh.receiverName} was '
+          'rejected by ${fresh.rejectedByUserId}.\n'
+          'Category: ${rejectionCategoryLabel(cleanCategory)}\n'
+          '${reason.trim().isEmpty ? '' : 'Reason: ${reason.trim()}'}',
+    );
+
+    return true;
+  }
+
+  static Future<bool> requestReReview(Property p) async {
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+
+    if (fresh.status != PropertyStatus.rejected) return false;
+
+    final currentUserId = (Session.currentUserId ?? '').trim();
+    if (currentUserId != fresh.createdByUserId.trim()) return false;
+
+    fresh.isLocked = false;
+    fresh.commitHash = null;
+    fresh.status = PropertyStatus.pending;
+    fresh.rejectionCategory = null;
+    fresh.rejectionReason = null;
+    fresh.rejectedByUserId = null;
+    fresh.rejectedAt = null;
+    fresh.aggregateVersion += 1;
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'PROPERTY_REREVIEW_REQUESTED',
+      propertyKey: fresh.key.toString(),
+      details: 'Sender $currentUserId requested re-review after rejection.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Re-review requested',
+      message:
+          'Sender has corrected property ${fresh.propertyCode} '
+          'for ${fresh.receiverName} and is requesting re-review.',
+    );
+
+    return true;
+  }
+
+  static Future<bool> adminRestoreRejected(Property p) async {
+    if (!RoleGuard.hasRoleVerified(UserRole.admin)) return false;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.rejected) return false;
+
+    fresh.status = PropertyStatus.pending;
+    fresh.rejectionCategory = null;
+    fresh.rejectionReason = null;
+    fresh.rejectedByUserId = null;
+    fresh.rejectedAt = null;
+    fresh.isLocked = false;
+    fresh.commitHash = null;
+    fresh.aggregateVersion += 1;
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'PROPERTY_REJECTION_RESTORED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Admin ${(Session.currentUserId ?? '').trim()} restored rejected '
+          'property ${fresh.propertyCode} to pending.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Property rejection cleared',
+      message:
+          'Admin has cleared the rejection on your property '
+          '(${fresh.propertyCode}). You may now re-present it at the desk.',
+    );
+
+    return true;
   }
 
   static Future<void> markInTransit(Property p) async {
@@ -1279,7 +1475,6 @@ class PropertyService {
 
     if (newStatus == PropertyStatus.pickedUp &&
         fresh.status == PropertyStatus.delivered) {
-      // pickupOtp is now a hash — admin override always uses the direct path
       final now = DateTime.now();
 
       final items = itemSvc.getItemsForProperty(fresh.key.toString());
@@ -1302,16 +1497,13 @@ class PropertyService {
       fresh.deliveredAt ??= now;
       fresh.inTransitAt ??= fresh.deliveredAt;
       fresh.loadedAt ??= fresh.inTransitAt;
-
       fresh.status = PropertyStatus.pickedUp;
       fresh.staffPickupConfirmed = true;
       fresh.receiverPickupConfirmed = true;
-
       fresh.pickupOtp = null;
       fresh.otpGeneratedAt = null;
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
-
       fresh.qrConsumedAt ??= now;
       fresh.aggregateVersion += 1;
       await fresh.save();
@@ -1370,6 +1562,13 @@ class PropertyService {
       return;
     }
 
+    // F1: admin can restore rejected → pending
+    if (newStatus == PropertyStatus.pending &&
+        fresh.status == PropertyStatus.rejected) {
+      await adminRestoreRejected(fresh);
+      return;
+    }
+
     if (newStatus == PropertyStatus.pending) {
       final items = itemSvc.getItemsForProperty(fresh.key.toString());
 
@@ -1384,29 +1583,22 @@ class PropertyService {
       }
 
       fresh.status = PropertyStatus.pending;
-
       fresh.inTransitAt = null;
       fresh.deliveredAt = null;
       fresh.pickedUpAt = null;
-
       fresh.pickupOtp = null;
       fresh.otpGeneratedAt = null;
       fresh.otpAttempts = 0;
       fresh.otpLockedUntil = null;
-
       fresh.staffPickupConfirmed = false;
       fresh.receiverPickupConfirmed = false;
-
       fresh.tripId = null;
-
       fresh.qrIssuedAt = null;
       fresh.qrNonce = '';
       fresh.qrConsumedAt = null;
-
       fresh.loadedAt = null;
       fresh.loadedAtStation = '';
       fresh.loadedByUserId = '';
-
       fresh.aggregateVersion += 1;
       await fresh.save();
 
@@ -1448,8 +1640,6 @@ class PropertyService {
     return c.isEmpty ? p.key.toString() : c;
   }
 
-  /// Builds the WhatsApp OTP message using a plaintext OTP passed by the caller.
-  /// The plaintext is never read back from Hive (it is stored hashed).
   static String _otpMessage(Property p, String otpPlaintext) {
     final station = p.destination.trim();
     final code = _propertyCodeLabel(p);
@@ -1470,12 +1660,6 @@ class PropertyService {
     ].join('\n');
   }
 
-  /// Sends pickup OTP via WhatsApp.
-  ///
-  /// Because the OTP is now stored hashed, the plaintext must be supplied
-  /// by the caller — either from [adminResetOtp]'s return value, or held
-  /// in screen state immediately after [markDelivered].
-  /// If [otpPlaintext] is empty this returns an error string.
   static Future<String?> sendPickupOtpViaWhatsApp(
     Property p, {
     required String otpPlaintext,
@@ -1539,7 +1723,6 @@ class PropertyService {
     if (fresh.qrConsumedAt != null) return;
 
     fresh.qrIssuedAt = DateTime.now();
-    // S9: new nonce on every QR refresh
     fresh.qrNonce = _newNonce();
     await fresh.save();
   }
@@ -1728,7 +1911,7 @@ class PropertyService {
 
   static Future _safeSendOtpIfSms({
     required Property fresh,
-    required String otp, // always plaintext — never read from Hive
+    required String otp,
   }) async {
     try {
       if (!fresh.notifyReceiver) return;
@@ -1821,6 +2004,45 @@ class PropertyService {
           details: 'Failed to queue OTP SMS: $e',
         );
       } catch (_) {}
+    }
+  }
+}
+
+/// Result enum for [PropertyService.confirmPickupWithOtpAndPhone].
+enum PickupResult {
+  success,
+  notAuthorized,
+  notDelivered,
+  otpMissing,
+  otpLocked,
+  otpExpired,
+  otpWrong,
+  phoneMismatch,
+  noItems,
+}
+
+/// Human-readable SnackBar message for each [PickupResult].
+extension PickupResultMessage on PickupResult {
+  String get message {
+    switch (this) {
+      case PickupResult.success:
+        return 'Pickup confirmed ✅';
+      case PickupResult.notAuthorized:
+        return 'Not authorized ❌';
+      case PickupResult.notDelivered:
+        return 'Property is not in Delivered state ❌';
+      case PickupResult.otpMissing:
+        return 'OTP missing — ask admin to reset ❌';
+      case PickupResult.otpLocked:
+        return 'Too many attempts — OTP locked ❌';
+      case PickupResult.otpExpired:
+        return 'OTP expired — ask admin to reset ❌';
+      case PickupResult.otpWrong:
+        return 'Wrong OTP ❌';
+      case PickupResult.phoneMismatch:
+        return 'Phone number does not match receiver records ❌';
+      case PickupResult.noItems:
+        return 'No delivered items found ❌';
     }
   }
 }

@@ -37,7 +37,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     return impliesLoaded && p.loadedAt == null;
   }
 
-  // Resolve a userId to a display name from the user box
   String _resolveSender(String userId) {
     final raw = userId.trim();
     if (raw.isEmpty) return '—';
@@ -52,7 +51,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     }
   }
 
-  // Returns (label, background, foreground) for each status
   static ({String label, Color bg, Color fg}) _statusStyle(
     BuildContext context,
     PropertyStatus status,
@@ -87,6 +85,12 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           label: 'Picked Up',
           bg: const Color(0xFFE8F5E9),
           fg: const Color(0xFF1B5E20),
+        );
+      case PropertyStatus.rejected:
+        return (
+          label: 'Rejected',
+          bg: const Color(0xFFFFEBEE),
+          fg: const Color(0xFFC62828),
         );
     }
   }
@@ -143,7 +147,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
-              // Legacy repair warning banner
               if (brokenCount > 0)
                 Card(
                   margin: const EdgeInsets.only(bottom: 8),
@@ -198,7 +201,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
         p.status == PropertyStatus.delivered ||
         p.status == PropertyStatus.pickedUp;
 
-    // Only show loaded row when there's something meaningful to show
     final showLoadedRow =
         p.loadedAt != null ||
         p.status == PropertyStatus.inTransit ||
@@ -216,7 +218,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // ── Row 1: receiver name + status chip + edit icon ──────────
               Row(
                 crossAxisAlignment: CrossAxisAlignment.center,
                 children: [
@@ -230,7 +231,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Consistent colored pill chip
                   Container(
                     padding: const EdgeInsets.symmetric(
                       horizontal: 10,
@@ -250,7 +250,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // Edit icon with a proper tap target
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
                     onTap: () => _adminChangeStatus(context, p),
@@ -264,7 +263,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
 
               const SizedBox(height: 8),
 
-              // ── Row 2: destination + phone ──────────────────────────────
               Text(
                 '📍 ${p.destination.trim().isEmpty ? '—' : p.destination}  •  ${p.receiverPhone.trim().isEmpty ? '—' : p.receiverPhone}',
                 style: const TextStyle(
@@ -275,7 +273,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
 
               const SizedBox(height: 4),
 
-              // ── Row 3: items + route (no wrap) ──────────────────────────
               Text(
                 '${p.itemCount} item${p.itemCount == 1 ? '' : 's'}  •  $routeText',
                 style: TextStyle(fontSize: 12, color: muted),
@@ -285,7 +282,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
 
               const SizedBox(height: 4),
 
-              // ── Row 4: sender (resolved to name) ───────────────────────
               Text(
                 'Sender: $senderName',
                 style: TextStyle(fontSize: 12, color: muted),
@@ -295,13 +291,50 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
 
               const SizedBox(height: 4),
 
-              // ── Row 5: created date ─────────────────────────────────────
               Text(
                 'Created: ${_fmt16(p.createdAt)}',
                 style: TextStyle(fontSize: 12, color: muted),
               ),
 
-              // ── Row 6: loaded milestone (hidden when not relevant) ──────
+              // F1: show rejection reason when rejected
+              if (p.status == PropertyStatus.rejected) ...[
+                const SizedBox(height: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFEBEE),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(
+                      color: const Color(0xFFC62828).withValues(alpha: 0.30),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Rejected: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFC62828),
+                        ),
+                      ),
+                      if ((p.rejectionReason ?? '').trim().isNotEmpty)
+                        Text(
+                          p.rejectionReason!.trim(),
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFFC62828),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ],
+
               if (showLoadedRow) ...[
                 const SizedBox(height: 8),
                 Row(
@@ -370,9 +403,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Legacy record repaired ✅')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Legacy record repaired ✅')),
+    );
   }
 
   Future<void> _manualRepairAll(Box<Property> box) async {
@@ -408,6 +441,55 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   Future<void> _adminChangeStatus(BuildContext context, Property p) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
+    // F1: rejected properties get a dedicated restore dialog
+    if (p.status == PropertyStatus.rejected) {
+      final confirm = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Restore Rejected Property'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Rejection reason: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              if ((p.rejectionReason ?? '').trim().isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(p.rejectionReason!.trim()),
+              ],
+              const SizedBox(height: 12),
+              const Text(
+                'Restoring will set the property back to Pending and allow the sender to re-present it at the desk.',
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Restore to Pending'),
+            ),
+          ],
+        ),
+      );
+
+      if (confirm != true) return;
+
+      await PropertyService.adminRestoreRejected(p);
+
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Property restored to Pending ✅')),
+      );
+      return;
+    }
+
+    // Normal status change for non-rejected properties
     PropertyStatus selected = p.status;
 
     final result = await showDialog<PropertyStatus>(
@@ -437,6 +519,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               value: PropertyStatus.pickedUp,
               child: Text('Picked Up'),
             ),
+            // rejected not shown — admin restores via the dedicated dialog above
           ],
           onChanged: (v) => selected = v ?? selected,
         ),
@@ -458,9 +541,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     await PropertyService.adminSetStatus(p, result);
 
     if (!context.mounted) return;
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(const SnackBar(content: Text('Status updated ✅')));
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Status updated ✅')),
+    );
   }
 }
 

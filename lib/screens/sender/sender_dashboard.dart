@@ -23,7 +23,6 @@ class SenderDashboard extends StatelessWidget {
     return t.isEmpty ? 'Sender' : t;
   }
 
-  // Returns initials from a full name, e.g. "Seremba Patrick" → "SP"
   static String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty) return '?';
@@ -31,7 +30,6 @@ class SenderDashboard extends StatelessWidget {
     return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
   }
 
-  // Returns (label, background, foreground) for each status
   static ({String label, Color bg, Color fg}) _statusStyle(
     PropertyStatus status,
   ) {
@@ -65,6 +63,12 @@ class SenderDashboard extends StatelessWidget {
           label: 'Picked Up',
           bg: const Color(0xFFE8F5E9),
           fg: const Color(0xFF1B5E20),
+        );
+      case PropertyStatus.rejected:
+        return (
+          label: 'Rejected',
+          bg: const Color(0xFFFFEBEE),
+          fg: const Color(0xFFC62828),
         );
     }
   }
@@ -178,11 +182,16 @@ class SenderDashboard extends StatelessWidget {
 
             final recent = myProps.take(_recentLimit).toList();
 
-            // Count active shipments (pending, loaded, inTransit)
+            // Active = pending/loaded/inTransit — rejected is not active
             final activeCount = myProps.where((p) {
               return p.status == PropertyStatus.pending ||
                   p.status == PropertyStatus.loaded ||
                   p.status == PropertyStatus.inTransit;
+            }).length;
+
+            // F1: count rejected so we can surface an alert
+            final rejectedCount = myProps.where((p) {
+              return p.status == PropertyStatus.rejected;
             }).length;
 
             final totalCount = myProps.length;
@@ -190,7 +199,7 @@ class SenderDashboard extends StatelessWidget {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               children: [
-                _welcomeCard(context, userName, activeCount),
+                _welcomeCard(context, userName, activeCount, rejectedCount),
 
                 const SizedBox(height: 14),
 
@@ -281,6 +290,7 @@ class SenderDashboard extends StatelessWidget {
     BuildContext context,
     String userName,
     int activeCount,
+    int rejectedCount,
   ) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
@@ -298,7 +308,6 @@ class SenderDashboard extends StatelessWidget {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Initials avatar
           Container(
             width: 44,
             height: 44,
@@ -332,8 +341,16 @@ class SenderDashboard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                // Active shipments count — shown only when > 0
-                if (activeCount > 0)
+                if (rejectedCount > 0)
+                  Text(
+                    '$rejectedCount propert${rejectedCount == 1 ? 'y' : 'ies'} rejected — tap to view',
+                    style: const TextStyle(
+                      color: Color(0xFFC62828),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  )
+                else if (activeCount > 0)
                   Text(
                     '$activeCount active shipment${activeCount == 1 ? '' : 's'} in progress',
                     style: TextStyle(
@@ -420,9 +437,12 @@ class SenderDashboard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
 
-    final receiver = p.receiverName.trim().isEmpty ? 'Receiver' : p.receiverName.trim();
+    final receiver = p.receiverName.trim().isEmpty
+        ? 'Receiver'
+        : p.receiverName.trim();
     final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
-    final destination = p.destination.trim().isEmpty ? '—' : p.destination.trim();
+    final destination =
+        p.destination.trim().isEmpty ? '—' : p.destination.trim();
     final code = p.propertyCode.trim().isEmpty ? '—' : p.propertyCode.trim();
     final itemCount = p.itemCount < 0 ? 0 : p.itemCount;
     final style = _statusStyle(p.status);
@@ -450,7 +470,6 @@ class SenderDashboard extends StatelessWidget {
               ),
             ),
             const SizedBox(width: 8),
-            // Consistent colored pill chip — matches MyPropertiesScreen
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
               decoration: BoxDecoration(
@@ -473,7 +492,6 @@ class SenderDashboard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Destination — most useful info at a glance
               Text(
                 '📍 $destination',
                 style: const TextStyle(
@@ -485,7 +503,7 @@ class SenderDashboard extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                '$code  •  ${itemCount} item${itemCount == 1 ? '' : 's'}',
+                '$code  •  $itemCount item${itemCount == 1 ? '' : 's'}',
                 style: TextStyle(color: muted, fontSize: 12),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

@@ -10,7 +10,6 @@ class ReceiverTrackingService {
   static const String _supportPhones = '+256 780 445860 / +256 766 799490';
 
   static String _cleanPhone(String raw) {
-    // minimal cleanup; full E.164 can come later
     return raw.replaceAll(' ', '').trim();
   }
 
@@ -18,47 +17,42 @@ class ReceiverTrackingService {
     final p = _cleanPhone(phone);
     if (p.isEmpty) return false;
     if (p.length < 9) return false;
-    // allow + and digits only
     return RegExp(r'^\+?\d+$').hasMatch(p);
   }
 
   static String _cleanChannel(String raw) {
     final c = (raw).trim().toLowerCase();
     if (c == 'sms') return 'sms';
-    return 'whatsapp'; // default safe
+    return 'whatsapp';
   }
 
   static String _friendlyStatus(Property p) {
-    // Repo semantics: LOADED is a milestone while still pending.
     switch (p.status) {
       case PropertyStatus.pending:
         return 'PENDING';
-
       case PropertyStatus.loaded:
         return 'LOADED';
-
       case PropertyStatus.inTransit:
         return 'IN TRANSIT';
-
       case PropertyStatus.delivered:
         return 'DELIVERED';
-
       case PropertyStatus.pickedUp:
         return 'PICKED UP';
+      case PropertyStatus.rejected:
+        return 'REJECTED';
     }
   }
 
   static Future afterPaymentRecorded({
     required Property property,
     required bool enabled,
-    String channel = 'whatsapp', // whatsapp/sms
+    String channel = 'whatsapp',
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
 
     final cleanChannel = _cleanChannel(channel);
 
-    // If user didn't enable, don't spam audit logs.
     if (!enabled) {
       if (fresh.notifyReceiver == true) {
         fresh.notifyReceiver = false;
@@ -87,12 +81,9 @@ class ReceiverTrackingService {
       final dt = DateTime.now()
           .difference(fresh.lastReceiverNotifiedAt!)
           .inSeconds;
-      if (dt >= 0 && dt < 60) {
-        return;
-      }
+      if (dt >= 0 && dt < 60) return;
     }
 
-    // Enable and ensure tracking code
     if (fresh.trackingCode.trim().isEmpty) {
       fresh.trackingCode = TrackingCodeService.ensureUnique(fresh);
     }
@@ -100,7 +91,6 @@ class ReceiverTrackingService {
     fresh.notifyReceiver = true;
     fresh.receiverNotifyEnabledAt = DateTime.now();
     fresh.receiverNotifyEnabledByUserId = (Session.currentUserId ?? '').trim();
-
     fresh.receiverNotifyChannel = cleanChannel;
 
     await fresh.save();
@@ -131,12 +121,10 @@ class ReceiverTrackingService {
     );
   }
 
-  /// Call this from PropertyService when status changes (inTransit/delivered/pickedUp).
   static Future notifyReceiverOnStatusChange({
     required Property property,
-    required String eventLabel, // e.g. 'IN TRANSIT', 'DELIVERED'
-    String channel =
-        '', //  2B: if empty, use saved property.receiverNotifyChannel
+    required String eventLabel,
+    String channel = '',
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
@@ -146,7 +134,6 @@ class ReceiverTrackingService {
     final phone = _cleanPhone(fresh.receiverPhone);
     if (!_looksLikePhone(phone)) return;
 
-    //  2B: choose effective channel from property if caller didn't specify
     final effective = channel.trim().isEmpty
         ? (fresh.receiverNotifyChannel.trim().isEmpty
               ? 'whatsapp'
@@ -229,7 +216,6 @@ class ReceiverTrackingService {
         'Help: $_supportPhones';
   }
 
-  ///  NEW: partial-load message after trip starts.
   static Future notifyReceiverPartialLoadOnTripStart({
     required Property property,
     required int loadedForTrip,
@@ -305,7 +291,8 @@ class ReceiverTrackingService {
       action: 'RECEIVER_NOTIFY_QUEUED',
       propertyKey: fresh.key.toString(),
       details:
-          'Queued partial-load trip-start update to $phone. inTransit=$loadedForTrip/$total remaining=$remainingAtStation/$total',
+          'Queued partial-load trip-start update to $phone. '
+          'inTransit=$loadedForTrip/$total remaining=$remainingAtStation/$total',
     );
   }
 }

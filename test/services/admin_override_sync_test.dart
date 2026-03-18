@@ -12,6 +12,7 @@ import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
@@ -48,6 +49,13 @@ void main() {
     if (!Hive.isAdapterRegistered(19)) {
       Hive.registerAdapter(OutboundMessageAdapter());
     }
+    // S7: UserAdapter needed for hasRoleVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
   });
 
   setUp(() async {
@@ -64,8 +72,22 @@ void main() {
     await HiveService.openSyncEventBox();
     await HiveService.openOutboundMessageBox();
     await HiveService.openAppSettingsBox();
+    // S7: open user box so hasRoleVerified can look up the actor
+    await HiveService.openUserBox();
 
-    Session.currentUserId = 'admin-1';
+    // S7: insert an admin user into Hive so hasRoleVerified passes
+    const actorId = 'admin-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Admin Tester',
+      phone: '0700000099',
+      passwordHash: 'test-hash',
+      role: UserRole.admin,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.admin;
     Session.currentUserFullName = 'Admin Tester';
     Session.currentStationName = 'Kampala';
@@ -85,108 +107,116 @@ void main() {
     }
   });
 
-  test('adminSetStatus emits adminOverrideApplied when resetting to pending', () async {
-    final property = Property(
-      receiverName: 'Receiver Admin',
-      receiverPhone: '0700000010',
-      description: 'Goods',
-      destination: 'Juba',
-      itemCount: 1,
-      createdAt: DateTime.now(),
-      status: PropertyStatus.delivered,
-      createdByUserId: 'sender-admin',
-      propertyCode: 'P-ADMIN-SYNC-001',
-      trackingCode: 'BC-ADMIN-SYNC-001',
-      tripId: 'TRIP-ADMIN-SYNC-001',
-      deliveredAt: DateTime.now(),
-      inTransitAt: DateTime.now().subtract(const Duration(hours: 2)),
-      loadedAt: DateTime.now().subtract(const Duration(hours: 3)),
-      aggregateVersion: 3,
-    );
-
-    final key = await HiveService.propertyBox().add(property);
-    final propertyKey = key.toString();
-
-    await HiveService.propertyItemBox().put(
-      '$propertyKey#1',
-      PropertyItem(
-        itemKey: '$propertyKey#1',
-        propertyKey: propertyKey,
-        itemNo: 1,
-        status: PropertyItemStatus.delivered,
+  test(
+    'adminSetStatus emits adminOverrideApplied when resetting to pending',
+    () async {
+      final property = Property(
+        receiverName: 'Receiver Admin',
+        receiverPhone: '0700000010',
+        description: 'Goods',
+        destination: 'Juba',
+        itemCount: 1,
+        createdAt: DateTime.now(),
+        status: PropertyStatus.delivered,
+        createdByUserId: 'sender-admin',
+        propertyCode: 'P-ADMIN-SYNC-001',
+        trackingCode: 'BC-ADMIN-SYNC-001',
         tripId: 'TRIP-ADMIN-SYNC-001',
-        labelCode: 'BC-ADMIN-SYNC-001|1',
-      ),
-    );
+        deliveredAt: DateTime.now(),
+        inTransitAt: DateTime.now().subtract(const Duration(hours: 2)),
+        loadedAt: DateTime.now().subtract(const Duration(hours: 3)),
+        aggregateVersion: 3,
+      );
 
-    final saved = HiveService.propertyBox().get(key)!;
+      final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
 
-    await PropertyService.adminSetStatus(saved, PropertyStatus.pending);
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.delivered,
+          tripId: 'TRIP-ADMIN-SYNC-001',
+          labelCode: 'BC-ADMIN-SYNC-001|1',
+        ),
+      );
 
-    final events = HiveService.syncEventBox().values
-        .where((e) => e.type == SyncEventType.adminOverrideApplied)
-        .toList();
+      final saved = HiveService.propertyBox().get(key)!;
 
-    expect(events.length, 1);
-    expect(events.first.aggregateType, 'property');
-    expect(events.first.aggregateId, 'P-ADMIN-SYNC-001');
-    expect(events.first.payload['fromStatus'], 'delivered');
-    expect(events.first.payload['toStatus'], 'pending');
-    expect(events.first.payload['resetItems'], isTrue);
-  });
+      await PropertyService.adminSetStatus(saved, PropertyStatus.pending);
 
-  test('adminSetStatus emits adminOverrideApplied for delivered to pickedUp', () async {
-    final now = DateTime.now();
+      final events = HiveService.syncEventBox().values
+          .where((e) => e.type == SyncEventType.adminOverrideApplied)
+          .toList();
 
-    final property = Property(
-      receiverName: 'Receiver Admin Two',
-      receiverPhone: '0700000011',
-      description: 'Box',
-      destination: 'Juba',
-      itemCount: 1,
-      createdAt: now.subtract(const Duration(days: 1)),
-      status: PropertyStatus.delivered,
-      createdByUserId: 'sender-admin-2',
-      propertyCode: 'P-ADMIN-SYNC-002',
-      trackingCode: 'BC-ADMIN-SYNC-002',
-      tripId: 'TRIP-ADMIN-SYNC-002',
-      deliveredAt: now.subtract(const Duration(hours: 1)),
-      inTransitAt: now.subtract(const Duration(hours: 3)),
-      loadedAt: now.subtract(const Duration(hours: 4)),
-      pickupOtp: '123456',
-      otpGeneratedAt: now.subtract(const Duration(minutes: 5)),
-      aggregateVersion: 4,
-    );
+      expect(events.length, 1);
+      expect(events.first.aggregateType, 'property');
+      expect(events.first.aggregateId, 'P-ADMIN-SYNC-001');
+      expect(events.first.payload['fromStatus'], 'delivered');
+      expect(events.first.payload['toStatus'], 'pending');
+      expect(events.first.payload['resetItems'], isTrue);
+    },
+  );
 
-    final key = await HiveService.propertyBox().add(property);
-    final propertyKey = key.toString();
+  test(
+    'adminSetStatus emits adminOverrideApplied for delivered to pickedUp',
+    () async {
+      final now = DateTime.now();
 
-    await HiveService.propertyItemBox().put(
-      '$propertyKey#1',
-      PropertyItem(
-        itemKey: '$propertyKey#1',
-        propertyKey: propertyKey,
-        itemNo: 1,
-        status: PropertyItemStatus.delivered,
+      final property = Property(
+        receiverName: 'Receiver Admin Two',
+        receiverPhone: '0700000011',
+        description: 'Box',
+        destination: 'Juba',
+        itemCount: 1,
+        createdAt: now.subtract(const Duration(days: 1)),
+        status: PropertyStatus.delivered,
+        createdByUserId: 'sender-admin-2',
+        propertyCode: 'P-ADMIN-SYNC-002',
+        trackingCode: 'BC-ADMIN-SYNC-002',
         tripId: 'TRIP-ADMIN-SYNC-002',
-        labelCode: 'BC-ADMIN-SYNC-002|1',
         deliveredAt: now.subtract(const Duration(hours: 1)),
-      ),
-    );
+        inTransitAt: now.subtract(const Duration(hours: 3)),
+        loadedAt: now.subtract(const Duration(hours: 4)),
+        // Note: pickupOtp removed — OTPs are now stored as hashes.
+        // adminSetStatus for pickedUp uses the direct override path,
+        // bypassing OTP check entirely, so no OTP needed here.
+        otpGeneratedAt: now.subtract(const Duration(minutes: 5)),
+        aggregateVersion: 4,
+      );
 
-    final saved = HiveService.propertyBox().get(key)!;
+      final key = await HiveService.propertyBox().add(property);
+      final propertyKey = key.toString();
 
-    await PropertyService.adminSetStatus(saved, PropertyStatus.pickedUp);
+      await HiveService.propertyItemBox().put(
+        '$propertyKey#1',
+        PropertyItem(
+          itemKey: '$propertyKey#1',
+          propertyKey: propertyKey,
+          itemNo: 1,
+          status: PropertyItemStatus.delivered,
+          tripId: 'TRIP-ADMIN-SYNC-002',
+          labelCode: 'BC-ADMIN-SYNC-002|1',
+          deliveredAt: now.subtract(const Duration(hours: 1)),
+        ),
+      );
 
-    final events = HiveService.syncEventBox().values
-        .where((e) => e.type == SyncEventType.adminOverrideApplied)
-        .toList();
+      final saved = HiveService.propertyBox().get(key)!;
 
-    expect(events.length, 1);
-    expect(events.first.aggregateType, 'property');
-    expect(events.first.aggregateId, 'P-ADMIN-SYNC-002');
-    expect(events.first.payload['fromStatus'], 'delivered');
-    expect(events.first.payload['toStatus'], 'pickedUp');
-    expect(events.first.payload['resetItems'], isFalse);
-  });
+      await PropertyService.adminSetStatus(saved, PropertyStatus.pickedUp);
+
+      final events = HiveService.syncEventBox().values
+          .where((e) => e.type == SyncEventType.adminOverrideApplied)
+          .toList();
+
+      expect(events.length, 1);
+      expect(events.first.aggregateType, 'property');
+      expect(events.first.aggregateId, 'P-ADMIN-SYNC-002');
+      expect(events.first.payload['fromStatus'], 'delivered');
+      expect(events.first.payload['toStatus'], 'pickedUp');
+      expect(events.first.payload['resetItems'], isFalse);
+    },
+  );
 }

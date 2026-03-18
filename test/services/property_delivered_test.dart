@@ -12,6 +12,7 @@ import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
@@ -48,6 +49,13 @@ void main() {
     if (!Hive.isAdapterRegistered(19)) {
       Hive.registerAdapter(OutboundMessageAdapter());
     }
+    // S7: UserAdapter needed for hasAnyVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
   });
 
   setUp(() async {
@@ -64,8 +72,22 @@ void main() {
     await HiveService.openSyncEventBox();
     await HiveService.openOutboundMessageBox();
     await HiveService.openAppSettingsBox();
+    // S7: open user box so hasAnyVerified can look up the actor
+    await HiveService.openUserBox();
 
-    Session.currentUserId = 'staff-1';
+    // S7: insert a staff user into Hive so hasAnyVerified passes
+    const actorId = 'staff-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Station Staff Tester',
+      phone: '0700000099',
+      passwordHash: 'test-hash',
+      role: UserRole.staff,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.staff;
     Session.currentUserFullName = 'Station Staff Tester';
     Session.currentStationName = 'Juba';
@@ -86,7 +108,8 @@ void main() {
   });
 
   group('PropertyService.markDelivered', () {
-    test('marks inTransit property as delivered and marks item(s) delivered', () async {
+    test('marks inTransit property as delivered and marks item(s) delivered',
+        () async {
       final property = Property(
         receiverName: 'Receiver One',
         receiverPhone: '0700000000',
@@ -145,8 +168,9 @@ void main() {
 
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.deliveredAt, isNotNull);
+      // S4: pickupOtp is now a SHA-256 hash — non-null and non-empty
       expect(refreshed.pickupOtp, isNotNull);
-      expect(refreshed.pickupOtp!.trim().length, 6);
+      expect(refreshed.pickupOtp!.trim().isNotEmpty, isTrue);
       expect(refreshed.otpGeneratedAt, isNotNull);
       expect(refreshed.otpAttempts, 0);
       expect(refreshed.otpLockedUntil, isNull);
@@ -313,7 +337,8 @@ void main() {
       expect(event.payload['deliveredAt'], isNotNull);
     });
 
-    test('queues SMS OTP when receiver notifications are enabled for sms', () async {
+    test('queues SMS OTP when receiver notifications are enabled for sms',
+        () async {
       final property = Property(
         receiverName: 'Receiver Five',
         receiverPhone: '0700000004',
@@ -362,13 +387,20 @@ void main() {
       final item = HiveService.propertyItemBox().get('$propertyKey#1')!;
 
       expect(refreshed.status, PropertyStatus.delivered);
+      // S4: pickupOtp is a hash — non-null and non-empty confirms OTP was set
       expect(refreshed.pickupOtp, isNotNull);
+      expect(refreshed.pickupOtp!.trim().isNotEmpty, isTrue);
       expect(outbound.isNotEmpty, isTrue);
       expect(item.status, PropertyItemStatus.delivered);
 
       final sms = outbound.first;
       expect(sms.channel.toLowerCase(), 'sms');
-      expect(sms.body.contains(refreshed.pickupOtp!), isTrue);
+      
+      expect(
+        RegExp(r'\b\d{6}\b').hasMatch(sms.body),
+        isTrue,
+        reason: 'SMS body should contain the 6-digit plaintext OTP',
+      );
     });
   });
 }

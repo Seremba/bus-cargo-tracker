@@ -12,6 +12,7 @@ import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/payment_service.dart';
@@ -49,6 +50,13 @@ void main() {
     if (!Hive.isAdapterRegistered(NotificationItemAdapter().typeId)) {
       Hive.registerAdapter(NotificationItemAdapter());
     }
+    // S7: UserAdapter needed for hasAnyVerified / hasRoleVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
   });
 
   setUp(() async {
@@ -65,8 +73,22 @@ void main() {
     await HiveService.openAppSettingsBox();
     await HiveService.openAuditBox();
     await HiveService.openNotificationBox();
+    // S7: open user box so hasAnyVerified can look up the actor
+    await HiveService.openUserBox();
 
-    Session.currentUserId = 'desk-1';
+    // S7: insert a desk officer user into Hive so hasAnyVerified passes
+    const actorId = 'desk-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Desk Tester',
+      phone: '0700000000',
+      passwordHash: 'test-hash',
+      role: UserRole.deskCargoOfficer,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.deskCargoOfficer;
     Session.currentUserFullName = 'Desk Tester';
     Session.currentStationName = 'Kampala';
@@ -106,10 +128,7 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.markLoaded(
-        saved,
-        station: 'Kampala',
-      );
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final items = HiveService.propertyItemBox().values
@@ -147,16 +166,14 @@ void main() {
         station: 'Kampala',
       );
 
-      final ok = await PropertyService.markLoaded(
-        saved,
-        station: 'Kampala',
-      );
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
 
       final refreshed = HiveService.propertyBox().get(key)!;
-      final items = HiveService.propertyItemBox().values
-          .where((x) => x.propertyKey == refreshed.key.toString())
-          .toList()
-        ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
+      final items =
+          HiveService.propertyItemBox().values
+              .where((x) => x.propertyKey == refreshed.key.toString())
+              .toList()
+            ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       expect(ok, isTrue);
       expect(refreshed.status, PropertyStatus.loaded);
@@ -165,10 +182,7 @@ void main() {
       expect(refreshed.loadedByUserId, 'desk-1');
 
       expect(items.length, 3);
-      expect(
-        items.every((x) => x.status == PropertyItemStatus.loaded),
-        isTrue,
-      );
+      expect(items.every((x) => x.status == PropertyItemStatus.loaded), isTrue);
       expect(items.every((x) => x.loadedAt != null), isTrue);
     });
 
@@ -205,10 +219,11 @@ void main() {
       );
 
       final refreshed = HiveService.propertyBox().get(key)!;
-      final items = HiveService.propertyItemBox().values
-          .where((x) => x.propertyKey == refreshed.key.toString())
-          .toList()
-        ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
+      final items =
+          HiveService.propertyItemBox().values
+              .where((x) => x.propertyKey == refreshed.key.toString())
+              .toList()
+            ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       expect(ok, isTrue);
       expect(refreshed.status, PropertyStatus.loaded);
@@ -253,10 +268,7 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.markLoaded(
-        saved,
-        station: 'Kampala',
-      );
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final items = HiveService.propertyItemBox().values
@@ -316,10 +328,11 @@ void main() {
       expect(second, isTrue);
 
       final refreshed = HiveService.propertyBox().get(key)!;
-      final items = HiveService.propertyItemBox().values
-          .where((x) => x.propertyKey == refreshed.key.toString())
-          .toList()
-        ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
+      final items =
+          HiveService.propertyItemBox().values
+              .where((x) => x.propertyKey == refreshed.key.toString())
+              .toList()
+            ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
       expect(refreshed.status, PropertyStatus.loaded);
       expect(items.length, 4);

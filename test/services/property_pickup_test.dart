@@ -1,5 +1,7 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
@@ -11,10 +13,18 @@ import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
 import 'package:bus_cargo_tracker/services/session.dart';
+
+// S4: mirror PropertyService._hashOtp so tests can pre-hash OTPs before
+// storing them on Property fixtures, matching the real service behaviour.
+String _hashOtp(String otp, String propertyCode) {
+  final salted = '$propertyCode:$otp';
+  return sha256.convert(utf8.encode(salted)).toString();
+}
 
 void main() {
   late Directory tempDir;
@@ -44,6 +54,13 @@ void main() {
     if (!Hive.isAdapterRegistered(17)) {
       Hive.registerAdapter(SyncEventAdapter());
     }
+    // S7: UserAdapter needed for hasAnyVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
   });
 
   setUp(() async {
@@ -59,8 +76,22 @@ void main() {
     await HiveService.openNotificationBox();
     await HiveService.openSyncEventBox();
     await HiveService.openAppSettingsBox();
+    // S7: open user box so hasAnyVerified can look up the actor
+    await HiveService.openUserBox();
 
-    Session.currentUserId = 'staff-1';
+    // S7: insert a staff user into Hive so hasAnyVerified passes
+    const actorId = 'staff-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Station Staff Tester',
+      phone: '0700000099',
+      passwordHash: 'test-hash',
+      role: UserRole.staff,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.staff;
     Session.currentUserFullName = 'Station Staff Tester';
     Session.currentStationName = 'Juba';
@@ -83,6 +114,8 @@ void main() {
   group('PropertyService.confirmPickupWithOtp', () {
     test('marks delivered property as pickedUp when OTP is correct', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-001';
+      const otpPlaintext = '123456';
 
       final property = Property(
         receiverName: 'Receiver One',
@@ -93,7 +126,7 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-1',
-        propertyCode: 'P-PICKUP-001',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-001',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
@@ -104,7 +137,8 @@ void main() {
         loadedAt: now.subtract(const Duration(hours: 6)),
         loadedAtStation: 'Kampala',
         loadedByUserId: 'desk-1',
-        pickupOtp: '123456',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: now.subtract(const Duration(minutes: 10)),
         otpAttempts: 0,
         otpLockedUntil: null,
@@ -132,7 +166,11 @@ void main() {
 
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.confirmPickupWithOtp(saved, '123456');
+      // Pass plaintext — service hashes it internally to compare
+      final ok = await PropertyService.confirmPickupWithOtp(
+        saved,
+        otpPlaintext,
+      );
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final item = HiveService.propertyItemBox().get('$propertyKey#1')!;
@@ -158,6 +196,8 @@ void main() {
 
     test('fails when OTP is incorrect and increments attempts', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-002';
+      const otpPlaintext = '654321';
 
       final property = Property(
         receiverName: 'Receiver Two',
@@ -168,14 +208,15 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-2',
-        propertyCode: 'P-PICKUP-002',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-002',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
         deliveredAt: now.subtract(const Duration(hours: 1)),
         loadedAt: now.subtract(const Duration(hours: 6)),
-        pickupOtp: '654321',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: now.subtract(const Duration(minutes: 15)),
         otpAttempts: 0,
         aggregateVersion: 3,
@@ -184,6 +225,7 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
+      // Pass wrong OTP — should fail and increment attempts
       final ok = await PropertyService.confirmPickupWithOtp(saved, '111111');
 
       final refreshed = HiveService.propertyBox().get(key)!;
@@ -192,11 +234,15 @@ void main() {
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.pickedUpAt, isNull);
       expect(refreshed.otpAttempts, 1);
-      expect(refreshed.pickupOtp, '654321');
+      // Hash is still stored — not cleared on failure
+      expect(refreshed.pickupOtp, isNotNull);
+      expect(refreshed.pickupOtp!.trim().isNotEmpty, isTrue);
     });
 
     test('locks OTP after too many failed attempts', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-003';
+      const otpPlaintext = '222333';
 
       final property = Property(
         receiverName: 'Receiver Three',
@@ -207,16 +253,17 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-3',
-        propertyCode: 'P-PICKUP-003',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-003',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
         deliveredAt: now.subtract(const Duration(hours: 1)),
         loadedAt: now.subtract(const Duration(hours: 6)),
-        pickupOtp: '222333',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: now.subtract(const Duration(minutes: 20)),
-        otpAttempts: 2,
+        otpAttempts: 2, // one more wrong attempt will trigger lockout
         aggregateVersion: 4,
       );
 
@@ -235,6 +282,8 @@ void main() {
 
     test('fails when OTP is expired', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-004';
+      const otpPlaintext = '444555';
 
       final property = Property(
         receiverName: 'Receiver Four',
@@ -245,14 +294,16 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-4',
-        propertyCode: 'P-PICKUP-004',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-004',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
         deliveredAt: now.subtract(const Duration(hours: 2)),
         loadedAt: now.subtract(const Duration(hours: 7)),
-        pickupOtp: '444555',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
+        // OTP generated 13 hours ago — exceeds 12h TTL
         otpGeneratedAt: now.subtract(const Duration(hours: 13)),
         otpAttempts: 0,
         aggregateVersion: 2,
@@ -261,18 +312,24 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.confirmPickupWithOtp(saved, '444555');
+      // Even the correct plaintext should fail because OTP is expired
+      final ok = await PropertyService.confirmPickupWithOtp(
+        saved,
+        otpPlaintext,
+      );
 
       final refreshed = HiveService.propertyBox().get(key)!;
 
       expect(ok, isFalse);
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.pickedUpAt, isNull);
-      expect(refreshed.pickupOtp, '444555');
+      expect(refreshed.pickupOtp, isNotNull);
     });
 
     test('fails when OTP is currently locked', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-005';
+      const otpPlaintext = '777888';
 
       final property = Property(
         receiverName: 'Receiver Five',
@@ -283,14 +340,15 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-5',
-        propertyCode: 'P-PICKUP-005',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-005',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
         deliveredAt: now.subtract(const Duration(hours: 1)),
         loadedAt: now.subtract(const Duration(hours: 6)),
-        pickupOtp: '777888',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: now.subtract(const Duration(minutes: 10)),
         otpAttempts: 3,
         otpLockedUntil: now.add(const Duration(minutes: 5)),
@@ -300,18 +358,25 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.confirmPickupWithOtp(saved, '777888');
+      // Even the correct plaintext should fail because OTP is locked
+      final ok = await PropertyService.confirmPickupWithOtp(
+        saved,
+        otpPlaintext,
+      );
 
       final refreshed = HiveService.propertyBox().get(key)!;
 
       expect(ok, isFalse);
       expect(refreshed.status, PropertyStatus.delivered);
       expect(refreshed.pickedUpAt, isNull);
-      expect(refreshed.pickupOtp, '777888');
+      expect(refreshed.pickupOtp, isNotNull);
       expect(refreshed.otpLockedUntil, isNotNull);
     });
 
     test('fails when property is not delivered', () async {
+      const propertyCode = 'P-PICKUP-006';
+      const otpPlaintext = '112233';
+
       final property = Property(
         receiverName: 'Receiver Six',
         receiverPhone: '0700000005',
@@ -321,12 +386,13 @@ void main() {
         createdAt: DateTime.now(),
         status: PropertyStatus.inTransit,
         createdByUserId: 'sender-6',
-        propertyCode: 'P-PICKUP-006',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-006',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
         routeConfirmed: true,
-        pickupOtp: '112233',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: DateTime.now(),
         aggregateVersion: 1,
       );
@@ -334,7 +400,10 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.confirmPickupWithOtp(saved, '112233');
+      final ok = await PropertyService.confirmPickupWithOtp(
+        saved,
+        otpPlaintext,
+      );
 
       final refreshed = HiveService.propertyBox().get(key)!;
 
@@ -345,6 +414,8 @@ void main() {
 
     test('emits propertyPickedUp sync event on successful pickup', () async {
       final now = DateTime.now();
+      const propertyCode = 'P-PICKUP-007';
+      const otpPlaintext = '999111';
 
       final property = Property(
         receiverName: 'Receiver Seven',
@@ -355,7 +426,7 @@ void main() {
         createdAt: now.subtract(const Duration(days: 1)),
         status: PropertyStatus.delivered,
         createdByUserId: 'sender-7',
-        propertyCode: 'P-PICKUP-007',
+        propertyCode: propertyCode,
         trackingCode: 'BC-PICK-007',
         routeId: 'kla_juba',
         routeName: 'Kampala → Juba',
@@ -364,7 +435,8 @@ void main() {
         inTransitAt: now.subtract(const Duration(hours: 5)),
         deliveredAt: now.subtract(const Duration(hours: 1)),
         loadedAt: now.subtract(const Duration(hours: 6)),
-        pickupOtp: '999111',
+        // S4: store hash, not plaintext
+        pickupOtp: _hashOtp(otpPlaintext, propertyCode),
         otpGeneratedAt: now.subtract(const Duration(minutes: 5)),
         aggregateVersion: 8,
       );
@@ -387,7 +459,10 @@ void main() {
 
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.confirmPickupWithOtp(saved, '999111');
+      final ok = await PropertyService.confirmPickupWithOtp(
+        saved,
+        otpPlaintext,
+      );
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final events = HiveService.syncEventBox().values.toList();

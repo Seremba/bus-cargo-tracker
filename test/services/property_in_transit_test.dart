@@ -17,6 +17,7 @@ import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
 import 'package:bus_cargo_tracker/models/trip.dart';
 import 'package:bus_cargo_tracker/models/trip_status.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
@@ -129,6 +130,13 @@ void main() {
     if (!Hive.isAdapterRegistered(PaymentRecordAdapter().typeId)) {
       Hive.registerAdapter(PaymentRecordAdapter());
     }
+    // S7: UserAdapter needed for hasAnyVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
 
     await HiveService.openPropertyBox();
     await HiveService.openPropertyItemBox();
@@ -138,10 +146,24 @@ void main() {
     await HiveService.openAppSettingsBox();
     await HiveService.openAuditBox();
     await HiveService.openNotificationBox();
+    // S7: open user box so hasAnyVerified can look up the actor
+    await HiveService.openUserBox();
 
     final route = _validTestRoute();
 
-    Session.currentUserId = 'driver-1';
+    // S7: insert a driver user into Hive so hasAnyVerified passes
+    const actorId = 'driver-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Driver Tester',
+      phone: '0700000099',
+      passwordHash: 'test-hash',
+      role: UserRole.driver,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.driver;
     Session.currentUserFullName = 'Driver Tester';
     Session.currentStationName = 'Kampala';

@@ -61,13 +61,15 @@ class PropertyAdapter extends TypeAdapter<Property> {
       routeConfirmed: fields[41] == null ? true : fields[41] as bool,
       receiverNotifyChannel:
           fields[39] == null ? 'whatsapp' : fields[39] as String?,
+      isLocked: fields[42] == null ? false : fields[42] as bool,
+      commitHash: fields[43] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, Property obj) {
     writer
-      ..writeByte(42)
+      ..writeByte(44)
       ..writeByte(0)
       ..write(obj.receiverName)
       ..writeByte(1)
@@ -151,7 +153,11 @@ class PropertyAdapter extends TypeAdapter<Property> {
       ..writeByte(40)
       ..write(obj.aggregateVersion)
       ..writeByte(41)
-      ..write(obj.routeConfirmed);
+      ..write(obj.routeConfirmed)
+      ..writeByte(42)
+      ..write(obj.isLocked)
+      ..writeByte(43)
+      ..write(obj.commitHash);
   }
 
   @override

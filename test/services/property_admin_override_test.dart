@@ -12,6 +12,7 @@ import 'package:bus_cargo_tracker/models/property_item_status.dart';
 import 'package:bus_cargo_tracker/models/property_status.dart';
 import 'package:bus_cargo_tracker/models/sync_event.dart';
 import 'package:bus_cargo_tracker/models/sync_event_type.dart';
+import 'package:bus_cargo_tracker/models/user.dart';
 import 'package:bus_cargo_tracker/models/user_role.dart';
 import 'package:bus_cargo_tracker/services/hive_service.dart';
 import 'package:bus_cargo_tracker/services/property_service.dart';
@@ -48,6 +49,13 @@ void main() {
     if (!Hive.isAdapterRegistered(19)) {
       Hive.registerAdapter(OutboundMessageAdapter());
     }
+    // S7: UserAdapter needed for hasRoleVerified
+    if (!Hive.isAdapterRegistered(UserAdapter().typeId)) {
+      Hive.registerAdapter(UserAdapter());
+    }
+    if (!Hive.isAdapterRegistered(UserRoleAdapter().typeId)) {
+      Hive.registerAdapter(UserRoleAdapter());
+    }
   });
 
   setUp(() async {
@@ -64,8 +72,22 @@ void main() {
     await HiveService.openSyncEventBox();
     await HiveService.openOutboundMessageBox();
     await HiveService.openAppSettingsBox();
+    // S7: open user box so hasRoleVerified can look up the actor
+    await HiveService.openUserBox();
 
-    Session.currentUserId = 'admin-1';
+    // S7: insert an admin user into Hive so hasRoleVerified passes
+    const actorId = 'admin-1';
+    final actor = User(
+      id: actorId,
+      fullName: 'Admin Tester',
+      phone: '0700000099',
+      passwordHash: 'test-hash',
+      role: UserRole.admin,
+      createdAt: DateTime.now(),
+    );
+    await HiveService.userBox().put(actorId, actor);
+
+    Session.currentUserId = actorId;
     Session.currentRole = UserRole.admin;
     Session.currentUserFullName = 'Admin Tester';
     Session.currentStationName = 'Kampala';

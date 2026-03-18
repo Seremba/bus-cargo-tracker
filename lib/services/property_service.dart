@@ -424,24 +424,41 @@ class PropertyService {
       return false;
     }
 
-    // S2: reject loading if commit hash verification fails
-    if (fresh.isLocked && !verifyCommitHash(fresh)) {
-      await AuditService.log(
-        action: 'MARK_LOADED_HASH_MISMATCH',
-        propertyKey: fresh.key.toString(),
-        details:
-            'markLoaded blocked: commitHash mismatch. '
-            'Property data may have been tampered with after QR issuance.',
-      );
-      await NotificationService.notify(
-        targetUserId: NotificationService.adminInbox,
-        title: 'Security alert: property hash mismatch',
-        message:
-            'Property ${fresh.propertyCode} for ${fresh.receiverName} failed '
-            'commit-hash verification at load time. '
-            'Data may have been altered after QR issuance.',
-      );
-      return false;
+    // S2: reject loading if commit hash verification fails.
+    // If locked but no hash stored, repair by computing it now — this
+    // handles properties locked before hash persistence was working,
+    // or where lockProperty() failed to persist the hash.
+    if (fresh.isLocked) {
+      if ((fresh.commitHash ?? '').trim().isEmpty) {
+        // Repair: compute and store hash so future checks pass
+        fresh.commitHash = _computeCommitHash(fresh);
+        await fresh.save();
+
+        await AuditService.log(
+          action: 'MARK_LOADED_HASH_REPAIRED',
+          propertyKey: fresh.key.toString(),
+          details:
+              'Property was locked but had no commitHash. '
+              'Hash computed and stored at load time.',
+        );
+      } else if (!verifyCommitHash(fresh)) {
+        await AuditService.log(
+          action: 'MARK_LOADED_HASH_MISMATCH',
+          propertyKey: fresh.key.toString(),
+          details:
+              'markLoaded blocked: commitHash mismatch. '
+              'Property data may have been tampered with after QR issuance.',
+        );
+        await NotificationService.notify(
+          targetUserId: NotificationService.adminInbox,
+          title: 'Security alert: property hash mismatch',
+          message:
+              'Property ${fresh.propertyCode} for ${fresh.receiverName} failed '
+              'commit-hash verification at load time. '
+              'Data may have been altered after QR issuance.',
+        );
+        return false;
+      }
     }
 
     // Payment gate

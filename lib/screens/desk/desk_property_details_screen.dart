@@ -39,26 +39,22 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     return s.length >= 16 ? s.substring(0, 16) : s;
   }
 
-  Property? _findByCode(Box box, String code) {
+  Property? _findByCode(String code) {
+    final box = HiveService.propertyBox();
     final normalized =
         PropertyQrService.decodeToPropertyCode(code)?.trim().toLowerCase() ??
         '';
-
     if (normalized.isEmpty) return null;
-
     for (final p in box.values) {
       if (p.propertyCode.trim().toLowerCase() == normalized) return p;
     }
-
     final key = int.tryParse(normalized);
     if (key != null) return box.get(key);
-
     return null;
   }
 
   Future<int?> _askCopiesPerItem(BuildContext context) async {
     final controller = TextEditingController(text: '1');
-
     return showDialog<int>(
       context: context,
       builder: (ctx) {
@@ -105,16 +101,14 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     );
 
     final all = itemSvc.getItemsForProperty(p.key.toString());
-
     final selectable =
         all.where((x) => x.status == PropertyItemStatus.pending).toList()
           ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
     if (selectable.isEmpty) return null;
+    if (!context.mounted) return null;
 
     final selected = <int>{for (final x in selectable) x.itemNo};
-
-    if (!context.mounted) return null;
 
     return showDialog<List<int>>(
       context: context,
@@ -142,9 +136,8 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                         ),
                         const SizedBox(width: 8),
                         TextButton(
-                          onPressed: () {
-                            setDialogState(() => selected.clear());
-                          },
+                          onPressed: () =>
+                              setDialogState(() => selected.clear()),
                           child: const Text('Clear'),
                         ),
                         const Spacer(),
@@ -206,6 +199,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
     );
   }
 
+  // ── F1: Reject dialog ─────────────────────────────────────────────────────
   Future<void> _showRejectDialog(BuildContext context, Property p) async {
     String selectedCategory = PropertyService.rejectionCategories.first;
     final reasonController = TextEditingController();
@@ -224,62 +218,68 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                   Text('Reject Property'),
                 ],
               ),
-              content: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'The physical items do not match the sender\'s '
-                      'declaration. Select a reason and confirm.',
-                      style: TextStyle(fontSize: 13, color: Colors.black54),
-                    ),
-                    const SizedBox(height: 14),
-                    const Text(
-                      'Rejection reason',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    DropdownButtonFormField<String>(
-                      value: selectedCategory,
-                      decoration: const InputDecoration(
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 10,
+              content: SizedBox(
+                width: double.maxFinite,
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'The physical items do not match the sender\'s '
+                        'declaration. Select a reason and confirm.',
+                        style: TextStyle(fontSize: 13, color: Colors.black54),
+                      ),
+                      const SizedBox(height: 14),
+                      const Text(
+                        'Rejection reason',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      DropdownButtonFormField<String>(
+                        value: selectedCategory,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 10,
+                          ),
+                        ),
+                        items: PropertyService.rejectionCategories
+                            .map(
+                              (c) => DropdownMenuItem(
+                                value: c,
+                                child: Text(
+                                  PropertyService.rejectionCategoryLabel(c),
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: (v) {
+                          if (v == null) return;
+                          setDialogState(() => selectedCategory = v);
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      const Text(
+                        'Additional details (optional)',
+                        style: TextStyle(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 8),
+                      TextField(
+                        controller: reasonController,
+                        maxLines: 3,
+                        decoration: const InputDecoration(
+                          hintText:
+                              'e.g. "Declared 10 boxes, only 7 presented"',
+                          border: OutlineInputBorder(),
+                          contentPadding: EdgeInsets.all(12),
                         ),
                       ),
-                      items: PropertyService.rejectionCategories
-                          .map(
-                            (c) => DropdownMenuItem(
-                              value: c,
-                              child: Text(
-                                PropertyService.rejectionCategoryLabel(c),
-                              ),
-                            ),
-                          )
-                          .toList(),
-                      onChanged: (v) {
-                        if (v == null) return;
-                        setDialogState(() => selectedCategory = v);
-                      },
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Additional details (optional)',
-                      style: TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 8),
-                    TextField(
-                      controller: reasonController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        hintText: 'e.g. "Declared 10 boxes, only 7 presented"',
-                        border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.all(12),
-                      ),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
               actions: [
@@ -321,6 +321,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
       ),
     );
   }
+  // ─────────────────────────────────────────────────────────────────────────
 
   // Top-up dialog — kept for the rare admin-initiated top-up path,
   // but NOT reachable from the normal desk officer flow (button is locked
@@ -445,16 +446,23 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
-    final box = HiveService.propertyBox();
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Property Details')),
-      body: ValueListenableBuilder(
-        valueListenable: box.listenable(),
-        builder: (context, Box<Property> b, _) {
-          final p = _findByCode(b, widget.scannedCode);
+      // Listen to both propertyBox AND paymentBox so isPaid stays reactive.
+      // When the desk officer records payment in DeskRecordPaymentScreen and
+      // navigates back, paymentBox fires and this screen rebuilds with the
+      // correct isPaid = true — enabling the Mark Loaded button immediately.
+      body: AnimatedBuilder(
+        animation: Listenable.merge([
+          HiveService.propertyBox().listenable(),
+          HiveService.paymentBox().listenable(),
+          HiveService.propertyItemBox().listenable(),
+        ]),
+        builder: (context, _) {
+          final p = _findByCode(widget.scannedCode);
 
           if (p == null) {
             return ListView(
@@ -488,18 +496,47 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
               p.status == PropertyStatus.pending ||
               p.status == PropertyStatus.loaded;
 
+          // Now computed fresh on every rebuild, including when paymentBox changes
+          final payments = PaymentService.getPaymentsForProperty(
+            p.key.toString(),
+          );
+          final isPaid = PaymentService.hasValidPaymentForProperty(
+            p.key.toString(),
+          );
+          final PaymentRecord? latestPayment = payments.isEmpty
+              ? null
+              : payments.first;
+
+          // Items also reactive via propertyItemBox listener above
+          final itemSvc = PropertyItemService(HiveService.propertyItemBox());
+          // ensureItemsForProperty is async — we call it as a side effect
+          // via the FutureBuilder below, but read synchronously for display
+          final items = itemSvc.getItemsForProperty(p.key.toString());
+
+          final loadedNotAssigned = items
+              .where(
+                (x) =>
+                    x.status == PropertyItemStatus.loaded &&
+                    x.tripId.trim().isEmpty,
+              )
+              .length;
+
+          final remainingPending = items
+              .where((x) => x.status == PropertyItemStatus.pending)
+              .length;
+
+          final canMarkLoadedNow = isPaid && canLoad && remainingPending > 0;
+
+          // Ensure item records exist (async, non-blocking)
           return FutureBuilder<void>(
-            future: () async {
-              final itemBox = HiveService.propertyItemBox();
-              final itemSvc = PropertyItemService(itemBox);
-              await itemSvc.ensureItemsForProperty(
-                propertyKey: p.key.toString(),
-                trackingCode: p.trackingCode,
-                itemCount: p.itemCount,
-              );
-            }(),
+            future: itemSvc.ensureItemsForProperty(
+              propertyKey: p.key.toString(),
+              trackingCode: p.trackingCode,
+              itemCount: p.itemCount,
+            ),
             builder: (context, snap) {
-              if (snap.connectionState == ConnectionState.waiting) {
+              if (snap.connectionState == ConnectionState.waiting &&
+                  items.isEmpty) {
                 return const Center(child: CircularProgressIndicator());
               }
 
@@ -515,38 +552,10 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                 );
               }
 
-              final itemBox = HiveService.propertyItemBox();
-              final itemSvc = PropertyItemService(itemBox);
-              final items = itemSvc.getItemsForProperty(p.key.toString());
-
-              final payments = PaymentService.getPaymentsForProperty(
-                p.key.toString(),
-              );
-              final isPaid = PaymentService.hasValidPaymentForProperty(
-                p.key.toString(),
-              );
-              final PaymentRecord? latestPayment = payments.isEmpty
-                  ? null
-                  : payments.first;
-
-              final loadedNotAssigned = items
-                  .where(
-                    (x) =>
-                        x.status == PropertyItemStatus.loaded &&
-                        x.tripId.trim().isEmpty,
-                  )
-                  .length;
-
-              final remainingPending = items
-                  .where((x) => x.status == PropertyItemStatus.pending)
-                  .length;
-
-              final canMarkLoadedNow =
-                  isPaid && canLoad && remainingPending > 0;
-
               return ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
+                  // ── F1: Rejection banner ────────────────────────────
                   if (p.status == PropertyStatus.rejected) ...[
                     Container(
                       width: double.infinity,
@@ -603,6 +612,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                     ),
                   ],
 
+                  // ───────────────────────────────────────────────────
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -823,7 +833,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                   ),
                   const SizedBox(height: 12),
 
-                  // ── F1: Reject button ─────────────────────────────────
+                  // ── F1: Reject button ───────────────────────────────
                   if (canReject) ...[
                     SizedBox(
                       width: double.infinity,
@@ -846,6 +856,7 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                     const SizedBox(height: 12),
                   ],
 
+                  // ───────────────────────────────────────────────────
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -853,7 +864,6 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                       label: const Text('Print Item Labels (Thermal)'),
                       onPressed: () async {
                         final ctx = context;
-
                         try {
                           final connected =
                               await PrinterService.ensureConnectedFromSaved();
@@ -872,20 +882,19 @@ class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
                           }
 
                           final copies = await _askCopiesPerItem(ctx);
-
                           if (!ctx.mounted) return;
                           if (copies == null) return;
 
-                          final itemBox = HiveService.propertyItemBox();
-                          final itemSvc = PropertyItemService(itemBox);
-
-                          await itemSvc.ensureItemsForProperty(
+                          final localItemSvc = PropertyItemService(
+                            HiveService.propertyItemBox(),
+                          );
+                          await localItemSvc.ensureItemsForProperty(
                             propertyKey: p.key.toString(),
                             trackingCode: p.trackingCode,
                             itemCount: p.itemCount,
                           );
 
-                          final all = itemSvc.getItemsForProperty(
+                          final all = localItemSvc.getItemsForProperty(
                             p.key.toString(),
                           );
 

@@ -32,8 +32,7 @@ class DeskPropertyDetailsScreen extends StatefulWidget {
       _DeskPropertyDetailsScreenState();
 }
 
-class _DeskPropertyDetailsScreenState
-    extends State<DeskPropertyDetailsScreen> {
+class _DeskPropertyDetailsScreenState extends State<DeskPropertyDetailsScreen> {
   static String _fmt16(DateTime? d) {
     if (d == null) return '—';
     final s = d.toLocal().toString();
@@ -207,7 +206,6 @@ class _DeskPropertyDetailsScreenState
     );
   }
 
-  // ── F1: Reject dialog ─────────────────────────────────────────────────────
   Future<void> _showRejectDialog(BuildContext context, Property p) async {
     String selectedCategory = PropertyService.rejectionCategories.first;
     final reasonController = TextEditingController();
@@ -276,8 +274,7 @@ class _DeskPropertyDetailsScreenState
                       controller: reasonController,
                       maxLines: 3,
                       decoration: const InputDecoration(
-                        hintText:
-                            'e.g. "Declared 10 boxes, only 7 presented"',
+                        hintText: 'e.g. "Declared 10 boxes, only 7 presented"',
                         border: OutlineInputBorder(),
                         contentPadding: EdgeInsets.all(12),
                       ),
@@ -324,8 +321,10 @@ class _DeskPropertyDetailsScreenState
       ),
     );
   }
-  // ─────────────────────────────────────────────────────────────────────────
 
+  // Top-up dialog — kept for the rare admin-initiated top-up path,
+  // but NOT reachable from the normal desk officer flow (button is locked
+  // once isPaid is true).
   Future<void> _recordPaymentDialog(BuildContext context, Property p) async {
     final station = (Session.currentStationName ?? '').trim();
 
@@ -413,9 +412,9 @@ class _DeskPropertyDetailsScreenState
 
     final amount = int.tryParse(amountController.text.trim());
     if (amount == null || amount <= 0) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter a valid amount')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter a valid amount')));
       return;
     }
 
@@ -429,14 +428,14 @@ class _DeskPropertyDetailsScreenState
       );
 
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Payment recorded ✅')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Payment recorded ✅')));
     } catch (e) {
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Payment failed: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
     }
   }
 
@@ -451,7 +450,7 @@ class _DeskPropertyDetailsScreenState
     final muted = cs.onSurface.withValues(alpha: 0.60);
 
     return Scaffold(
-      appBar: AppBar(centerTitle: true, title: const Text('Scanned Property')),
+      appBar: AppBar(centerTitle: true, title: const Text('Property Details')),
       body: ValueListenableBuilder(
         valueListenable: box.listenable(),
         builder: (context, Box<Property> b, _) {
@@ -485,7 +484,6 @@ class _DeskPropertyDetailsScreenState
               p.status == PropertyStatus.pending ||
               p.status == PropertyStatus.loaded;
 
-          // F1: can reject if pending or loaded (not yet in transit)
           final canReject =
               p.status == PropertyStatus.pending ||
               p.status == PropertyStatus.loaded;
@@ -527,8 +525,9 @@ class _DeskPropertyDetailsScreenState
               final isPaid = PaymentService.hasValidPaymentForProperty(
                 p.key.toString(),
               );
-              final PaymentRecord? latestPayment =
-                  payments.isEmpty ? null : payments.first;
+              final PaymentRecord? latestPayment = payments.isEmpty
+                  ? null
+                  : payments.first;
 
               final loadedNotAssigned = items
                   .where(
@@ -548,7 +547,6 @@ class _DeskPropertyDetailsScreenState
               return ListView(
                 padding: const EdgeInsets.all(12),
                 children: [
-                  // ── F1: Rejection banner ──────────────────────────────
                   if (p.status == PropertyStatus.rejected) ...[
                     Container(
                       width: double.infinity,
@@ -604,7 +602,6 @@ class _DeskPropertyDetailsScreenState
                       ),
                     ),
                   ],
-                  // ─────────────────────────────────────────────────────
 
                   Card(
                     child: Padding(
@@ -738,6 +735,8 @@ class _DeskPropertyDetailsScreenState
                   ),
                   const SizedBox(height: 12),
 
+                  // Payment button — locked after first payment.
+                  // One payment per property; admin can top-up from admin screen.
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -745,7 +744,9 @@ class _DeskPropertyDetailsScreenState
                       label: Text(
                         isPaid ? 'Payment Recorded ✅' : 'Record Payment',
                       ),
-                      onPressed: () => _recordPaymentDialog(context, p),
+                      onPressed: isPaid
+                          ? null
+                          : () => _recordPaymentDialog(context, p),
                     ),
                   ),
                   const SizedBox(height: 12),
@@ -798,8 +799,8 @@ class _DeskPropertyDetailsScreenState
                               );
 
                               if (!ctx.mounted) return;
-                              if (selectedNos == null ||
-                                  selectedNos.isEmpty) return;
+                              if (selectedNos == null || selectedNos.isEmpty)
+                                return;
 
                               final ok = await PropertyService.markLoaded(
                                 p,
@@ -844,7 +845,6 @@ class _DeskPropertyDetailsScreenState
                     ),
                     const SizedBox(height: 12),
                   ],
-                  // ─────────────────────────────────────────────────────
 
                   SizedBox(
                     width: double.infinity,
@@ -893,14 +893,11 @@ class _DeskPropertyDetailsScreenState
                               all
                                   .where(
                                     (x) =>
-                                        x.status ==
-                                            PropertyItemStatus.loaded &&
+                                        x.status == PropertyItemStatus.loaded &&
                                         x.tripId.trim().isEmpty,
                                   )
                                   .toList()
-                                ..sort(
-                                  (a, b) => a.itemNo.compareTo(b.itemNo),
-                                );
+                                ..sort((a, b) => a.itemNo.compareTo(b.itemNo));
 
                           if (!ctx.mounted) return;
 

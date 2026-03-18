@@ -11,6 +11,7 @@ import '../../services/exports/payment_export_service.dart';
 import '../../services/file_share_service.dart';
 import '../../services/hive_service.dart';
 import '../../services/outbound_message_service.dart';
+import '../../services/payment_service.dart';
 import '../../services/property_item_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
@@ -18,7 +19,7 @@ import '../../services/session.dart';
 import '../common/outbound_messages_screen.dart';
 import '../desk/desk_property_details_screen.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
-import '../desk/desk_scan_and_pay_screen.dart';
+import '../desk/desk_record_payment_screen.dart';
 import '../../widgets/logout_button.dart';
 
 class DeskCargoOfficerDashboard extends StatefulWidget {
@@ -31,6 +32,16 @@ class DeskCargoOfficerDashboard extends StatefulWidget {
 
 class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   bool _openingOutbound = false;
+
+  final _payCodeCtrl = TextEditingController();
+  final _loadCodeCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _payCodeCtrl.dispose();
+    _loadCodeCtrl.dispose();
+    super.dispose();
+  }
 
   bool get _canUse =>
       RoleGuard.hasAny({UserRole.deskCargoOfficer, UserRole.admin});
@@ -94,7 +105,8 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     );
   }
 
-  Widget _sectionTitle(IconData icon, String text) {
+  Widget _sectionTitle(IconData icon, String text, {Color? color}) {
+    final c = color ?? AppColors.primary;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Row(
@@ -103,12 +115,12 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
             width: 3,
             height: 20,
             decoration: BoxDecoration(
-              color: AppColors.primary,
+              color: c,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
           const SizedBox(width: 8),
-          Icon(icon, size: 17, color: AppColors.primary),
+          Icon(icon, size: 17, color: c),
           const SizedBox(width: 6),
           Text(
             text,
@@ -119,30 +131,21 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     );
   }
 
-  // Returns properties at this station that have at least one pending item
-  // AND at least one already-loaded item — meaning a partial load happened
-  // and the remainder needs to be loaded on the next trip.
-
   List<_PartialLoadEntry> _getPartiallyLoadedProperties(String station) {
     if (station.isEmpty) return [];
 
     final propBox = HiveService.propertyBox();
     final itemBox = HiveService.propertyItemBox();
     final itemSvc = PropertyItemService(itemBox);
-
     final entries = <_PartialLoadEntry>[];
 
     for (final p in propBox.values) {
-      // Only pending/loaded status — inTransit means items already departed
       if (p.status != PropertyStatus.pending &&
-          p.status != PropertyStatus.loaded) {
+          p.status != PropertyStatus.loaded)
         continue;
-      }
 
-      // Only properties at this desk officer's station
-      final loadedAt = (p.loadedAtStation).trim().toLowerCase();
-      final currentStation = station.toLowerCase();
-      if (loadedAt != currentStation) continue;
+      final loadedAt = p.loadedAtStation.trim().toLowerCase();
+      if (loadedAt != station.toLowerCase()) continue;
 
       final items = itemSvc.getItemsForProperty(p.key.toString());
       if (items.isEmpty) continue;
@@ -154,12 +157,10 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 x.tripId.trim().isEmpty,
           )
           .length;
-
       final pendingCount = items
           .where((x) => x.status == PropertyItemStatus.pending)
           .length;
 
-      // Only show if at least one item is loaded AND at least one is pending
       if (loadedCount > 0 && pendingCount > 0) {
         entries.add(
           _PartialLoadEntry(
@@ -172,7 +173,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
       }
     }
 
-    // Most recently loaded first
     entries.sort(
       (a, b) => (b.property.loadedAt ?? DateTime(0)).compareTo(
         a.property.loadedAt ?? DateTime(0),
@@ -186,7 +186,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     final p = entry.property;
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.55);
-
     final code = p.propertyCode.trim().isEmpty
         ? p.key.toString()
         : p.propertyCode.trim();
@@ -209,7 +208,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Amber avatar indicating partial state
               Container(
                 width: 40,
                 height: 40,
@@ -228,7 +226,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    // Receiver name + code
                     Text(
                       p.receiverName.trim().isEmpty ? '—' : p.receiverName,
                       maxLines: 1,
@@ -246,7 +243,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                       style: TextStyle(fontSize: 12, color: muted),
                     ),
                     const SizedBox(height: 6),
-                    // Item progress bar
                     ClipRRect(
                       borderRadius: BorderRadius.circular(4),
                       child: LinearProgressIndicator(
@@ -270,7 +266,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 ),
               ),
               const SizedBox(width: 8),
-              // Partially Loaded pill
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -288,6 +283,157 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               ),
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Navigates to DeskRecordPaymentScreen for new payments.
+  /// If already paid, routes to DeskPropertyDetailsScreen instead.
+  Future<void> _openForPayment(String code) async {
+    final clean = code.trim();
+    if (clean.isEmpty) return;
+
+    final propBox = HiveService.propertyBox();
+    Property? p;
+    for (final prop in propBox.values) {
+      if (prop.propertyCode.trim().toLowerCase() == clean.toLowerCase()) {
+        p = prop;
+        break;
+      }
+    }
+
+    if (p == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Property not found: $clean')));
+      return;
+    }
+
+    if (!mounted) return;
+
+    final alreadyPaid = PaymentService.hasValidPaymentForProperty(
+      p.key.toString(),
+    );
+
+    if (alreadyPaid) {
+      // Payment already recorded — go to details screen instead
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Payment already recorded — opening property details'),
+        ),
+      );
+      Navigator.push(
+        context,
+        MaterialPageRoute(
+          builder: (_) =>
+              DeskPropertyDetailsScreen(scannedCode: p!.propertyCode),
+        ),
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => DeskRecordPaymentScreen(property: p!)),
+    );
+  }
+
+  /// Navigates directly to DeskPropertyDetailsScreen for loading items.
+  Future<void> _openForLoading(String code) async {
+    final clean = code.trim();
+    if (clean.isEmpty) return;
+    if (!mounted) return;
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DeskPropertyDetailsScreen(scannedCode: clean),
+      ),
+    );
+  }
+
+  Widget _scanCard({
+    required BuildContext context,
+    required String scanLabel,
+    required String manualHint,
+    required TextEditingController controller,
+    required Future<void> Function(String) onCode,
+    required Future<String?> Function() onScanQr,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            ElevatedButton.icon(
+              icon: const Icon(Icons.qr_code_scanner_outlined, size: 20),
+              label: Text(
+                scanLabel,
+                style: const TextStyle(
+                  fontWeight: FontWeight.w700,
+                  fontSize: 14,
+                ),
+              ),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              onPressed: () async {
+                final raw = await onScanQr();
+                if (raw == null || raw.trim().isEmpty) return;
+                await onCode(raw.trim());
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(child: Divider(color: cs.outlineVariant)),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  child: Text(
+                    'or enter code manually',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.50),
+                    ),
+                  ),
+                ),
+                Expanded(child: Divider(color: cs.outlineVariant)),
+              ],
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: InputDecoration(
+                hintText: manualHint,
+                border: const OutlineInputBorder(),
+                contentPadding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 10,
+                ),
+                suffixIcon: IconButton(
+                  icon: const Icon(Icons.arrow_forward),
+                  tooltip: 'Go',
+                  onPressed: () async {
+                    await onCode(controller.text);
+                    controller.clear();
+                  },
+                ),
+              ),
+              textInputAction: TextInputAction.done,
+              onSubmitted: (v) async {
+                await onCode(v);
+                controller.clear();
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -420,7 +566,9 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                 );
 
                 final slug =
-                    '${now.year.toString().padLeft(4, '0')}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+                    '${now.year.toString().padLeft(4, '0')}'
+                    '${now.month.toString().padLeft(2, '0')}'
+                    '${now.day.toString().padLeft(2, '0')}';
 
                 if (v == 'csv_today') {
                   final csv = PaymentExportService.buildTodayCsv(
@@ -503,7 +651,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
         body: TabBarView(
           children: [
-            // ── TAB 1: Scan ──
             AnimatedBuilder(
               animation: Listenable.merge([
                 propBox.listenable(),
@@ -571,99 +718,70 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                       const SizedBox(height: 8),
                     ],
 
-                    _sectionTitle(Icons.bolt_outlined, 'Quick actions'),
-                    Card(
-                      child: Padding(
-                        padding: const EdgeInsets.all(14),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                icon: const Icon(
-                                  Icons.qr_code_scanner_outlined,
-                                  size: 20,
-                                ),
-                                label: const Text(
-                                  'Scan Property QR (propertyCode)',
-                                  style: TextStyle(
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 14,
-                                  ),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(14),
-                                  ),
-                                ),
-                                onPressed: () async {
-                                  final raw = await Navigator.push<String?>(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) =>
-                                          const DeskPropertyQrScannerScreen(),
-                                    ),
-                                  );
-                                  if (raw == null || raw.trim().isEmpty) {
-                                    return;
-                                  }
-                                  if (!context.mounted) return;
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => DeskPropertyDetailsScreen(
-                                        scannedCode: raw.trim(),
-                                      ),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                            const SizedBox(height: 10),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Icon(
-                                  Icons.info_outline,
-                                  size: 14,
-                                  color: cs.onSurface.withValues(alpha: 0.45),
-                                ),
-                                const SizedBox(width: 6),
-                                Expanded(
-                                  child: Text(
-                                    'Tip: scan the printed property QR to open details quickly.',
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: cs.onSurface.withValues(
-                                        alpha: 0.60,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(height: 16),
                     _sectionTitle(
                       Icons.point_of_sale_outlined,
-                      'Register & receive payment',
+                      'Register & Pay',
                     ),
-                    const DeskScanAndPayScreen(),
+                    Text(
+                      'New cargo — scan or enter code to record payment.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurface.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _scanCard(
+                      context: context,
+                      scanLabel: 'Scan QR — Register & Pay',
+                      manualHint: 'Property code (e.g. P-20260318-8F3K)',
+                      controller: _payCodeCtrl,
+                      onCode: _openForPayment,
+                      onScanQr: () async {
+                        final raw = await Navigator.push<String?>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const DeskPropertyQrScannerScreen(),
+                          ),
+                        );
+                        return raw;
+                      },
+                    ),
+
+                    const SizedBox(height: 20),
+
+                    _sectionTitle(
+                      Icons.local_shipping_outlined,
+                      'Load onto Trip',
+                    ),
+                    Text(
+                      'Paid cargo — scan or enter code to load items.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: cs.onSurface.withValues(alpha: 0.55),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    _scanCard(
+                      context: context,
+                      scanLabel: 'Scan QR — Load onto Trip',
+                      manualHint: 'Property code (e.g. P-20260318-8F3K)',
+                      controller: _loadCodeCtrl,
+                      onCode: _openForLoading,
+                      onScanQr: () async {
+                        final raw = await Navigator.push<String?>(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const DeskPropertyQrScannerScreen(),
+                          ),
+                        );
+                        return raw;
+                      },
+                    ),
                   ],
                 );
               },
             ),
 
-            // ── TAB 2: Recent ──
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),

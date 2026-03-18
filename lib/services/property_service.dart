@@ -425,12 +425,8 @@ class PropertyService {
     }
 
     // S2: reject loading if commit hash verification fails.
-    // If locked but no hash stored, repair by computing it now — this
-    // handles properties locked before hash persistence was working,
-    // or where lockProperty() failed to persist the hash.
     if (fresh.isLocked) {
       if ((fresh.commitHash ?? '').trim().isEmpty) {
-        // Repair: compute and store hash so future checks pass
         fresh.commitHash = _computeCommitHash(fresh);
         await fresh.save();
 
@@ -648,10 +644,6 @@ class PropertyService {
       otp: otp,
       receiverPhoneLast4: '',
     );
-    // Legacy callers that don't supply a phone get blocked at phoneMismatch.
-    // To preserve old behaviour, skip phone check when empty string is passed.
-    // This is handled inside confirmPickupWithOtpAndPhone by treating
-    // empty phone4 as a bypass — see note there.
     return result == PickupResult.success;
   }
 
@@ -679,7 +671,6 @@ class PropertyService {
     if (_isOtpExpired(fresh)) return PickupResult.otpExpired;
 
     // F4: verify last 4 digits of receiver phone.
-    // Empty string skips the check (legacy / admin override path).
     if (receiverPhoneLast4.trim().isNotEmpty) {
       final storedPhone = fresh.receiverPhone.trim();
       final storedDigits = storedPhone.replaceAll(RegExp(r'\D'), '');
@@ -1926,6 +1917,9 @@ class PropertyService {
     return false;
   }
 
+  // ---------------------------------------------------------------------------
+  // F3: _safeSendOtpIfSms — now calls logDeliveryAttempt after queuing
+  // ---------------------------------------------------------------------------
   static Future _safeSendOtpIfSms({
     required Property fresh,
     required String otp,
@@ -2001,10 +1995,17 @@ class PropertyService {
           'Do not share this code.\n'
           'Track: $code';
 
-      await OutboundMessageService.queue(
+      // Queue the message and capture the returned record
+      final queuedMsg = await OutboundMessageService.queue(
         toPhone: phone,
         channel: 'sms',
         body: body,
+        propertyKey: pKey,
+      );
+
+      // F3: log OTP delivery confirmation with the specific message record
+      await OutboundMessageService.logDeliveryAttempt(
+        msg: queuedMsg,
         propertyKey: pKey,
       );
 
@@ -2023,6 +2024,8 @@ class PropertyService {
       } catch (_) {}
     }
   }
+
+  // ---------------------------------------------------------------------------
 }
 
 /// Result enum for [PropertyService.confirmPickupWithOtpAndPhone].

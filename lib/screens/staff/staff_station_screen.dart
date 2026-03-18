@@ -4,12 +4,14 @@ import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../models/outbound_message.dart';
 import '../../models/staff_station_mode.dart';
 import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';
+import '../../services/outbound_message_service.dart';
 import '../../services/property_service.dart';
 import '../../services/session.dart';
 import '../../services/audit_service.dart';
@@ -24,7 +26,7 @@ class StaffStationScreen extends StatelessWidget {
 
   bool _hasValidPhone(Property p) => p.receiverPhone.trim().length >= 9;
 
-  /// OTP is now stored as a hash — non-null/non-empty hash means OTP exists.
+  /// OTP is stored as a hash — non-null/non-empty hash means OTP exists.
   bool _hasOtp(Property p) => (p.pickupOtp ?? '').trim().isNotEmpty;
 
   bool _isPickupQrExpired(Property p) {
@@ -64,10 +66,9 @@ class StaffStationScreen extends StatelessWidget {
     await launchUrl(uri);
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
   // Admin reset OTP — returns plaintext so staff can act on it immediately.
-  // Shows the new OTP in a dialog; also offers WhatsApp send from there.
-  // ─────────────────────────────────────────────────────────────────────────
+  // ---------------------------------------------------------------------------
   Future<void> _adminResetOtpAndShow(BuildContext context, Property p) async {
     final messenger = ScaffoldMessenger.of(context);
 
@@ -88,7 +89,6 @@ class StaffStationScreen extends StatelessWidget {
       return;
     }
 
-    // Show the new plaintext OTP — this is the only time it is visible.
     await showDialog<void>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -155,6 +155,23 @@ class StaffStationScreen extends StatelessWidget {
     );
   }
 
+  // ---------------------------------------------------------------------------
+  // F3: check whether an OTP SMS was queued/opened/sent for this property
+  // ---------------------------------------------------------------------------
+  bool _otpSmsSentOrQueued(String propertyKeyStr) {
+    final box = HiveService.outboundMessageBox();
+    return box.values.whereType<OutboundMessage>().any((m) {
+      if (m.propertyKey != propertyKeyStr) return false;
+      final ch = m.channel.trim().toLowerCase();
+      if (ch != 'sms') return false;
+      final st = m.status.trim().toLowerCase();
+      return st == OutboundMessageService.statusQueued ||
+          st == OutboundMessageService.statusOpened ||
+          st == OutboundMessageService.statusSent;
+    });
+  }
+  // ---------------------------------------------------------------------------
+
   // =========================
   // Build
   // =========================
@@ -177,10 +194,14 @@ class StaffStationScreen extends StatelessWidget {
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: Text('Station: $station')),
-      body: ValueListenableBuilder(
-        valueListenable: box.listenable(),
-        builder: (context, Box b, _) {
-          final items = b.values.where((p) {
+      body: AnimatedBuilder(
+        // F3: also listen to outboundMessageBox so the SMS badge updates live
+        animation: Listenable.merge([
+          box.listenable(),
+          HiveService.outboundMessageBox().listenable(),
+        ]),
+        builder: (context, _) {
+          final items = box.values.where((p) {
             return p.destination.trim().toLowerCase() ==
                 station.trim().toLowerCase();
           }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
@@ -468,6 +489,10 @@ class StaffStationScreen extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.55);
 
+    // F3: check if OTP was queued/sent via SMS for this property
+    final pKeyStr = p.key.toString();
+    final otpSmsSent = _otpSmsSentOrQueued(pKeyStr);
+
     String otpStatus;
     Color otpColor;
     if (locked) {
@@ -548,6 +573,25 @@ class StaffStationScreen extends StatelessWidget {
               ],
             ),
 
+            // ── F3: OTP SMS delivery confirmation badge ──
+            if (otpSmsSent) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  const Icon(Icons.sms_outlined, size: 13, color: Colors.green),
+                  const SizedBox(width: 4),
+                  Text(
+                    'OTP delivery confirmed (SMS queued)',
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: Colors.green.shade700,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+
             // ── Warnings ──
             if (!hasValidPhone || !hasOtp || (qrExpired && !locked && !expired))
               Padding(
@@ -615,19 +659,13 @@ class StaffStationScreen extends StatelessWidget {
                   },
                 ),
 
-                // WhatsApp OTP
-                // OTP is stored hashed — plaintext is only available right
-                // after markDelivered or adminResetOtp. For the WhatsApp
-                // button we trigger adminResetOtp (admin-only) to get a
-                // fresh plaintext, then send immediately. Non-admin staff
-                // see this button disabled with a hint to use admin reset.
+                // WhatsApp OTP (admin only — requires plaintext via reset)
                 if (isAdmin)
                   _tileButton(
                     label: 'WhatsApp OTP',
                     icon: Icons.chat_outlined,
                     disabled: locked || expired || !hasValidPhone,
                     onTap: () async {
-                      // Get a fresh OTP plaintext via reset, then send
                       final newOtp = await PropertyService.adminResetOtp(p);
                       if (!context.mounted) return;
                       if (newOtp == null) {
@@ -655,14 +693,9 @@ class StaffStationScreen extends StatelessWidget {
                   _tileButton(
                     label: 'WhatsApp OTP',
                     icon: Icons.chat_outlined,
-                    // Non-admin staff cannot retrieve OTP plaintext —
-                    // admin must reset and forward it
                     disabled: true,
                     onTap: () {},
                   ),
-
-                // Copy OTP — removed: pickupOtp is now a hash, not plaintext.
-                // Admin reset dialog (below) provides copy functionality instead.
 
                 // Call receiver
                 _tileButton(
@@ -733,7 +766,7 @@ class StaffStationScreen extends StatelessWidget {
                     );
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(ok ? 'Pickup via QR ✅' : err!)),
+                      SnackBar(content: Text(ok ? 'Pickup via QR ✅' : err)),
                     );
                   },
                 ),
@@ -756,7 +789,6 @@ class StaffStationScreen extends StatelessWidget {
                         );
                       }
                       if (v == 'reset') {
-                        // Shows new OTP in dialog with copy + WhatsApp options
                         await _adminResetOtpAndShow(context, p);
                       }
                     },

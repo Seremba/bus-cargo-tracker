@@ -51,6 +51,28 @@ class OutboundMessageService {
     return msg;
   }
 
+  // ---------------------------------------------------------------------------
+  // F3: OTP delivery confirmation logging
+  // ---------------------------------------------------------------------------
+  /// Writes an audit entry confirming that an OTP outbound message was queued.
+  /// Called immediately after [queue()] succeeds for an OTP SMS so there is an
+  /// explicit, searchable audit trail separate from the generic OUTBOUND_MSG_QUEUED
+  /// event. The entry records the message id, channel, phone, and initial status.
+  static Future<void> logDeliveryAttempt({
+    required OutboundMessage msg,
+    required String propertyKey,
+  }) async {
+    await AuditService.log(
+      action: 'OTP_DELIVERY_CONFIRMATION_LOGGED',
+      propertyKey: propertyKey,
+      details:
+          'OTP delivery attempt logged: id=${msg.id} '
+          'channel=${msg.channel} to=${msg.toPhone} '
+          'status=${msg.status}',
+    );
+  }
+  // ---------------------------------------------------------------------------
+
   /// Operator-assisted queue processing:
   /// - Picks next eligible message (queued/failed) using backoff.
   /// - Opens WhatsApp OR SMS with prefilled text.
@@ -114,7 +136,7 @@ class OutboundMessageService {
       return msg;
     }
 
-    // ❗If open fails, don’t immediately mark FAILED unless we are out of attempts.
+    // If open fails, don't immediately mark FAILED unless we are out of attempts.
     if (msg.attempts >= maxAttempts) {
       msg.status = statusFailed;
     } else {
@@ -179,7 +201,6 @@ class OutboundMessageService {
       if (now.difference(openedAt) < staleAfter) continue;
 
       m.status = statusQueued;
-
       m.lastAttemptAt = now;
 
       await m.save();

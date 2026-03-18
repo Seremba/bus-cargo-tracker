@@ -33,7 +33,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
     return null;
   }
 
-  // F1 + exhaustive switch fix
   String _statusText(PropertyStatus s) {
     switch (s) {
       case PropertyStatus.pending:
@@ -48,6 +47,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         return '✅ Picked Up';
       case PropertyStatus.rejected:
         return '🔴 Rejected';
+      case PropertyStatus.expired:
+        return '⏳ Expired';
     }
   }
 
@@ -135,8 +136,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             ? (p.key as int)
             : int.tryParse(p.key.toString());
 
-        // pickupQrPayload is String? — all uses below are guarded by
-        // qrReadyForDisplay which checks pickupQrPayload != null, so no '!' needed
         final String? pickupQrPayload = (propertyKeyInt == null)
             ? null
             : PickupQrService.buildPayload(
@@ -145,11 +144,13 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
               );
 
         final issuedAt = p.qrIssuedAt;
-        final expiresAt =
-            (issuedAt == null) ? null : issuedAt.add(PickupQrService.ttl);
+        final expiresAt = (issuedAt == null)
+            ? null
+            : issuedAt.add(PickupQrService.ttl);
 
-        final bool isQrExpired =
-            (expiresAt != null) ? now.isAfter(expiresAt) : false;
+        final bool isQrExpired = (expiresAt != null)
+            ? now.isAfter(expiresAt)
+            : false;
 
         final bool qrReadyForDisplay =
             p.status == PropertyStatus.delivered &&
@@ -161,10 +162,10 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         final loadedStation = p.loadedAtStation.trim();
 
         final loadedByRaw = p.loadedByUserId.trim();
-        final loadedByUser =
-            userBox.values.where((u) => u.id == loadedByRaw).firstOrNull;
-        final loadedBy =
-            (loadedByUser?.fullName.trim().isNotEmpty == true)
+        final loadedByUser = userBox.values
+            .where((u) => u.id == loadedByRaw)
+            .firstOrNull;
+        final loadedBy = (loadedByUser?.fullName.trim().isNotEmpty == true)
             ? loadedByUser!.fullName.trim()
             : loadedByRaw.isEmpty
             ? ''
@@ -176,6 +177,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             p.status == PropertyStatus.delivered ||
             p.status == PropertyStatus.pickedUp;
 
+        final bool isExpired = p.status == PropertyStatus.expired;
+
         return Scaffold(
           appBar: AppBar(
             centerTitle: true,
@@ -185,6 +188,57 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(12),
             children: [
+              // ── F5: Expired banner ────────────────────────────────────
+              if (isExpired) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(14),
+                  margin: const EdgeInsets.only(bottom: 12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF4E342E).withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                      color: const Color(0xFF4E342E).withValues(alpha: 0.30),
+                    ),
+                  ),
+                  child: const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.timer_off_outlined,
+                            color: Color(0xFF4E342E),
+                            size: 16,
+                          ),
+                          SizedBox(width: 6),
+                          Text(
+                            'Property Expired',
+                            style: TextStyle(
+                              fontWeight: FontWeight.w800,
+                              color: Color(0xFF4E342E),
+                              fontSize: 15,
+                            ),
+                          ),
+                        ],
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'This property was registered but no payment was '
+                        'recorded at the desk within 10 days.',
+                        style: TextStyle(fontSize: 13),
+                      ),
+                      SizedBox(height: 6),
+                      Text(
+                        'Please visit the desk or contact admin to have it '
+                        'restored to Pending so you can complete payment.',
+                        style: TextStyle(fontSize: 13, color: Colors.black54),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+
               // ── F1: Rejection banner ──────────────────────────────────
               if (p.status == PropertyStatus.rejected) ...[
                 Container(
@@ -259,15 +313,14 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                             foregroundColor: Colors.white,
                           ),
                           onPressed: () async {
-                            final ok =
-                                await PropertyService.requestReReview(p);
+                            final ok = await PropertyService.requestReReview(p);
                             if (!context.mounted) return;
                             ScaffoldMessenger.of(context).showSnackBar(
                               SnackBar(
                                 content: Text(
                                   ok
                                       ? 'Re-review requested ✅ — present your '
-                                        'corrected property at the desk'
+                                            'corrected property at the desk'
                                       : 'Could not request re-review ❌',
                                 ),
                               ),
@@ -279,8 +332,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                   ),
                 ),
               ],
-              // ─────────────────────────────────────────────────────────
 
+              // ─────────────────────────────────────────────────────────
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -305,7 +358,11 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                             ),
                             decoration: BoxDecoration(
                               borderRadius: BorderRadius.circular(20),
-                              color: p.status == PropertyStatus.rejected
+                              color: isExpired
+                                  ? const Color(
+                                      0xFF4E342E,
+                                    ).withValues(alpha: 0.10)
+                                  : p.status == PropertyStatus.rejected
                                   ? Colors.red.withValues(alpha: 0.10)
                                   : Colors.blue.shade50,
                             ),
@@ -345,9 +402,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         Row(
                           children: [
                             Expanded(
-                              child: Text(
-                                'Property Code: ${p.propertyCode}',
-                              ),
+                              child: Text('Property Code: ${p.propertyCode}'),
                             ),
                             const SizedBox(width: 4),
                             IconButton(
@@ -386,52 +441,53 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              const Text(
-                'Trip Progress',
-                style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 8),
-
-              if (trip == null)
-                const Card(
-                  child: Padding(
-                    padding: EdgeInsets.all(12),
-                    child: Text(
-                      'Trip not started yet. Progress will appear once the driver departs.',
-                    ),
-                  ),
-                )
-              else
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'Trip: ${_tripStatusText(trip.status)}',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        const SizedBox(height: 10),
-                        LinearProgressIndicator(value: progress),
-                        const SizedBox(height: 8),
-                        Text('Progress: $reachedCount / $totalCps'),
-                        if (nextName != null) ...[
-                          const SizedBox(height: 6),
-                          Text(
-                            'Next checkpoint: $nextName',
-                            style: const TextStyle(fontSize: 12),
-                          ),
-                        ],
-                      ],
-                    ),
-                  ),
+              // Hide trip progress for expired — it's not relevant
+              if (!isExpired) ...[
+                const Text(
+                  'Trip Progress',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
+                const SizedBox(height: 8),
 
-              const SizedBox(height: 12),
+                if (trip == null)
+                  const Card(
+                    child: Padding(
+                      padding: EdgeInsets.all(12),
+                      child: Text(
+                        'Trip not started yet. Progress will appear once the driver departs.',
+                      ),
+                    ),
+                  )
+                else
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Trip: ${_tripStatusText(trip.status)}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(height: 10),
+                          LinearProgressIndicator(value: progress),
+                          const SizedBox(height: 8),
+                          Text('Progress: $reachedCount / $totalCps'),
+                          if (nextName != null) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              'Next checkpoint: $nextName',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 12),
+              ],
 
               // S4 FIX: OTP is stored as a hash — never show it to the sender.
-              // The station staff holds the plaintext via adminResetOtp.
               if (p.status == PropertyStatus.delivered) ...[
                 const Card(
                   child: Padding(
@@ -562,7 +618,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                     ),
                   )
                 else
-                  // qrReadyForDisplay == true means pickupQrPayload != null
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(12),
@@ -573,8 +628,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 10),
                           Center(
                             child: QrImageView(
-                              // pickupQrPayload is non-null here — guarded by
-                              // qrReadyForDisplay check above
                               data: pickupQrPayload as String,
                               version: QrVersions.auto,
                               size: 220,
@@ -604,9 +657,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 6),
                           SelectableText(
                             pickupQrPayload as String,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 10),
                           Align(
@@ -651,9 +702,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         children: [
                           Text(
                             'Total Paid: ${_money(currency, paidTotal)}',
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w700,
-                            ),
+                            style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 6),
                           Text(
@@ -750,7 +799,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       p.pickedUpAt,
                       p.pickedUpAt != null,
                     ),
-                    // F1: show rejected milestone if applicable
+                    // F1: rejected milestone
                     if (p.status == PropertyStatus.rejected ||
                         p.rejectedAt != null)
                       _timelineRow(
@@ -758,6 +807,14 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         p.rejectedAt,
                         true,
                         color: Colors.red,
+                      ),
+                    // F5: expired milestone
+                    if (isExpired)
+                      _timelineRow(
+                        'Expired — no payment within 10 days',
+                        null,
+                        true,
+                        color: const Color(0xFF4E342E),
                       ),
                     const SizedBox(height: 8),
                   ],

@@ -23,6 +23,7 @@ import 'screens/splash/splash_screen.dart';
 import 'services/auth_service.dart';
 import 'services/auto_sync_service.dart';
 import 'services/hive_service.dart';
+import 'services/property_ttl_service.dart';
 import 'services/route_decider_service.dart';
 import 'services/sync_service.dart';
 import 'ui/app_colors.dart';
@@ -90,6 +91,12 @@ void main() async {
 
   await AutoSyncService.instance.start();
 
+  // F5: run TTL checks on every startup so expired/warned properties are
+  // caught even if the app was closed for several days.
+  // This is safe to call before the user logs in — it only reads/writes
+  // Hive boxes, which are already open.
+  await PropertyTtlService.runChecks();
+
   if (kDebugMode) {
     await AuthService.seedAdminIfMissing(
       phone: '0700000000',
@@ -154,8 +161,6 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       theme: _theme(),
       // S5: SessionGuard wraps every screen built by the navigator.
-      // It is a no-op when no session is active (splash, login, register)
-      // because Session.isExpired returns false when currentUserId is null.
       builder: (context, child) {
         return SessionGuard(child: child ?? const SizedBox.shrink());
       },

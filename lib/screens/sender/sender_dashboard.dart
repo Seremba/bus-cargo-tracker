@@ -70,6 +70,12 @@ class SenderDashboard extends StatelessWidget {
           bg: const Color(0xFFFFEBEE),
           fg: const Color(0xFFC62828),
         );
+      case PropertyStatus.expired:
+        return (
+          label: 'Expired',
+          bg: const Color(0xFFEFEBE9),
+          fg: const Color(0xFF4E342E),
+        );
     }
   }
 
@@ -174,24 +180,29 @@ class SenderDashboard extends StatelessWidget {
 
             final myProps =
                 userId.isEmpty
-                    ? <Property>[]
-                    : box.values
-                          .where((p) => p.createdByUserId.trim() == userId)
-                          .toList()
-                      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+                      ? <Property>[]
+                      : box.values
+                            .where((p) => p.createdByUserId.trim() == userId)
+                            .toList()
+                  ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
             final recent = myProps.take(_recentLimit).toList();
 
-            // Active = pending/loaded/inTransit — rejected is not active
+            // Active = pending/loaded/inTransit
             final activeCount = myProps.where((p) {
               return p.status == PropertyStatus.pending ||
                   p.status == PropertyStatus.loaded ||
                   p.status == PropertyStatus.inTransit;
             }).length;
 
-            // F1: count rejected so we can surface an alert
+            // F1: count rejected
             final rejectedCount = myProps.where((p) {
               return p.status == PropertyStatus.rejected;
+            }).length;
+
+            // F5: count expired
+            final expiredCount = myProps.where((p) {
+              return p.status == PropertyStatus.expired;
             }).length;
 
             final totalCount = myProps.length;
@@ -199,7 +210,13 @@ class SenderDashboard extends StatelessWidget {
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               children: [
-                _welcomeCard(context, userName, activeCount, rejectedCount),
+                _welcomeCard(
+                  context,
+                  userName,
+                  activeCount,
+                  rejectedCount,
+                  expiredCount,
+                ),
 
                 const SizedBox(height: 14),
 
@@ -291,19 +308,39 @@ class SenderDashboard extends StatelessWidget {
     String userName,
     int activeCount,
     int rejectedCount,
+    int expiredCount,
   ) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
     final initials = _initials(userName);
+
+    // Priority: expired > rejected > active > idle
+    final String alertText;
+    final Color alertColor;
+
+    if (expiredCount > 0 && rejectedCount > 0) {
+      alertText =
+          '$expiredCount expired & $rejectedCount rejected — tap My Properties';
+      alertColor = const Color(0xFF4E342E);
+    } else if (expiredCount > 0) {
+      alertText =
+          '$expiredCount propert${expiredCount == 1 ? 'y' : 'ies'} expired — contact desk to restore';
+      alertColor = const Color(0xFF4E342E);
+    } else if (rejectedCount > 0) {
+      alertText =
+          '$rejectedCount propert${rejectedCount == 1 ? 'y' : 'ies'} rejected — tap to view';
+      alertColor = const Color(0xFFC62828);
+    } else {
+      alertText = '';
+      alertColor = Colors.transparent;
+    }
 
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: cs.surfaceContainerHighest.withValues(alpha: 0.35),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(
-          color: cs.outlineVariant.withValues(alpha: 0.50),
-        ),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.50)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -341,11 +378,11 @@ class SenderDashboard extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                if (rejectedCount > 0)
+                if (alertText.isNotEmpty)
                   Text(
-                    '$rejectedCount propert${rejectedCount == 1 ? 'y' : 'ies'} rejected — tap to view',
-                    style: const TextStyle(
-                      color: Color(0xFFC62828),
+                    alertText,
+                    style: TextStyle(
+                      color: alertColor,
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
                     ),
@@ -441,8 +478,9 @@ class SenderDashboard extends StatelessWidget {
         ? 'Receiver'
         : p.receiverName.trim();
     final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
-    final destination =
-        p.destination.trim().isEmpty ? '—' : p.destination.trim();
+    final destination = p.destination.trim().isEmpty
+        ? '—'
+        : p.destination.trim();
     final code = p.propertyCode.trim().isEmpty ? '—' : p.propertyCode.trim();
     final itemCount = p.itemCount < 0 ? 0 : p.itemCount;
     final style = _statusStyle(p.status);

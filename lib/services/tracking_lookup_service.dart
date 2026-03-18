@@ -25,14 +25,12 @@ class TrackingLookupService {
 
     final box = HiveService.propertyBox();
     Property? match;
-
     for (final p in box.values.whereType<Property>()) {
       if (p.trackingCode.trim().toUpperCase() == code) {
         match = p;
         break;
       }
     }
-
     if (match == null) return null;
 
     return TrackingLookupResult(
@@ -60,6 +58,8 @@ class TrackingLookupService {
         return 'PICKED UP';
       case PropertyStatus.rejected:
         return 'REJECTED';
+      case PropertyStatus.expired:
+        return 'EXPIRED';
     }
   }
 

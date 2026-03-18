@@ -16,6 +16,8 @@ class PropertyStatusLabels {
         return 'Picked Up';
       case PropertyStatus.rejected:
         return 'Rejected';
+      case PropertyStatus.expired:
+        return 'Expired';
     }
   }
 }

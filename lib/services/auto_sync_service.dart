@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/widgets.dart';
 
+import 'property_ttl_service.dart';
 import 'sync_service.dart';
 
 class AutoSyncService with WidgetsBindingObserver {
@@ -56,8 +57,13 @@ class AutoSyncService with WidgetsBindingObserver {
     _syncing = true;
     try {
       await SyncService.syncNow();
+
+      // F5: run TTL checks on every sync tick.
+      // PropertyTtlService.runChecks() is internally rate-limited to once
+      // per calendar day, so calling it here is safe even at 30-min intervals.
+      await PropertyTtlService.runChecks();
     } catch (_) {
-      // Keep silent for now.
+      // Keep silent — never crash the app due to background work.
     } finally {
       _syncing = false;
     }

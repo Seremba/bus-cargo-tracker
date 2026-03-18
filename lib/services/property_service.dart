@@ -16,6 +16,7 @@ import 'notification_service.dart';
 import 'outbound_message_service.dart';
 import 'pickup_qr_service.dart';
 import 'property_item_service.dart';
+import 'property_ttl_service.dart';
 import 'receiver_tracking_service.dart';
 import 'role_guard.dart';
 import 'session.dart';
@@ -67,7 +68,6 @@ class PropertyService {
     return sha256.convert(utf8.encode(canonical)).toString();
   }
 
-  /// Call this when the sender first views / shares their QR or property code.
   static Future<void> lockProperty(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
     if (fresh.isLocked) return;
@@ -83,8 +83,6 @@ class PropertyService {
     );
   }
 
-  /// Returns true when the property's current field values match the hash
-  /// recorded at lock time. The desk officer scan should call this.
   static bool verifyCommitHash(Property p) {
     final stored = (p.commitHash ?? '').trim();
     if (stored.isEmpty) return false;
@@ -424,7 +422,6 @@ class PropertyService {
       return false;
     }
 
-    // S2: reject loading if commit hash verification fails.
     if (fresh.isLocked) {
       if ((fresh.commitHash ?? '').trim().isEmpty) {
         fresh.commitHash = _computeCommitHash(fresh);
@@ -457,7 +454,6 @@ class PropertyService {
       }
     }
 
-    // Payment gate
     final hasPayment =
         fresh.amountPaidTotal > 0 ||
         HiveService.paymentBox().values.any(
@@ -647,9 +643,6 @@ class PropertyService {
     return result == PickupResult.success;
   }
 
-  /// [otp] — 6-digit plaintext OTP entered by staff.
-  /// [receiverPhoneLast4] — last 4 digits of receiver phone entered by staff.
-  ///   Pass empty string to skip phone verification (legacy / admin override).
   static Future<PickupResult> confirmPickupWithOtpAndPhone(
     Property p, {
     required String otp,
@@ -670,7 +663,6 @@ class PropertyService {
     if (_isOtpLocked(fresh)) return PickupResult.otpLocked;
     if (_isOtpExpired(fresh)) return PickupResult.otpExpired;
 
-    // F4: verify last 4 digits of receiver phone.
     if (receiverPhoneLast4.trim().isNotEmpty) {
       final storedPhone = fresh.receiverPhone.trim();
       final storedDigits = storedPhone.replaceAll(RegExp(r'\D'), '');
@@ -693,12 +685,10 @@ class PropertyService {
       }
     }
 
-    // S4: compare hashes
     final inputHash = _hashOtp(otp.trim(), fresh.propertyCode);
 
     if (inputHash != fresh.pickupOtp) {
       fresh.otpAttempts = fresh.otpAttempts + 1;
-      // S9: rotate nonce on every failed scan
       fresh.qrNonce = _newNonce();
 
       if (fresh.otpAttempts >= _maxOtpAttempts) {
@@ -914,8 +904,6 @@ class PropertyService {
     );
   }
 
-  /// Resets the OTP. Returns the new plaintext OTP so the caller
-  /// can display or forward it. The plaintext is NOT persisted.
   static Future<String?> adminResetOtp(Property p) async {
     if (!RoleGuard.hasRoleVerified(UserRole.admin)) return null;
 
@@ -1414,6 +1402,7 @@ class PropertyService {
     await refreshed.save();
   }
 
+  // ── F5: exhaustive adminSetStatus — expired is now handled ───────────────
   static Future<void> adminSetStatus(
     Property p,
     PropertyStatus newStatus,
@@ -1439,6 +1428,29 @@ class PropertyService {
         : (Session.currentUserId ?? '').trim();
 
     final fromStatus = fresh.status.name;
+
+    // ── F5: expired → pending restore (delegated to PropertyTtlService) ──
+    if (fresh.status == PropertyStatus.expired &&
+        newStatus == PropertyStatus.pending) {
+      await PropertyTtlService.adminRestoreExpired(fresh);
+      return;
+    }
+
+    // ── Guard: any other transition involving expired is blocked here.
+    // Expiry is only set by PropertyTtlService; the admin status-change
+    // dialog does not offer expired as a target status.
+    if (fresh.status == PropertyStatus.expired ||
+        newStatus == PropertyStatus.expired) {
+      await AuditService.log(
+        action: 'admin_set_status_skipped',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Blocked unsupported expired transition: '
+            '${fresh.status.name} -> ${newStatus.name}. '
+            'Use PropertyTtlService to expire or restore.',
+      );
+      return;
+    }
 
     if (newStatus == PropertyStatus.inTransit &&
         (fresh.status == PropertyStatus.pending ||
@@ -1570,7 +1582,7 @@ class PropertyService {
       return;
     }
 
-    // F1: admin can restore rejected → pending
+    // F1: restore rejected → pending
     if (newStatus == PropertyStatus.pending &&
         fresh.status == PropertyStatus.rejected) {
       await adminRestoreRejected(fresh);
@@ -1917,9 +1929,6 @@ class PropertyService {
     return false;
   }
 
-  // ---------------------------------------------------------------------------
-  // F3: _safeSendOtpIfSms — now calls logDeliveryAttempt after queuing
-  // ---------------------------------------------------------------------------
   static Future _safeSendOtpIfSms({
     required Property fresh,
     required String otp,
@@ -1995,7 +2004,6 @@ class PropertyService {
           'Do not share this code.\n'
           'Track: $code';
 
-      // Queue the message and capture the returned record
       final queuedMsg = await OutboundMessageService.queue(
         toPhone: phone,
         channel: 'sms',
@@ -2003,7 +2011,7 @@ class PropertyService {
         propertyKey: pKey,
       );
 
-      // F3: log OTP delivery confirmation with the specific message record
+      // F3: log OTP delivery confirmation
       await OutboundMessageService.logDeliveryAttempt(
         msg: queuedMsg,
         propertyKey: pKey,
@@ -2024,8 +2032,6 @@ class PropertyService {
       } catch (_) {}
     }
   }
-
-  // ---------------------------------------------------------------------------
 }
 
 /// Result enum for [PropertyService.confirmPickupWithOtpAndPhone].
@@ -2041,7 +2047,6 @@ enum PickupResult {
   noItems,
 }
 
-/// Human-readable SnackBar message for each [PickupResult].
 extension PickupResultMessage on PickupResult {
   String get message {
     switch (this) {

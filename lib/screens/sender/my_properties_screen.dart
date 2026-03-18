@@ -67,6 +67,13 @@ class MyPropertiesScreen extends StatelessWidget {
           bg: const Color(0xFFFFEBEE),
           fg: const Color(0xFFC62828),
         );
+      case PropertyStatus.expired:
+        return (
+          emoji: '⏳',
+          label: 'Expired',
+          bg: const Color(0xFFEFEBE9),
+          fg: const Color(0xFF4E342E),
+        );
     }
   }
 
@@ -242,6 +249,19 @@ class MyPropertiesScreen extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 12,
                               color: const Color(0xFFC62828),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+
+                        // F5: expiry notice
+                        if (property.status == PropertyStatus.expired) ...[
+                          const SizedBox(height: 4),
+                          const Text(
+                            '⏳ Expired — no payment within 10 days. Contact desk to restore.',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFF4E342E),
                               fontWeight: FontWeight.w600,
                             ),
                           ),

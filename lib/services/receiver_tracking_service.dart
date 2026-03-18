@@ -40,6 +40,8 @@ class ReceiverTrackingService {
         return 'PICKED UP';
       case PropertyStatus.rejected:
         return 'REJECTED';
+      case PropertyStatus.expired:
+        return 'EXPIRED';
     }
   }
 

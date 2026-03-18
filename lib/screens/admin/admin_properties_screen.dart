@@ -9,6 +9,7 @@ import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/property_service.dart';
+import '../../services/property_ttl_service.dart';
 import '../../services/role_guard.dart';
 
 class AdminPropertiesScreen extends StatefulWidget {
@@ -91,6 +92,12 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           label: 'Rejected',
           bg: const Color(0xFFFFEBEE),
           fg: const Color(0xFFC62828),
+        );
+      case PropertyStatus.expired:
+        return (
+          label: 'Expired',
+          bg: const Color(0xFFEFEBE9),
+          fg: const Color(0xFF4E342E),
         );
     }
   }
@@ -211,7 +218,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
       margin: const EdgeInsets.only(bottom: 10),
       child: InkWell(
         borderRadius: BorderRadius.circular(12),
-        onTap: () => _adminChangeStatus(context, p),
+        onTap: () => _handleCardTap(context, p),
         onLongPress: legacyBroken ? () => _repairOne(p) : null,
         child: Padding(
           padding: const EdgeInsets.all(14),
@@ -252,7 +259,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                   const SizedBox(width: 8),
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
-                    onTap: () => _adminChangeStatus(context, p),
+                    onTap: () => _handleCardTap(context, p),
                     child: Padding(
                       padding: const EdgeInsets.all(4),
                       child: Icon(Icons.edit_outlined, size: 18, color: muted),
@@ -296,42 +303,26 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                 style: TextStyle(fontSize: 12, color: muted),
               ),
 
-              // F1: show rejection reason when rejected
+              // F1: rejection banner
               if (p.status == PropertyStatus.rejected) ...[
                 const SizedBox(height: 6),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFFFEBEE),
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(
-                      color: const Color(0xFFC62828).withValues(alpha: 0.30),
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        'Rejected: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFFC62828),
-                        ),
-                      ),
-                      if ((p.rejectionReason ?? '').trim().isNotEmpty)
-                        Text(
-                          p.rejectionReason!.trim(),
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Color(0xFFC62828),
-                          ),
-                        ),
-                    ],
-                  ),
+                _infoBanner(
+                  color: const Color(0xFFC62828),
+                  bg: const Color(0xFFFFEBEE),
+                  title:
+                      'Rejected: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
+                  body: (p.rejectionReason ?? '').trim(),
+                ),
+              ],
+
+              // F5: expiry banner
+              if (p.status == PropertyStatus.expired) ...[
+                const SizedBox(height: 6),
+                _infoBanner(
+                  color: const Color(0xFF4E342E),
+                  bg: const Color(0xFFEFEBE9),
+                  title: 'Expired — no payment recorded within 10 days',
+                  body: 'Tap to restore to Pending.',
                 ),
               ],
 
@@ -366,6 +357,207 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
         ),
       ),
     );
+  }
+
+  Widget _infoBanner({
+    required Color color,
+    required Color bg,
+    required String title,
+    required String body,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: color,
+            ),
+          ),
+          if (body.isNotEmpty)
+            Text(body, style: TextStyle(fontSize: 12, color: color)),
+        ],
+      ),
+    );
+  }
+
+  // Routes card tap to the right dialog based on status
+  Future<void> _handleCardTap(BuildContext context, Property p) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+
+    if (p.status == PropertyStatus.rejected) {
+      await _adminChangeStatusRejected(context, p);
+    } else if (p.status == PropertyStatus.expired) {
+      await _adminRestoreExpired(context, p);
+    } else {
+      await _adminChangeStatus(context, p);
+    }
+  }
+
+  // ── F5: restore expired dialog ───────────────────────────────────────────
+  Future<void> _adminRestoreExpired(BuildContext context, Property p) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Restore Expired Property'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '${p.propertyCode.trim().isEmpty ? 'This property' : p.propertyCode} '
+              'expired after 10 days with no payment recorded.',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Restoring will set the property back to Pending. '
+              'The sender will be notified and must complete payment at the desk.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore to Pending'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    final ok = await PropertyTtlService.adminRestoreExpired(p);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? 'Property restored to Pending ✅' : 'Could not restore ❌',
+        ),
+      ),
+    );
+  }
+
+  // ── F1: restore rejected dialog (unchanged) ──────────────────────────────
+  Future<void> _adminChangeStatusRejected(
+    BuildContext context,
+    Property p,
+  ) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Restore Rejected Property'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Rejection reason: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            if ((p.rejectionReason ?? '').trim().isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(p.rejectionReason!.trim()),
+            ],
+            const SizedBox(height: 12),
+            const Text(
+              'Restoring will set the property back to Pending and allow '
+              'the sender to re-present it at the desk.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Restore to Pending'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm != true) return;
+
+    await PropertyService.adminRestoreRejected(p);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Property restored to Pending ✅')),
+    );
+  }
+
+  Future<void> _adminChangeStatus(BuildContext context, Property p) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+
+    PropertyStatus selected = p.status;
+
+    final result = await showDialog<PropertyStatus>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Change Status'),
+        content: DropdownButtonFormField<PropertyStatus>(
+          initialValue: selected,
+          items: const [
+            DropdownMenuItem(
+              value: PropertyStatus.pending,
+              child: Text('Pending'),
+            ),
+            DropdownMenuItem(
+              value: PropertyStatus.loaded,
+              child: Text('Loaded'),
+            ),
+            DropdownMenuItem(
+              value: PropertyStatus.inTransit,
+              child: Text('In Transit'),
+            ),
+            DropdownMenuItem(
+              value: PropertyStatus.delivered,
+              child: Text('Delivered'),
+            ),
+            DropdownMenuItem(
+              value: PropertyStatus.pickedUp,
+              child: Text('Picked Up'),
+            ),
+            // rejected and expired are not shown here —
+            // they have dedicated restore dialogs
+          ],
+          onChanged: (v) => selected = v ?? selected,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, selected),
+            child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == null) return;
+
+    await PropertyService.adminSetStatus(p, result);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Status updated ✅')));
   }
 
   void _scheduleAutoRepairOnce(List<Property> items) {
@@ -403,9 +595,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     }
 
     if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Legacy record repaired ✅')),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('Legacy record repaired ✅')));
   }
 
   Future<void> _manualRepairAll(Box<Property> box) async {
@@ -435,114 +627,6 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               : 'Repaired $repaired legacy record(s) ✅',
         ),
       ),
-    );
-  }
-
-  Future<void> _adminChangeStatus(BuildContext context, Property p) async {
-    if (!RoleGuard.hasRole(UserRole.admin)) return;
-
-    // F1: rejected properties get a dedicated restore dialog
-    if (p.status == PropertyStatus.rejected) {
-      final confirm = await showDialog<bool>(
-        context: context,
-        builder: (_) => AlertDialog(
-          title: const Text('Restore Rejected Property'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Rejection reason: ${PropertyService.rejectionCategoryLabel(p.rejectionCategory ?? '')}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
-              ),
-              if ((p.rejectionReason ?? '').trim().isNotEmpty) ...[
-                const SizedBox(height: 4),
-                Text(p.rejectionReason!.trim()),
-              ],
-              const SizedBox(height: 12),
-              const Text(
-                'Restoring will set the property back to Pending and allow the sender to re-present it at the desk.',
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context, false),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Restore to Pending'),
-            ),
-          ],
-        ),
-      );
-
-      if (confirm != true) return;
-
-      await PropertyService.adminRestoreRejected(p);
-
-      if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Property restored to Pending ✅')),
-      );
-      return;
-    }
-
-    // Normal status change for non-rejected properties
-    PropertyStatus selected = p.status;
-
-    final result = await showDialog<PropertyStatus>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Change Status'),
-        content: DropdownButtonFormField<PropertyStatus>(
-          initialValue: selected,
-          items: const [
-            DropdownMenuItem(
-              value: PropertyStatus.pending,
-              child: Text('Pending'),
-            ),
-            DropdownMenuItem(
-              value: PropertyStatus.loaded,
-              child: Text('Loaded'),
-            ),
-            DropdownMenuItem(
-              value: PropertyStatus.inTransit,
-              child: Text('In Transit'),
-            ),
-            DropdownMenuItem(
-              value: PropertyStatus.delivered,
-              child: Text('Delivered'),
-            ),
-            DropdownMenuItem(
-              value: PropertyStatus.pickedUp,
-              child: Text('Picked Up'),
-            ),
-            // rejected not shown — admin restores via the dedicated dialog above
-          ],
-          onChanged: (v) => selected = v ?? selected,
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, selected),
-            child: const Text('Save'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == null) return;
-
-    await PropertyService.adminSetStatus(p, result);
-
-    if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Status updated ✅')),
     );
   }
 }

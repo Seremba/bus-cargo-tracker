@@ -19,6 +19,8 @@ class PropertyStatusColors {
         return Colors.green;
       case PropertyStatus.rejected:
         return Colors.red;
+      case PropertyStatus.expired:
+        return Colors.brown;
     }
   }
 

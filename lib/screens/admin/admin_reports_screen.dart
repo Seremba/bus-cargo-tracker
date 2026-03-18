@@ -87,7 +87,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     return '${fmt(s)} → ${fmt(e)}';
   }
 
-  // Format numbers with commas
   String _fmt(int n) {
     final s = n.abs().toString();
     final buf = StringBuffer();
@@ -164,6 +163,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           final inTransit = countStatus(PropertyStatus.inTransit);
           final delivered = countStatus(PropertyStatus.delivered);
           final pickedUp = countStatus(PropertyStatus.pickedUp);
+          final rejected = countStatus(PropertyStatus.rejected);
+          final expired = countStatus(PropertyStatus.expired); // F5
 
           int deliveredInRange() => propertiesAll.where((p) {
             final at = p.deliveredAt;
@@ -188,6 +189,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           }).length;
 
           final hasOtpIssues = otpLockedCount > 0 || otpExpiredCount > 0;
+          final hasTerminalIssues = rejected > 0 || expired > 0;
 
           int tripCount(TripStatus s) =>
               trips.where((t) => t.status == s).length;
@@ -299,6 +301,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 style: TextStyle(fontSize: 11, color: muted),
               ),
               const SizedBox(height: 8),
+
+              // Row 1: pending / loaded / in-transit
               _kpiRow([
                 _kpi(
                   label: 'Pending',
@@ -320,6 +324,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 ),
               ]),
               const SizedBox(height: 8),
+
+              // Row 2: delivered / picked-up + spacer
               _kpiRow([
                 _kpi(
                   label: 'Delivered',
@@ -333,9 +339,33 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                   color: Colors.teal.shade700,
                   bg: Colors.teal.withValues(alpha: 0.08),
                 ),
-                // Empty spacer to keep grid aligned
                 const Expanded(child: SizedBox()),
               ]),
+
+              // Row 3 (F5): rejected / expired — only shown when non-zero
+              if (hasTerminalIssues) ...[
+                const SizedBox(height: 8),
+                _kpiRow([
+                  if (rejected > 0)
+                    _kpi(
+                      label: 'Rejected',
+                      value: _fmt(rejected),
+                      color: const Color(0xFFC62828),
+                      bg: const Color(0xFFFFEBEE),
+                    ),
+                  if (rejected > 0 && expired > 0) const SizedBox(width: 8),
+                  if (expired > 0)
+                    _kpi(
+                      label: 'Expired',
+                      value: _fmt(expired),
+                      color: const Color(0xFF4E342E),
+                      bg: const Color(0xFFEFEBE9),
+                    ),
+                  // Spacer to fill the third column if only one tile is shown
+                  if (rejected == 0 || expired == 0)
+                    const Expanded(child: SizedBox()),
+                ]),
+              ],
 
               // OTP issues — only shown when non-zero
               if (hasOtpIssues) ...[
@@ -442,7 +472,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   Widget _rangeHeader() {
     final cs = Theme.of(context).colorScheme;
-    final muted = cs.onSurface.withValues(alpha: 0.55);
 
     return Card(
       child: Padding(
@@ -450,7 +479,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Row 1: label left, date range right
             Row(
               children: [
                 Icon(Icons.date_range, size: 15, color: cs.primary),
@@ -487,7 +515,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
             const SizedBox(height: 10),
 
-            // Row 2: all 4 chips share width equally — never wraps
             Row(
               children: [
                 _expandedChip('Today', _QuickRange.today, cs),
@@ -505,7 +532,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
   }
 
-  // Expanded chip — all chips share equal width in the row
   Widget _expandedChip(
     String label,
     _QuickRange range,

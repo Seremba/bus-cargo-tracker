@@ -19,7 +19,9 @@ enum PropertyStatus {
   @HiveField(4)
   pickedUp,
 
-  
   @HiveField(5)
   rejected,
+
+  @HiveField(6)
+  expired,
 }

@@ -1,9 +1,9 @@
-import 'package:bus_cargo_tracker/screens/admin/at_settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/notification_item.dart';
 import '../../models/outbound_message.dart';
+import '../../models/property_status.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../models/user.dart';
@@ -29,6 +29,7 @@ import '../admin/admin_reports_screen.dart';
 import '../admin/admin_trips_screen.dart';
 import '../admin/admin_users_screen.dart';
 import '../admin/admin_outbound_messages_screen.dart';
+import '../admin/at_settings_screen.dart';
 
 import '../common/outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
@@ -48,7 +49,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
   Future<void> _runSync() async {
     if (_syncing) return;
     setState(() => _syncing = true);
-
     try {
       final result = await SyncService.syncNow();
       if (!mounted) return;
@@ -80,6 +80,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
     if (d == null) return 'Not synced yet';
     final s = d.toLocal().toString();
     return 'Last synced: ${s.length >= 16 ? s.substring(0, 16) : s}';
+  }
+
+  String _fmtAmount(int n) {
+    if (n >= 1000000) {
+      final m = n / 1000000;
+      return '${m.toStringAsFixed(m.truncateToDouble() == m ? 0 : 1)}M';
+    }
+    if (n >= 1000) {
+      final k = n / 1000;
+      return '${k.toStringAsFixed(k.truncateToDouble() == k ? 0 : 1)}K';
+    }
+    return n.toString();
   }
 
   @override
@@ -158,7 +170,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
               const SizedBox(height: 8),
               const Divider(height: 1),
               const SizedBox(height: 4),
-              // Interleave tiles with subtle dividers
               for (int i = 0; i < children.length; i++) ...[
                 children[i],
                 if (i < children.length - 1)
@@ -235,7 +246,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
           elevation: 1,
           centerTitle: false,
           titleSpacing: 16,
-          // Fixed: use left-aligned column title so it never truncates
           title: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
@@ -252,7 +262,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
             ],
           ),
           actions: [
-            // Sync button with tooltip showing last synced time
             Tooltip(
               message: _fmtSynced(_lastSynced),
               child: IconButton(
@@ -269,7 +278,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     : const Icon(Icons.sync),
               ),
             ),
-            // Notification bell with unread badge
             ValueListenableBuilder(
               valueListenable: HiveService.notificationBox().listenable(),
               builder: (context, Box box, _) {
@@ -332,44 +340,230 @@ class _AdminDashboardState extends State<AdminDashboard> {
             HiveService.propertyBox().listenable(),
             HiveService.tripBox().listenable(),
             HiveService.userBox().listenable(),
+            HiveService.paymentBox().listenable(),
             HiveService.outboundMessageBox().listenable(),
           ]),
           builder: (context, _) {
-            // Live counts for badges
-            final allProperties = HiveService.propertyBox().values;
-            final totalProperties = allProperties.length;
-            final activeTrips = HiveService.tripBox().values
+            final now = DateTime.now();
+            final todayStart = DateTime(now.year, now.month, now.day);
+
+            // ── KPI calculations ──────────────────────────────────────
+            final allProperties = HiveService.propertyBox().values.toList();
+            final allPayments = HiveService.paymentBox().values.toList();
+            final allTrips = HiveService.tripBox().values.toList();
+            final outboundBox = HiveService.outboundMessageBox();
+
+            // Revenue today
+            final todayRevenue = allPayments
+                .where((p) => p.createdAt.isAfter(todayStart))
+                .fold(0, (sum, p) => sum + p.amount);
+
+            // Active trips
+            final activeTrips = allTrips
                 .where((t) => (t as Trip).status == TripStatus.active)
                 .length;
+
+            // Pending pickup (delivered but not picked up)
+            final pendingPickup = allProperties
+                .where((p) => p.status == PropertyStatus.delivered)
+                .length;
+
+            // Unpaid properties (pending status, no payment)
+            final unpaidProps = allProperties
+                .where(
+                  (p) =>
+                      p.status == PropertyStatus.pending &&
+                      p.amountPaidTotal == 0,
+                )
+                .length;
+
+            // In transit
+            final inTransit = allProperties
+                .where((p) => p.status == PropertyStatus.inTransit)
+                .length;
+
+            // SMS failed
+            final smsFailed = outboundBox.values
+                .whereType<OutboundMessage>()
+                .where(
+                  (m) =>
+                      m.channel.trim().toLowerCase() == 'sms' &&
+                      m.status.trim().toLowerCase() ==
+                          OutboundMessageService.statusFailed,
+                )
+                .length;
+
+            // Total properties
+            final totalProperties = allProperties.length;
+
+            // Staff count
             final totalUsers = HiveService.userBox().values
                 .where((u) => (u as User).role != UserRole.sender)
                 .length;
 
-            final outboundBox = HiveService.outboundMessageBox();
-            final pendingSms = outboundBox.values
+            final outboundMsgs = outboundBox.values
                 .whereType<OutboundMessage>()
-                .where((m) {
-                  final ch = m.channel.trim().toLowerCase();
-                  if (ch != 'sms') return false;
-                  final st = m.status.trim().toLowerCase();
-                  return st == OutboundMessageService.statusQueued ||
-                      st == OutboundMessageService.statusFailed;
-                })
-                .length;
+                .toList();
 
             int queuedSms = 0;
             int failedSms = 0;
-            for (final m in outboundBox.values.whereType<OutboundMessage>()) {
+            int pendingSms = 0;
+            for (final m in outboundMsgs) {
               if (m.channel.trim().toLowerCase() != 'sms') continue;
               final st = m.status.trim().toLowerCase();
               if (st == OutboundMessageService.statusQueued) queuedSms++;
               if (st == OutboundMessageService.statusFailed) failedSms++;
+              if (st == OutboundMessageService.statusQueued ||
+                  st == OutboundMessageService.statusFailed)
+                pendingSms++;
             }
 
             return ListView(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
               children: [
-                // Last synced timestamp strip
+                // ── KPI cards ──────────────────────────────────────────
+                _kpiSectionLabel(cs),
+                const SizedBox(height: 12),
+
+                // Revenue — full width hero card
+                _kpiHeroCard(
+                  context: context,
+                  icon: Icons.payments_outlined,
+                  label: 'Revenue today',
+                  value: 'UGX ${_fmtAmount(todayRevenue)}',
+                  sublabel: 'Tap to view all payments',
+                  color: Colors.green,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AdminPaymentsScreen(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 10),
+
+                // Row 1: Active trips + In transit
+                Row(
+                  children: [
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.local_shipping_outlined,
+                        label: 'Active trips',
+                        value: '$activeTrips',
+                        color: Colors.blue,
+                        alert: activeTrips == 0,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminActiveTripsScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.directions_bus_outlined,
+                        label: 'In transit',
+                        value: '$inTransit',
+                        color: Colors.blue.shade700,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminPropertiesScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+
+                // Row 2: Pending pickup + Total properties
+                Row(
+                  children: [
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.lock_outline,
+                        label: 'Pending pickup',
+                        value: '$pendingPickup',
+                        color: Colors.teal,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminPropertiesScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.inventory_2_outlined,
+                        label: 'Total properties',
+                        value: '$totalProperties',
+                        color: cs.primary,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminPropertiesScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+
+                // Row 3: Unpaid cargo + SMS failed
+                Row(
+                  children: [
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.warning_amber_outlined,
+                        label: 'Unpaid cargo',
+                        value: '$unpaidProps',
+                        color: Colors.amber.shade700,
+                        alert: unpaidProps > 0,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const AdminPropertiesScreen(),
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: _kpiCard(
+                        context: context,
+                        icon: Icons.sms_failed_outlined,
+                        label: 'SMS failed',
+                        value: '$smsFailed',
+                        color: Colors.red,
+                        alert: smsFailed > 0,
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => const OutboundMessagesScreen(
+                              channelFilter: 'sms',
+                              title: 'SMS Processing',
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+
+                const SizedBox(height: 16),
+
+                // Last synced strip
                 Padding(
                   padding: const EdgeInsets.only(bottom: 12),
                   child: Row(
@@ -384,6 +578,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ),
                 ),
 
+                // ── Action sections ────────────────────────────────────
                 sectionCard(
                   title: 'Operations',
                   icon: Icons.settings_outlined,
@@ -594,7 +789,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ],
                 ),
 
-                // ── Lookup ───────────────────────────────────────────────
                 sectionCard(
                   title: 'Lookup',
                   icon: Icons.search,
@@ -613,7 +807,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ],
                 ),
 
-                // Footer tip
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -630,6 +823,181 @@ class _AdminDashboardState extends State<AdminDashboard> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  // ── KPI section label ───────────────────────────────────────────────────
+  Widget _kpiSectionLabel(ColorScheme cs) {
+    return Row(
+      children: [
+        Container(
+          width: 3,
+          height: 20,
+          decoration: BoxDecoration(
+            color: cs.primary,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Icon(Icons.dashboard_outlined, size: 17, color: cs.primary),
+        const SizedBox(width: 6),
+        const Text(
+          'Overview',
+          style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+        ),
+      ],
+    );
+  }
+
+  // ── Full-width hero KPI card (revenue) ──────────────────────────────────
+  Widget _kpiHeroCard({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String value,
+    required String sublabel,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withValues(alpha: 0.25)),
+        ),
+        child: Row(
+          children: [
+            Container(
+              width: 48,
+              height: 48,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: Icon(icon, size: 24, color: color),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    label,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.55),
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      color: color,
+                      height: 1.1,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    sublabel,
+                    style: TextStyle(
+                      fontSize: 11,
+                      color: cs.onSurface.withValues(alpha: 0.40),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Icon(Icons.chevron_right, color: color.withValues(alpha: 0.50)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── Standard KPI card ────────────────────────────────────────────────────
+  Widget _kpiCard({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required String value,
+    required Color color,
+    bool alert = false,
+    required VoidCallback onTap,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: cs.surface,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color: alert
+                ? color.withValues(alpha: 0.50)
+                : cs.outlineVariant.withValues(alpha: 0.40),
+            width: alert ? 1.5 : 1,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Container(
+                  width: 32,
+                  height: 32,
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.12),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: Icon(icon, size: 17, color: color),
+                ),
+                if (alert)
+                  Container(
+                    width: 8,
+                    height: 8,
+                    decoration: BoxDecoration(
+                      color: color,
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 22,
+                fontWeight: FontWeight.w800,
+                color: color,
+                height: 1,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 12,
+                color: cs.onSurface.withValues(alpha: 0.55),
+              ),
+            ),
+          ],
         ),
       ),
     );

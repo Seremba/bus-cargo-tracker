@@ -72,7 +72,7 @@ class _PrinterSetupScreenState extends State<PrinterSetupScreen> {
     // Visible test (prints text)
     final bytes = Uint8List.fromList([
       0x1B, 0x40, // init
-      ...'BEBETO TEST\n\n'.codeUnits,
+      ...'UNEX TEST\n\n'.codeUnits,
     ]);
 
     final ok = await PrinterService.printBytesBluetooth(bytes);

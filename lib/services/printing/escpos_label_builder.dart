@@ -23,7 +23,7 @@ class EscPosLabelBuilder {
     // --- HEADER ---
     bytes.addAll(
       gen.text(
-        'BEBETO CARGO',
+        'UNEX LOGISTICS',
         styles: const PosStyles(align: PosAlign.center, bold: true),
         linesAfter: 1,
       ),
@@ -87,7 +87,7 @@ class EscPosLabelBuilder {
     // --- HEADER ---
     bytes.addAll(
       gen.text(
-        'BEBETO CARGO',
+        'UNEX LOGISTICS',
         styles: const PosStyles(align: PosAlign.center, bold: true),
       ),
     );

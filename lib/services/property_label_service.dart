@@ -28,7 +28,7 @@ class PropertyLabelService {
             crossAxisAlignment: pw.CrossAxisAlignment.start,
             children: [
               pw.Text(
-                'BEBETO CARGO',
+                'UNEX LOGISTICS',
                 style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
               ),
               pw.SizedBox(height: 8),
@@ -83,7 +83,7 @@ class PropertyLabelService {
 
     await Share.shareXFiles(
       [XFile(file.path, mimeType: 'application/pdf', name: filename)],
-      text: 'Bebeto Cargo label: $code',
+      text: 'UNEX LOGISTICS label: $code',
     );
   }
 }

@@ -81,7 +81,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Bebeto Cargo',
+                        'UNEX LOGISTICS',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,

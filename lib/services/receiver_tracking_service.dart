@@ -314,7 +314,7 @@ class ReceiverTrackingService {
         : routeName.trim();
 
     final body = [
-      'Bebeto Cargo',
+      'UNEX LOGISTICS',
       '',
       'Tracking: $code',
       'Item: $desc (x${fresh.itemCount})',
@@ -358,7 +358,7 @@ class ReceiverTrackingService {
     final status = _friendlyStatus(p);
     final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
 
-    return 'Bebeto Cargo ✅ Payment confirmed\n'
+    return 'UNEX LOGISTICS ✅ Payment confirmed\n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Amount: $cur ${p.amountPaidTotal}\n'
@@ -380,7 +380,7 @@ class ReceiverTrackingService {
         ? '\nPickup requires: OTP + QR'
         : '';
 
-    return 'Bebeto Cargo update \n'
+    return 'UNEX LOGISTICS update \n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Status: $eventLabel\n'
@@ -404,7 +404,7 @@ class ReceiverTrackingService {
         ? '\nPickup OTP: $otpPlaintext'
         : '\nPickup OTP: (contact station)';
 
-    return 'Bebeto Cargo: Your cargo has arrived ✅\n'
+    return 'UNEX LOGISTICS: Your cargo has arrived ✅\n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Route: $route | Dest: ${p.destination}\n'

@@ -2048,7 +2048,7 @@ class PropertyService {
           : fresh.trackingCode.trim();
 
       final body =
-          'Bebeto Cargo OTP: $otp\n'
+          'UNEX LOGISTICS OTP: $otp\n'
           'Do not share this code.\n'
           'Track: $code';
 
@@ -2094,7 +2094,7 @@ class PropertyService {
         : 'Valid until: ${until.toLocal().toString().substring(0, 16)}';
 
     return [
-      'BEBETO CARGO — Pickup OTP',
+      'UNEX LOGISTICS — Pickup OTP',
       'Property: $code',
       'Receiver: ${p.receiverName.trim().isEmpty ? '—' : p.receiverName.trim()}',
       if (station.isNotEmpty) 'Station: $station',

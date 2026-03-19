@@ -107,7 +107,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Text(
-                        'Bebeto Cargo',
+                        'UNEX LOGISTICS',
                         style: TextStyle(
                           fontSize: 18,
                           fontWeight: FontWeight.w900,

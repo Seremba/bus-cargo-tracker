@@ -164,7 +164,7 @@ class PasswordResetService {
 
     final body =
         '''
-Bebeto Cargo
+UNEX LOGISTICS
 
 Your password reset OTP is: $otp
 

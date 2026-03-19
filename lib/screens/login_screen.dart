@@ -143,7 +143,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Bebeto Cargo',
+                          'UNEX LOGISTICS',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,

@@ -28,7 +28,7 @@ class EscPosReceiptBuilder {
     // Header
     bytes.addAll(
       gen.text(
-        'BEBETO CARGO',
+        'UNEX LOGISTICS',
         styles: const PosStyles(align: PosAlign.center, bold: true),
       ),
     );

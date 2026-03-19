@@ -22,7 +22,7 @@ class LocationService {
 
         intervalDuration: const Duration(seconds: 15),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
-          notificationText: 'Bebeto Cargo is tracking your trip',
+          notificationText: 'UNEX LOGISTICS is tracking your trip',
           notificationTitle: 'Trip in progress',
           enableWakeLock: true,
         ),

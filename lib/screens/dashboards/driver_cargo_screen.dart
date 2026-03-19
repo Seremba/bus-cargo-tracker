@@ -18,8 +18,6 @@ import '../../services/session.dart';
 import '../../services/trip_service.dart';
 
 import '../admin/driver_load_overview_screen.dart';
-
-
 import '../../theme/status_colors.dart';
 import '../../ui/status_labels.dart';
 import '../../widgets/status_chip.dart';
@@ -129,9 +127,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                     currentIndex < updatedTrip.checkpoints.length)
                 ? updatedTrip.checkpoints[currentIndex].name
                 : 'Checkpoint';
-            ScaffoldMessenger.of(
-              context,
-            ).showSnackBar(SnackBar(content: Text('$cpName reached ✅')));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('$cpName reached ✅')),
+            );
           }
         },
         onError: (e, st) {
@@ -190,17 +188,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       );
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed: $e')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Failed: $e')));
     } finally {
       if (mounted) setState(() => _startingTrip = false);
     }
   }
 
-  // =========================
-  // Build
-  // =========================
   @override
   Widget build(BuildContext context) {
     if (Session.currentUserId == null ||
@@ -239,9 +233,31 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         animation: Listenable.merge([pBox.listenable(), iBox.listenable()]),
         builder: (context, _) {
           final itemSvc = PropertyItemService(iBox);
-          final routeProperties =
-              pBox.values.where((p) => p.routeId == assignedRouteId).toList()
-                ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+          // Active trip for this specific driver
+          final activeTrip = TripService.getActiveTripForCurrentDriver(
+            routeId: assignedRouteId,
+          );
+          final activeTripId = activeTrip?.tripId;
+
+          // Show only properties belonging to this driver's trip (if active),
+          // or properties loaded at station with no trip assigned yet.
+          final routeProperties = pBox.values.where((p) {
+            if (p.routeId != assignedRouteId) return false;
+            if (activeTripId != null && activeTripId.isNotEmpty) {
+              // Trip is active — show only properties on this driver's trip
+              return (p.tripId ?? '').trim() == activeTripId.trim();
+            }
+            // No active trip yet — show loaded items with no trip assigned
+            // so driver knows what's ready to go on their bus
+            final items = itemSvc.getItemsForProperty(p.key.toString());
+            return items.any(
+              (x) =>
+                  x.status == PropertyItemStatus.loaded &&
+                  x.tripId.trim().isEmpty,
+            );
+          }).toList()
+            ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 
           int readyProperties = 0;
           int readyItems = 0;
@@ -269,11 +285,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
             children: [
-              // ── Active trip panel ──
               _activeTripPanel(context),
               const SizedBox(height: 10),
 
-              // ── View Load Overview button ──
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
@@ -300,20 +314,15 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               ),
 
               const SizedBox(height: 10),
-
-              // ── GPS panel ──
               _gpsPanel(context),
-
               const SizedBox(height: 14),
 
-              // ── Assigned Route card ──
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Section title
                       Row(
                         children: [
                           Container(
@@ -325,24 +334,17 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                             ),
                           ),
                           const SizedBox(width: 8),
-                          Icon(
-                            Icons.route_outlined,
-                            size: 17,
-                            color: AppColors.primary,
-                          ),
+                          Icon(Icons.route_outlined,
+                              size: 17, color: AppColors.primary),
                           const SizedBox(width: 6),
                           const Text(
                             'Assigned Route',
                             style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
+                                fontSize: 14, fontWeight: FontWeight.bold),
                           ),
                         ],
                       ),
                       const SizedBox(height: 10),
-
-                      // Route name
                       Text(
                         _dashIfEmpty(assignedRouteName),
                         maxLines: 1,
@@ -350,8 +352,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                         style: TextStyle(fontSize: 13, color: muted),
                       ),
                       const SizedBox(height: 10),
-
-                      // Stat pills row
                       Row(
                         children: [
                           Expanded(
@@ -382,10 +382,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 12),
-
-                      // Start Trip button
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
@@ -395,7 +392,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.primary,
                             foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            padding:
+                                const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -416,7 +414,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
               const SizedBox(height: 16),
 
-              // ── Route Manifest section title ──
               Row(
                 children: [
                   Container(
@@ -428,15 +425,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  Icon(
-                    Icons.list_alt_outlined,
-                    size: 17,
-                    color: AppColors.primary,
-                  ),
+                  Icon(Icons.list_alt_outlined,
+                      size: 17, color: AppColors.primary),
                   const SizedBox(width: 6),
                   const Text(
-                    'Route Manifest',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+                    'My Manifest',
+                    style: TextStyle(
+                        fontSize: 14, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),
@@ -447,7 +442,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   const SizedBox(width: 4),
                   Expanded(
                     child: Text(
-                      'Showing cargo for your assigned route only.',
+                      activeTripId != null
+                          ? 'Showing cargo on your active trip.'
+                          : 'Showing cargo loaded and ready for your bus.',
                       style: TextStyle(fontSize: 12, color: muted),
                     ),
                   ),
@@ -458,11 +455,15 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               if (routeProperties.isEmpty)
                 Row(
                   children: [
-                    Icon(Icons.inbox_outlined, size: 16, color: Colors.black38),
+                    Icon(Icons.inbox_outlined,
+                        size: 16, color: Colors.black38),
                     const SizedBox(width: 8),
-                    const Text(
-                      'No cargo found yet for your assigned route.',
-                      style: TextStyle(color: Colors.black54, fontSize: 13),
+                    const Expanded(
+                      child: Text(
+                        'No cargo assigned to your bus yet.',
+                        style:
+                            TextStyle(color: Colors.black54, fontSize: 13),
+                      ),
                     ),
                   ],
                 ),
@@ -476,20 +477,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  // =========================
-  // GPS panel
-  // =========================
   Widget _gpsPanel(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.60);
 
-    final isError =
-        _gpsStatus.toLowerCase().contains('error') ||
+    final isError = _gpsStatus.toLowerCase().contains('error') ||
         _gpsStatus.toLowerCase().contains('failed') ||
         _gpsStatus.toLowerCase().contains('denied');
-
-    final iconColor = isError ? Colors.red : Colors.green;
-    final icon = isError ? Icons.gps_off : Icons.gps_fixed;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -501,24 +495,19 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(icon, size: 18, color: iconColor),
+          Icon(isError ? Icons.gps_off : Icons.gps_fixed,
+              size: 18, color: isError ? Colors.red : Colors.green),
           const SizedBox(width: 10),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  _gpsStatus,
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
+                Text(_gpsStatus,
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700)),
                 const SizedBox(height: 3),
-                Text(
-                  _lastGpsText(),
-                  style: TextStyle(fontSize: 11, color: muted),
-                ),
+                Text(_lastGpsText(),
+                    style: TextStyle(fontSize: 11, color: muted)),
               ],
             ),
           ),
@@ -529,14 +518,14 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               _restartGps();
             },
             style: OutlinedButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               minimumSize: Size.zero,
               tapTargetSize: MaterialTapTargetSize.shrinkWrap,
               side: BorderSide(color: AppColors.primary),
               foregroundColor: AppColors.primary,
               shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8),
-              ),
+                  borderRadius: BorderRadius.circular(8)),
             ),
             child: const Text('Retry', style: TextStyle(fontSize: 12)),
           ),
@@ -545,9 +534,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  // =========================
-  // Active trip panel
-  // =========================
   Widget _activeTripPanel(BuildContext context) {
     final trip = TripService.getActiveTripForCurrentDriver();
     final cs = Theme.of(context).colorScheme;
@@ -579,12 +565,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     final total = trip.checkpoints.length;
     final reachedCount = (trip.lastCheckpointIndex + 1).clamp(0, total);
     final progress = total > 0 ? reachedCount / total : 0.0;
-
     final nextName = total == 0
         ? '—'
         : (trip.lastCheckpointIndex + 1 >= total)
-        ? '— (all checkpoints reached)'
-        : trip.checkpoints[trip.lastCheckpointIndex + 1].name;
+            ? '— (all checkpoints reached)'
+            : trip.checkpoints[trip.lastCheckpointIndex + 1].name;
 
     final tripBg = TripStatusColors.background(trip.status);
     final tripFg = TripStatusColors.foreground(trip.status);
@@ -595,7 +580,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Section title
             Row(
               children: [
                 Container(
@@ -607,17 +591,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(
-                  Icons.directions_bus_outlined,
-                  size: 17,
-                  color: AppColors.primary,
-                ),
+                Icon(Icons.directions_bus_outlined,
+                    size: 17, color: AppColors.primary),
                 const SizedBox(width: 6),
                 const Expanded(
-                  child: Text(
-                    'Active Trip',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
-                  ),
+                  child: Text('Active Trip',
+                      style: TextStyle(
+                          fontSize: 14, fontWeight: FontWeight.bold)),
                 ),
                 StatusChip(
                   text: TripStatusLabels.text(trip.status),
@@ -627,37 +607,28 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            Row(
-              children: [
-                Icon(Icons.route_outlined, size: 13, color: muted),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    trip.routeName,
+            Row(children: [
+              Icon(Icons.route_outlined, size: 13, color: muted),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(trip.routeName,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, color: muted),
-                  ),
-                ),
-              ],
-            ),
+                    style: TextStyle(fontSize: 13, color: muted)),
+              ),
+            ]),
             const SizedBox(height: 4),
-            Row(
-              children: [
-                Icon(Icons.place_outlined, size: 13, color: muted),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: Text(
-                    'Next: $nextName',
+            Row(children: [
+              Icon(Icons.place_outlined, size: 13, color: muted),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text('Next: $nextName',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(fontSize: 13, color: muted),
-                  ),
-                ),
-              ],
-            ),
+                    style: TextStyle(fontSize: 13, color: muted)),
+              ),
+            ]),
             const SizedBox(height: 10),
-            // Checkpoint progress bar
             Row(
               children: [
                 Expanded(
@@ -666,24 +637,19 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                     child: LinearProgressIndicator(
                       value: progress,
                       minHeight: 6,
-                      backgroundColor: AppColors.primary.withValues(
-                        alpha: 0.12,
-                      ),
-                      valueColor: AlwaysStoppedAnimation<Color>(
-                        AppColors.primary,
-                      ),
+                      backgroundColor:
+                          AppColors.primary.withValues(alpha: 0.12),
+                      valueColor:
+                          AlwaysStoppedAnimation<Color>(AppColors.primary),
                     ),
                   ),
                 ),
                 const SizedBox(width: 10),
-                Text(
-                  '$reachedCount / $total',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600,
-                    color: muted,
-                  ),
-                ),
+                Text('$reachedCount / $total',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        color: muted)),
               ],
             ),
           ],
@@ -692,9 +658,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  // =========================
-  // Manifest card
-  // =========================
   Widget _manifestCard(
     BuildContext context,
     Property p, {
@@ -705,20 +668,16 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
     final items = itemSvc.getItemsForProperty(p.key.toString());
     final loadedReady = items
-        .where(
-          (x) =>
-              x.status == PropertyItemStatus.loaded && x.tripId.trim().isEmpty,
-        )
+        .where((x) =>
+            x.status == PropertyItemStatus.loaded &&
+            x.tripId.trim().isEmpty)
         .length;
-    final inTransitCount = items
-        .where((x) => x.status == PropertyItemStatus.inTransit)
-        .length;
-    final deliveredCount = items
-        .where((x) => x.status == PropertyItemStatus.delivered)
-        .length;
-    final pickedUpCount = items
-        .where((x) => x.status == PropertyItemStatus.pickedUp)
-        .length;
+    final inTransitCount =
+        items.where((x) => x.status == PropertyItemStatus.inTransit).length;
+    final deliveredCount =
+        items.where((x) => x.status == PropertyItemStatus.delivered).length;
+    final pickedUpCount =
+        items.where((x) => x.status == PropertyItemStatus.pickedUp).length;
 
     final bg = PropertyStatusColors.background(p.status);
     final fg = PropertyStatusColors.foreground(p.status);
@@ -730,11 +689,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Header ──
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Initials avatar
                 _initialsAvatar(_s(p.receiverName)),
                 const SizedBox(width: 10),
                 Expanded(
@@ -746,37 +703,27 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
+                            fontWeight: FontWeight.w700, fontSize: 14),
                       ),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Icon(Icons.place_outlined, size: 12, color: muted),
-                          const SizedBox(width: 3),
-                          Expanded(
-                            child: Text(
-                              _s(p.destination),
+                      Row(children: [
+                        Icon(Icons.place_outlined, size: 12, color: muted),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(_s(p.destination),
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: TextStyle(fontSize: 12, color: muted),
-                            ),
-                          ),
-                        ],
-                      ),
-                      Row(
-                        children: [
-                          Icon(Icons.phone_outlined, size: 12, color: muted),
-                          const SizedBox(width: 3),
-                          Text(
-                            _s(p.receiverPhone),
+                              style: TextStyle(fontSize: 12, color: muted)),
+                        ),
+                      ]),
+                      Row(children: [
+                        Icon(Icons.phone_outlined, size: 12, color: muted),
+                        const SizedBox(width: 3),
+                        Text(_s(p.receiverPhone),
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
-                            style: TextStyle(fontSize: 12, color: muted),
-                          ),
-                        ],
-                      ),
+                            style: TextStyle(fontSize: 12, color: muted)),
+                      ]),
                     ],
                   ),
                 ),
@@ -788,12 +735,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-            Divider(height: 1, color: cs.outlineVariant.withValues(alpha: 0.5)),
+            Divider(
+                height: 1,
+                color: cs.outlineVariant.withValues(alpha: 0.5)),
             const SizedBox(height: 8),
-
-            // ── Item counts ──
             Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -815,17 +761,13 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     );
   }
 
-  // =========================
-  // Small helpers
-  // =========================
-
   Widget _initialsAvatar(String fullName) {
     final parts = fullName.trim().split(' ');
     final initials = parts.length >= 2
         ? '${parts.first[0]}${parts.last[0]}'.toUpperCase()
         : fullName.isNotEmpty
-        ? fullName.substring(0, fullName.length.clamp(0, 2)).toUpperCase()
-        : '??';
+            ? fullName.substring(0, fullName.length.clamp(0, 2)).toUpperCase()
+            : '??';
     return Container(
       width: 38,
       height: 38,
@@ -837,10 +779,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       child: Text(
         initials,
         style: TextStyle(
-          color: AppColors.primary,
-          fontWeight: FontWeight.bold,
-          fontSize: 13,
-        ),
+            color: AppColors.primary,
+            fontWeight: FontWeight.bold,
+            fontSize: 13),
       ),
     );
   }
@@ -860,29 +801,22 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(icon, size: 12, color: color),
-              const SizedBox(width: 4),
-              Expanded(
-                child: Text(
-                  label,
+          Row(children: [
+            Icon(icon, size: 12, color: color),
+            const SizedBox(width: 4),
+            Expanded(
+              child: Text(label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: TextStyle(fontSize: 10, color: color),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w800,
-              color: color,
+                  style: TextStyle(fontSize: 10, color: color)),
             ),
-          ),
+          ]),
+          const SizedBox(height: 2),
+          Text(value,
+              style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: color)),
         ],
       ),
     );
@@ -895,14 +829,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         color: color.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(20),
       ),
-      child: Text(
-        label,
-        style: TextStyle(
-          fontSize: 11,
-          fontWeight: FontWeight.w600,
-          color: color,
-        ),
-      ),
+      child: Text(label,
+          style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: color)),
     );
   }
 }

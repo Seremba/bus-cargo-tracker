@@ -60,6 +60,8 @@ class TrackingLookupService {
         return 'REJECTED';
       case PropertyStatus.expired:
         return 'EXPIRED';
+      case PropertyStatus.underReview:
+        return 'UNDER REVIEW';
     }
   }
 

@@ -58,11 +58,13 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     );
 
     if (picked == null) return;
-    final s = DateTime(picked.start.year, picked.start.month, picked.start.day);
-    final e = DateTime(picked.end.year, picked.end.month, picked.end.day);
     setState(() {
-      _start = s;
-      _end = e;
+      _start = DateTime(
+        picked.start.year,
+        picked.start.month,
+        picked.start.day,
+      );
+      _end = DateTime(picked.end.year, picked.end.month, picked.end.day);
       _quick = _QuickRange.custom;
     });
   }
@@ -81,9 +83,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
     if (s == null || e == null) return 'All time';
     String fmt(DateTime d) =>
         '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
-    if (s.year == e.year && s.month == e.month && s.day == e.day) {
-      return fmt(s);
-    }
+    if (s.year == e.year && s.month == e.month && s.day == e.day) return fmt(s);
     return '${fmt(s)} → ${fmt(e)}';
   }
 
@@ -142,7 +142,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           final trips = tripsAll.where((t) => _inRange(t.startedAt)).toList();
           final audits = auditsAll.where((a) => _inRange(a.at)).toList();
 
-          // Payments in range
           final paymentsInRange = paymentsAll
               .whereType<PaymentRecord>()
               .where((x) => _inRange(x.createdAt))
@@ -164,13 +163,13 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           final delivered = countStatus(PropertyStatus.delivered);
           final pickedUp = countStatus(PropertyStatus.pickedUp);
           final rejected = countStatus(PropertyStatus.rejected);
-          final expired = countStatus(PropertyStatus.expired); // F5
+          final expired = countStatus(PropertyStatus.expired);
+          final underReview = countStatus(PropertyStatus.underReview);
 
           int deliveredInRange() => propertiesAll.where((p) {
             final at = p.deliveredAt;
             return at != null && _inRange(at);
           }).length;
-
           int pickedUpInRange() => propertiesAll.where((p) {
             final at = p.pickedUpAt;
             return at != null && _inRange(at);
@@ -181,7 +180,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
             return PropertyService.isOtpLocked(p) &&
                 _inRange(p.deliveredAt ?? p.createdAt);
           }).length;
-
           final otpExpiredCount = propertiesAll.where((p) {
             if (p.status != PropertyStatus.delivered) return false;
             return PropertyService.isOtpExpired(p) &&
@@ -189,11 +187,11 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
           }).length;
 
           final hasOtpIssues = otpLockedCount > 0 || otpExpiredCount > 0;
-          final hasTerminalIssues = rejected > 0 || expired > 0;
+          final hasTerminalIssues =
+              rejected > 0 || expired > 0 || underReview > 0;
 
           int tripCount(TripStatus s) =>
               trips.where((t) => t.status == s).length;
-
           final activeTrips = tripCount(TripStatus.active);
           final endedTrips = tripCount(TripStatus.ended);
           final cancelledTrips = tripCount(TripStatus.cancelled);
@@ -228,7 +226,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ]),
 
               const SizedBox(height: 16),
-
               _sectionTitle(context, 'Finance', Icons.payments_outlined, cs),
               const SizedBox(height: 8),
               Card(
@@ -288,7 +285,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ),
 
               const SizedBox(height: 16),
-
               _sectionTitle(
                 context,
                 'Property status',
@@ -302,7 +298,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ),
               const SizedBox(height: 8),
 
-              // Row 1: pending / loaded / in-transit
+              // Row 1
               _kpiRow([
                 _kpi(
                   label: 'Pending',
@@ -325,7 +321,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ]),
               const SizedBox(height: 8),
 
-              // Row 2: delivered / picked-up + spacer
+              // Row 2
               _kpiRow([
                 _kpi(
                   label: 'Delivered',
@@ -342,7 +338,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 const Expanded(child: SizedBox()),
               ]),
 
-              // Row 3 (F5): rejected / expired — only shown when non-zero
+              // Row 3: rejected / expired / under review (shown only when non-zero)
               if (hasTerminalIssues) ...[
                 const SizedBox(height: 8),
                 _kpiRow([
@@ -353,7 +349,8 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                       color: const Color(0xFFC62828),
                       bg: const Color(0xFFFFEBEE),
                     ),
-                  if (rejected > 0 && expired > 0) const SizedBox(width: 8),
+                  if (rejected > 0 && (expired > 0 || underReview > 0))
+                    const SizedBox(width: 8),
                   if (expired > 0)
                     _kpi(
                       label: 'Expired',
@@ -361,13 +358,26 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                       color: const Color(0xFF4E342E),
                       bg: const Color(0xFFEFEBE9),
                     ),
-                  // Spacer to fill the third column if only one tile is shown
-                  if (rejected == 0 || expired == 0)
+                  if (expired > 0 && underReview > 0) const SizedBox(width: 8),
+                  if (underReview > 0)
+                    _kpi(
+                      label: 'Under Review',
+                      value: _fmt(underReview),
+                      color: const Color(0xFFFF8F00),
+                      bg: const Color(0xFFFFF3E0),
+                    ),
+                  // Spacer if fewer than 3 tiles
+                  if ([
+                        rejected > 0,
+                        expired > 0,
+                        underReview > 0,
+                      ].where((x) => x).length <
+                      3)
                     const Expanded(child: SizedBox()),
                 ]),
               ],
 
-              // OTP issues — only shown when non-zero
+              // OTP issues
               if (hasOtpIssues) ...[
                 const SizedBox(height: 8),
                 _kpiRow([
@@ -388,7 +398,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ],
 
               const SizedBox(height: 16),
-
               _sectionTitle(
                 context,
                 'Trips',
@@ -423,7 +432,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
               ]),
 
               const SizedBox(height: 16),
-
               _sectionTitle(context, 'Audit', Icons.history_outlined, cs),
               const SizedBox(height: 8),
               Card(
@@ -472,7 +480,6 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
 
   Widget _rangeHeader() {
     final cs = Theme.of(context).colorScheme;
-
     return Card(
       child: Padding(
         padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
@@ -512,9 +519,7 @@ class _AdminReportsScreenState extends State<AdminReportsScreen> {
                 ),
               ],
             ),
-
             const SizedBox(height: 10),
-
             Row(
               children: [
                 _expandedChip('Today', _QuickRange.today, cs),

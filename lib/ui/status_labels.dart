@@ -18,6 +18,8 @@ class PropertyStatusLabels {
         return 'Rejected';
       case PropertyStatus.expired:
         return 'Expired';
+      case PropertyStatus.underReview:
+        return 'Under Review';
     }
   }
 }

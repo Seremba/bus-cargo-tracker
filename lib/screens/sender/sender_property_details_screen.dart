@@ -49,6 +49,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         return '🔴 Rejected';
       case PropertyStatus.expired:
         return '⏳ Expired';
+      case PropertyStatus.underReview:
+        return '🔎 Under Review';
     }
   }
 
@@ -112,13 +114,11 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           if (nextIndex >= 0 && nextIndex < trip.checkpoints.length) {
             nextName = trip.checkpoints[nextIndex].name;
           } else {
-            if (trip.status == TripStatus.cancelled) {
-              nextName = 'Trip cancelled';
-            } else if (trip.status == TripStatus.ended) {
-              nextName = 'Trip ended';
-            } else {
-              nextName = 'Completed';
-            }
+            nextName = trip.status == TripStatus.cancelled
+                ? 'Trip cancelled'
+                : trip.status == TripStatus.ended
+                ? 'Trip ended'
+                : 'Completed';
           }
         }
 
@@ -128,7 +128,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         final propKeyStr = p.key.toString();
         final payments =
             payBox.values
-                .where((PaymentRecord x) => x.propertyKey == propKeyStr)
+                .whereType<PaymentRecord>()
+                .where((x) => x.propertyKey == propKeyStr)
                 .toList()
               ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -147,7 +148,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
         final expiresAt = (issuedAt == null)
             ? null
             : issuedAt.add(PickupQrService.ttl);
-
         final bool isQrExpired = (expiresAt != null)
             ? now.isAfter(expiresAt)
             : false;
@@ -160,7 +160,6 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             pickupQrPayload != null;
 
         final loadedStation = p.loadedAtStation.trim();
-
         final loadedByRaw = p.loadedByUserId.trim();
         final loadedByUser = userBox.values
             .where((u) => u.id == loadedByRaw)
@@ -178,6 +177,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
             p.status == PropertyStatus.pickedUp;
 
         final bool isExpired = p.status == PropertyStatus.expired;
+        final bool isUnderReview = p.status == PropertyStatus.underReview;
+        final bool isRejected = p.status == PropertyStatus.rejected;
 
         return Scaffold(
           appBar: AppBar(
@@ -188,59 +189,25 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(12),
             children: [
-              // ── F5: Expired banner ────────────────────────────────────
-              if (isExpired) ...[
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(14),
+              // ── Under Review banner ───────────────────────────────────
+              if (isUnderReview) ...[
+                _banner(
+                  icon: Icons.manage_search_outlined,
+                  iconColor: const Color(0xFFFF8F00),
+                  bg: const Color(0xFFFFF8E1),
+                  border: const Color(0xFFFF8F00),
+                  title: 'Under Review',
+                  body:
+                      'Your re-review request has been submitted. '
+                      'Admin will review and either approve (restore to Pending) '
+                      'or deny the request.\n'
+                      'You will be notified of the outcome.',
                   margin: const EdgeInsets.only(bottom: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF4E342E).withValues(alpha: 0.08),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(
-                      color: const Color(0xFF4E342E).withValues(alpha: 0.30),
-                    ),
-                  ),
-                  child: const Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            Icons.timer_off_outlined,
-                            color: Color(0xFF4E342E),
-                            size: 16,
-                          ),
-                          SizedBox(width: 6),
-                          Text(
-                            'Property Expired',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w800,
-                              color: Color(0xFF4E342E),
-                              fontSize: 15,
-                            ),
-                          ),
-                        ],
-                      ),
-                      SizedBox(height: 8),
-                      Text(
-                        'This property was registered but no payment was '
-                        'recorded at the desk within 10 days.',
-                        style: TextStyle(fontSize: 13),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        'Please visit the desk or contact admin to have it '
-                        'restored to Pending so you can complete payment.',
-                        style: TextStyle(fontSize: 13, color: Colors.black54),
-                      ),
-                    ],
-                  ),
                 ),
               ],
 
-              // ── F1: Rejection banner ──────────────────────────────────
-              if (p.status == PropertyStatus.rejected) ...[
+              // ── Rejected banner + re-review button ────────────────────
+              if (isRejected) ...[
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(14),
@@ -298,15 +265,16 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ],
                       const SizedBox(height: 12),
                       const Text(
-                        'Please correct your property details, then tap '
-                        '"Request Re-Review" to re-present at the desk.',
+                        'If you believe this rejection is an error, you may '
+                        'request a re-review. Admin will assess and decide whether '
+                        'to restore your property to Pending.',
                         style: TextStyle(fontSize: 13, color: Colors.black54),
                       ),
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          icon: const Icon(Icons.refresh_outlined),
+                          icon: const Icon(Icons.manage_search_outlined),
                           label: const Text('Request Re-Review'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.orange,
@@ -319,9 +287,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                               SnackBar(
                                 content: Text(
                                   ok
-                                      ? 'Re-review requested ✅ — present your '
-                                            'corrected property at the desk'
-                                      : 'Could not request re-review ❌',
+                                      ? 'Re-review requested ✅ — awaiting admin decision'
+                                      : 'Could not submit request ❌',
                                 ),
                               ),
                             );
@@ -333,7 +300,24 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 ),
               ],
 
-              // ─────────────────────────────────────────────────────────
+              // ── Expired banner ────────────────────────────────────────
+              if (isExpired) ...[
+                _banner(
+                  icon: Icons.timer_off_outlined,
+                  iconColor: const Color(0xFF4E342E),
+                  bg: const Color(0xFF4E342E),
+                  border: const Color(0xFF4E342E),
+                  title: 'Property Expired',
+                  body:
+                      'This property was registered but no payment was '
+                      'recorded at the desk within 10 days.\n'
+                      'Please visit the desk or contact admin to restore it to Pending.',
+                  margin: const EdgeInsets.only(bottom: 12),
+                  lightText: true,
+                ),
+              ],
+
+              // ── Main info card ────────────────────────────────────────
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(12),
@@ -362,8 +346,8 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                                   ? const Color(
                                       0xFF4E342E,
                                     ).withValues(alpha: 0.10)
-                                  : p.status == PropertyStatus.rejected
-                                  ? Colors.red.withValues(alpha: 0.10)
+                                  : isRejected || isUnderReview
+                                  ? Colors.orange.withValues(alpha: 0.10)
                                   : Colors.blue.shade50,
                             ),
                             child: Text(
@@ -441,14 +425,13 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
-              // Hide trip progress for expired — it's not relevant
-              if (!isExpired) ...[
+              // Trip progress — hide for expired / under review / rejected
+              if (!isExpired && !isUnderReview && !isRejected) ...[
                 const Text(
                   'Trip Progress',
                   style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 8),
-
                 if (trip == null)
                   const Card(
                     child: Padding(
@@ -487,7 +470,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
 
-              // S4 FIX: OTP is stored as a hash — never show it to the sender.
+              // OTP notice
               if (p.status == PropertyStatus.delivered) ...[
                 const Card(
                   child: Padding(
@@ -505,10 +488,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                         SizedBox(height: 8),
                         Text(
                           'An OTP has been issued for pickup. '
-                          'The station staff will ask the receiver for their '
-                          'phone number and the OTP to confirm pickup.\n\n'
-                          'If the receiver has not received their OTP, '
-                          'ask the desk officer to resend it.',
+                          'The station staff will ask the receiver for their phone number '
+                          'and the OTP to confirm pickup.\n\n'
+                          'If the receiver has not received their OTP, ask the desk officer to resend it.',
                           style: TextStyle(fontSize: 13),
                         ),
                       ],
@@ -518,6 +500,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
 
+              // Pickup QR
               if (p.status == PropertyStatus.pickedUp ||
                   p.pickedUpAt != null) ...[
                 const Text(
@@ -679,6 +662,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                 const SizedBox(height: 12),
               ],
 
+              // Payment
               const Text(
                 'Payment',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -774,6 +758,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
               const SizedBox(height: 12),
 
+              // Timeline
               const Text(
                 'Timeline',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
@@ -799,16 +784,20 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       p.pickedUpAt,
                       p.pickedUpAt != null,
                     ),
-                    // F1: rejected milestone
-                    if (p.status == PropertyStatus.rejected ||
-                        p.rejectedAt != null)
+                    if (isRejected || p.rejectedAt != null)
                       _timelineRow(
                         'Rejected',
                         p.rejectedAt,
                         true,
                         color: Colors.red,
                       ),
-                    // F5: expired milestone
+                    if (isUnderReview)
+                      _timelineRow(
+                        'Under Review — awaiting admin decision',
+                        null,
+                        true,
+                        color: const Color(0xFFFF8F00),
+                      ),
                     if (isExpired)
                       _timelineRow(
                         'Expired — no payment within 10 days',
@@ -826,6 +815,55 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+
+  static Widget _banner({
+    required IconData icon,
+    required Color iconColor,
+    required Color bg,
+    required Color border,
+    required String title,
+    required String body,
+    EdgeInsets margin = EdgeInsets.zero,
+    bool lightText = false,
+  }) {
+    final titleColor = lightText ? Colors.white : iconColor;
+    final bodyColor = lightText ? Colors.white70 : Colors.black54;
+    final bgColor = lightText
+        ? bg.withValues(alpha: 0.85)
+        : bg.withValues(alpha: 0.08);
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      margin: margin,
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: border.withValues(alpha: 0.30)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: iconColor, size: 16),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: TextStyle(
+                  fontWeight: FontWeight.w800,
+                  color: titleColor,
+                  fontSize: 15,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(body, style: TextStyle(fontSize: 13, color: bodyColor)),
+        ],
+      ),
     );
   }
 

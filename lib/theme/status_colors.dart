@@ -21,6 +21,8 @@ class PropertyStatusColors {
         return Colors.red;
       case PropertyStatus.expired:
         return Colors.brown;
+      case PropertyStatus.underReview:
+        return const Color(0xFFFF8F00); // amber 800
     }
   }
 

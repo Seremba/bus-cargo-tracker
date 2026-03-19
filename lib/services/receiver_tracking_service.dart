@@ -9,21 +9,17 @@ import 'tracking_code_service.dart';
 class ReceiverTrackingService {
   static const String _supportPhones = '+256 780 445860 / +256 766 799490';
 
-  static String _cleanPhone(String raw) {
-    return raw.replaceAll(' ', '').trim();
-  }
+  static String _cleanPhone(String raw) => raw.replaceAll(' ', '').trim();
 
   static bool _looksLikePhone(String phone) {
     final p = _cleanPhone(phone);
-    if (p.isEmpty) return false;
-    if (p.length < 9) return false;
+    if (p.isEmpty || p.length < 9) return false;
     return RegExp(r'^\+?\d+$').hasMatch(p);
   }
 
   static String _cleanChannel(String raw) {
-    final c = (raw).trim().toLowerCase();
-    if (c == 'sms') return 'sms';
-    return 'whatsapp';
+    final c = raw.trim().toLowerCase();
+    return c == 'sms' ? 'sms' : 'whatsapp';
   }
 
   static String _friendlyStatus(Property p) {
@@ -42,6 +38,8 @@ class ReceiverTrackingService {
         return 'REJECTED';
       case PropertyStatus.expired:
         return 'EXPIRED';
+      case PropertyStatus.underReview:
+        return 'UNDER REVIEW';
     }
   }
 
@@ -52,7 +50,6 @@ class ReceiverTrackingService {
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
-
     final cleanChannel = _cleanChannel(channel);
 
     if (!enabled) {
@@ -73,8 +70,7 @@ class ReceiverTrackingService {
       await AuditService.log(
         action: 'RECEIVER_TRACKING_ENABLE_FAILED',
         propertyKey: fresh.key.toString(),
-        details:
-            'Receiver phone invalid/missing. Could not enable tracking. Phone="$phone"',
+        details: 'Receiver phone invalid/missing. Phone="$phone"',
       );
       return;
     }
@@ -94,7 +90,6 @@ class ReceiverTrackingService {
     fresh.receiverNotifyEnabledAt = DateTime.now();
     fresh.receiverNotifyEnabledByUserId = (Session.currentUserId ?? '').trim();
     fresh.receiverNotifyChannel = cleanChannel;
-
     await fresh.save();
 
     await AuditService.log(
@@ -105,7 +100,6 @@ class ReceiverTrackingService {
     );
 
     final body = buildPaymentConfirmedMessage(fresh);
-
     await OutboundMessageService.queue(
       toPhone: phone,
       channel: cleanChannel,
@@ -158,7 +152,6 @@ class ReceiverTrackingService {
     }
 
     final body = buildStatusUpdateMessage(fresh, eventLabel: eventLabel);
-
     await OutboundMessageService.queue(
       toPhone: phone,
       channel: cleanChannel,
@@ -184,8 +177,7 @@ class ReceiverTrackingService {
     final status = _friendlyStatus(p);
     final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
 
-    return ''
-        'Bebeto Cargo ✅ Payment confirmed\n'
+    return 'Bebeto Cargo ✅ Payment confirmed\n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Amount: $cur ${p.amountPaidTotal}\n'
@@ -203,12 +195,10 @@ class ReceiverTrackingService {
     final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
     final when = DateTime.now().toLocal().toString().substring(0, 16);
     final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
-    final pickupHint = (eventLabel == 'DELIVERED')
-        ? '\nPickup requires: OTP + QR'
-        : '';
+    final pickupHint =
+        (eventLabel == 'DELIVERED') ? '\nPickup requires: OTP + QR' : '';
 
-    return ''
-        'Bebeto Cargo update \n'
+    return 'Bebeto Cargo update \n'
         'Tracking: $code\n'
         'Item: $desc (x${p.itemCount})\n'
         'Status: $eventLabel\n'

@@ -17,9 +17,7 @@ class MyPropertiesScreen extends StatelessWidget {
     return d.toLocal().toString().substring(0, 16);
   }
 
-  static String _money(String currency, int amount) {
-    return '$currency $amount';
-  }
+  static String _money(String currency, int amount) => '$currency $amount';
 
   static ({String emoji, String label, Color bg, Color fg}) _statusStyle(
     PropertyStatus status,
@@ -74,14 +72,19 @@ class MyPropertiesScreen extends StatelessWidget {
           bg: const Color(0xFFEFEBE9),
           fg: const Color(0xFF4E342E),
         );
+      case PropertyStatus.underReview:
+        return (
+          emoji: '🔎',
+          label: 'Under Review',
+          bg: const Color(0xFFFFF3E0),
+          fg: const Color(0xFFFF8F00),
+        );
     }
   }
 
   static String _tripLine(Property property, Trip? trip) {
     final tripId = property.tripId;
-    if (tripId == null || tripId.trim().isEmpty) {
-      return 'Awaiting departure';
-    }
+    if (tripId == null || tripId.trim().isEmpty) return 'Awaiting departure';
     if (trip == null) return 'Trip: Loading...';
 
     final i = trip.lastCheckpointIndex;
@@ -151,13 +154,10 @@ class MyPropertiesScreen extends StatelessWidget {
                 }
               }
 
-              final tripInfo = _tripLine(property, trip);
-
               final paid = property.amountPaidTotal;
               final currency = property.currency.trim().isEmpty
                   ? 'UGX'
                   : property.currency.trim();
-
               final muted = Theme.of(
                 context,
               ).colorScheme.onSurface.withValues(alpha: 0.55);
@@ -166,22 +166,19 @@ class MyPropertiesScreen extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 10),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) =>
-                            SenderPropertyDetailsScreen(property: property),
-                      ),
-                    );
-                  },
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          SenderPropertyDetailsScreen(property: property),
+                    ),
+                  ),
                   child: Padding(
                     padding: const EdgeInsets.all(14),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          crossAxisAlignment: CrossAxisAlignment.center,
                           children: [
                             Expanded(
                               child: Text(
@@ -213,9 +210,7 @@ class MyPropertiesScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 8),
-
                         Text(
                           '📍 ${property.destination}',
                           style: const TextStyle(
@@ -223,38 +218,44 @@ class MyPropertiesScreen extends StatelessWidget {
                             fontWeight: FontWeight.w600,
                           ),
                         ),
-
                         const SizedBox(height: 4),
-
                         Text(
                           '📞 ${property.receiverPhone}',
                           style: TextStyle(fontSize: 12, color: muted),
                         ),
-
                         const SizedBox(height: 4),
-
                         Text(
-                          '${property.itemCount} item${property.itemCount == 1 ? '' : 's'}  •  ${property.routeName.trim().isEmpty ? 'No route' : property.routeName}',
+                          '${property.itemCount} item${property.itemCount == 1 ? '' : 's'}  •  '
+                          '${property.routeName.trim().isEmpty ? 'No route' : property.routeName}',
                           style: TextStyle(fontSize: 12, color: muted),
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         ),
 
-                        // F1: rejection reason snippet
+                        // Status-specific inline notices
                         if (property.status == PropertyStatus.rejected &&
                             (property.rejectionCategory ?? '').isNotEmpty) ...[
                           const SizedBox(height: 4),
-                          Text(
-                            '⚠ Rejected — tap to view reason',
+                          const Text(
+                            '⚠ Rejected — tap to view reason & request review',
                             style: TextStyle(
                               fontSize: 12,
-                              color: const Color(0xFFC62828),
+                              color: Color(0xFFC62828),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
                         ],
-
-                        // F5: expiry notice
+                        if (property.status == PropertyStatus.underReview) ...[
+                          const SizedBox(height: 4),
+                          const Text(
+                            '🔎 Under Review — awaiting admin decision',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Color(0xFFFF8F00),
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                         if (property.status == PropertyStatus.expired) ...[
                           const SizedBox(height: 4),
                           const Text(
@@ -281,7 +282,7 @@ class MyPropertiesScreen extends StatelessWidget {
                             const SizedBox(width: 6),
                             Expanded(
                               child: Text(
-                                tripInfo,
+                                _tripLine(property, trip),
                                 style: TextStyle(fontSize: 12, color: muted),
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
@@ -289,9 +290,7 @@ class MyPropertiesScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 4),
-
                         Row(
                           children: [
                             Icon(
@@ -333,9 +332,7 @@ class MyPropertiesScreen extends StatelessWidget {
                             ),
                           ],
                         ),
-
                         const SizedBox(height: 8),
-
                         Align(
                           alignment: Alignment.bottomRight,
                           child: Text(

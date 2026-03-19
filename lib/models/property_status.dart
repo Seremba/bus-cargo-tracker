@@ -24,4 +24,7 @@ enum PropertyStatus {
 
   @HiveField(6)
   expired,
+
+  @HiveField(7)
+  underReview,
 }

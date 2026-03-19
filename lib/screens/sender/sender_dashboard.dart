@@ -76,6 +76,12 @@ class SenderDashboard extends StatelessWidget {
           bg: const Color(0xFFEFEBE9),
           fg: const Color(0xFF4E342E),
         );
+      case PropertyStatus.underReview:
+        return (
+          label: 'Under Review',
+          bg: const Color(0xFFFFF3E0),
+          fg: const Color(0xFFFF8F00),
+        );
     }
   }
 
@@ -124,21 +130,18 @@ class SenderDashboard extends StatelessWidget {
                     : box.values
                           .where((n) => n.targetUserId == userId && !n.isRead)
                           .length;
-
                 return Stack(
                   alignment: Alignment.center,
                   children: [
                     IconButton(
                       tooltip: 'Notifications',
                       icon: const Icon(Icons.notifications_none),
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const NotificationsScreen(),
-                          ),
-                        );
-                      },
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const NotificationsScreen(),
+                        ),
+                      ),
                     ),
                     if (unreadCount > 0)
                       Positioned(
@@ -188,22 +191,24 @@ class SenderDashboard extends StatelessWidget {
 
             final recent = myProps.take(_recentLimit).toList();
 
-            // Active = pending/loaded/inTransit
-            final activeCount = myProps.where((p) {
-              return p.status == PropertyStatus.pending ||
-                  p.status == PropertyStatus.loaded ||
-                  p.status == PropertyStatus.inTransit;
-            }).length;
+            final activeCount = myProps
+                .where(
+                  (p) =>
+                      p.status == PropertyStatus.pending ||
+                      p.status == PropertyStatus.loaded ||
+                      p.status == PropertyStatus.inTransit,
+                )
+                .length;
 
-            // F1: count rejected
-            final rejectedCount = myProps.where((p) {
-              return p.status == PropertyStatus.rejected;
-            }).length;
-
-            // F5: count expired
-            final expiredCount = myProps.where((p) {
-              return p.status == PropertyStatus.expired;
-            }).length;
+            final rejectedCount = myProps
+                .where((p) => p.status == PropertyStatus.rejected)
+                .length;
+            final expiredCount = myProps
+                .where((p) => p.status == PropertyStatus.expired)
+                .length;
+            final underReviewCount = myProps
+                .where((p) => p.status == PropertyStatus.underReview)
+                .length;
 
             final totalCount = myProps.length;
 
@@ -216,28 +221,23 @@ class SenderDashboard extends StatelessWidget {
                   activeCount,
                   rejectedCount,
                   expiredCount,
+                  underReviewCount,
                 ),
-
                 const SizedBox(height: 14),
-
                 _actionCard(
                   context,
                   title: 'Register Property',
                   subtitle: 'Create a property code + QR',
                   icon: Icons.add_box_outlined,
                   filled: true,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const RegisterPropertyScreen(),
-                      ),
-                    );
-                  },
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const RegisterPropertyScreen(),
+                    ),
+                  ),
                 ),
-
                 const SizedBox(height: 12),
-
                 _actionCard(
                   context,
                   title: 'My Properties',
@@ -246,18 +246,14 @@ class SenderDashboard extends StatelessWidget {
                       : '$totalCount propert${totalCount == 1 ? 'y' : 'ies'} • tap to view all',
                   icon: Icons.inventory_2_outlined,
                   filled: false,
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const MyPropertiesScreen(),
-                      ),
-                    );
-                  },
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const MyPropertiesScreen(),
+                    ),
+                  ),
                 ),
-
                 const SizedBox(height: 22),
-
                 Row(
                   children: [
                     const Expanded(
@@ -270,19 +266,16 @@ class SenderDashboard extends StatelessWidget {
                       ),
                     ),
                     TextButton(
-                      onPressed: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const MyPropertiesScreen(),
-                          ),
-                        );
-                      },
+                      onPressed: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const MyPropertiesScreen(),
+                        ),
+                      ),
                       child: const Text('View all'),
                     ),
                   ],
                 ),
-
                 if (recent.isEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 8),
@@ -291,9 +284,7 @@ class SenderDashboard extends StatelessWidget {
                       style: TextStyle(color: muted),
                     ),
                   ),
-
                 const SizedBox(height: 6),
-
                 for (final p in recent) _recentTile(context, p),
               ],
             );
@@ -309,27 +300,32 @@ class SenderDashboard extends StatelessWidget {
     int activeCount,
     int rejectedCount,
     int expiredCount,
+    int underReviewCount,
   ) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
-    final initials = _initials(userName);
 
-    // Priority: expired > rejected > active > idle
+    // Priority: expired > rejected > underReview > active > idle
     final String alertText;
     final Color alertColor;
 
-    if (expiredCount > 0 && rejectedCount > 0) {
+    final issues = <String>[];
+    if (expiredCount > 0) issues.add('$expiredCount expired');
+    if (rejectedCount > 0) issues.add('$rejectedCount rejected');
+
+    if (issues.isNotEmpty) {
+      alertText = '${issues.join(' & ')} — tap My Properties';
+      alertColor = expiredCount > 0
+          ? const Color(0xFF4E342E)
+          : const Color(0xFFC62828);
+    } else if (underReviewCount > 0) {
       alertText =
-          '$expiredCount expired & $rejectedCount rejected — tap My Properties';
-      alertColor = const Color(0xFF4E342E);
-    } else if (expiredCount > 0) {
+          '$underReviewCount propert${underReviewCount == 1 ? 'y' : 'ies'} under review — awaiting admin decision';
+      alertColor = const Color(0xFFFF8F00);
+    } else if (activeCount > 0) {
       alertText =
-          '$expiredCount propert${expiredCount == 1 ? 'y' : 'ies'} expired — contact desk to restore';
-      alertColor = const Color(0xFF4E342E);
-    } else if (rejectedCount > 0) {
-      alertText =
-          '$rejectedCount propert${rejectedCount == 1 ? 'y' : 'ies'} rejected — tap to view';
-      alertColor = const Color(0xFFC62828);
+          '$activeCount active shipment${activeCount == 1 ? '' : 's'} in progress';
+      alertColor = cs.primary;
     } else {
       alertText = '';
       alertColor = Colors.transparent;
@@ -354,7 +350,7 @@ class SenderDashboard extends StatelessWidget {
             ),
             alignment: Alignment.center,
             child: Text(
-              initials,
+              _initials(userName),
               style: TextStyle(
                 color: cs.onPrimary,
                 fontSize: 16,
@@ -387,15 +383,6 @@ class SenderDashboard extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   )
-                else if (activeCount > 0)
-                  Text(
-                    '$activeCount active shipment${activeCount == 1 ? '' : 's'} in progress',
-                    style: TextStyle(
-                      color: cs.primary,
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  )
                 else
                   Text(
                     'Register cargo and keep track of your properties.',
@@ -418,7 +405,6 @@ class SenderDashboard extends StatelessWidget {
     required VoidCallback onTap,
   }) {
     final cs = Theme.of(context).colorScheme;
-
     final bg = filled ? cs.primary : cs.surface;
     final fg = filled ? cs.onPrimary : cs.onSurface;
     final sub = filled
@@ -473,7 +459,6 @@ class SenderDashboard extends StatelessWidget {
   static Widget _recentTile(BuildContext context, Property p) {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.65);
-
     final receiver = p.receiverName.trim().isEmpty
         ? 'Receiver'
         : p.receiverName.trim();

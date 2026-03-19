@@ -27,6 +27,8 @@ class PropertyStatusAdapter extends TypeAdapter<PropertyStatus> {
         return PropertyStatus.rejected;
       case 6:
         return PropertyStatus.expired;
+      case 7:
+        return PropertyStatus.underReview;
       default:
         return PropertyStatus.pending;
     }
@@ -55,6 +57,9 @@ class PropertyStatusAdapter extends TypeAdapter<PropertyStatus> {
         break;
       case PropertyStatus.expired:
         writer.writeByte(6);
+        break;
+      case PropertyStatus.underReview:
+        writer.writeByte(7);
         break;
     }
   }

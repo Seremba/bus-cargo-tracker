@@ -1005,7 +1005,7 @@ class PropertyService {
           '${(Session.currentStationName ?? 'the station').trim()}.\n'
           'Reason: ${rejectionCategoryLabel(cleanCategory)}'
           '${reason.trim().isEmpty ? '' : ' — ${reason.trim()}'}.\n'
-          'Please correct and request a re-review.',
+          'You may request a review if you believe this is an error.',
     );
 
     await NotificationService.notify(
@@ -1021,21 +1021,24 @@ class PropertyService {
     return true;
   }
 
+  // ── Re-review flow ──────────────────────────────────────────────────────
+  // Sender requests a review. Status moves to underReview — NOT pending.
+  // Admin must approve (→ pending) or deny (→ rejected) before anything
+  // can proceed at the desk.
+
+  /// Sender taps "Request Re-Review" on a rejected property.
+  /// Sets status to [PropertyStatus.underReview] and notifies admin.
+  /// Does NOT restore to pending — that is admin's decision only.
   static Future<bool> requestReReview(Property p) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
+    // Only callable from rejected
     if (fresh.status != PropertyStatus.rejected) return false;
 
     final currentUserId = (Session.currentUserId ?? '').trim();
     if (currentUserId != fresh.createdByUserId.trim()) return false;
 
-    fresh.isLocked = false;
-    fresh.commitHash = null;
-    fresh.status = PropertyStatus.pending;
-    fresh.rejectionCategory = null;
-    fresh.rejectionReason = null;
-    fresh.rejectedByUserId = null;
-    fresh.rejectedAt = null;
+    fresh.status = PropertyStatus.underReview;
     fresh.aggregateVersion += 1;
     await fresh.save();
 
@@ -1045,22 +1048,69 @@ class PropertyService {
       details: 'Sender $currentUserId requested re-review after rejection.',
     );
 
+    await SyncService.enqueueAdminOverrideApplied(
+      aggregateType: 'property',
+      aggregateId: fresh.propertyCode.trim(),
+      actorUserId: currentUserId,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'fromStatus': PropertyStatus.rejected.name,
+        'toStatus': PropertyStatus.underReview.name,
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
+
     await NotificationService.notify(
       targetUserId: NotificationService.adminInbox,
       title: 'Re-review requested',
       message:
-          'Sender has corrected property ${fresh.propertyCode} '
-          'for ${fresh.receiverName} and is requesting re-review.',
+          'Sender has disputed the rejection of property ${fresh.propertyCode} '
+          'for ${fresh.receiverName}.\n'
+          'Original reason: ${rejectionCategoryLabel(fresh.rejectionCategory ?? 'other')}\n'
+          'Please review and either approve (restore to Pending) or deny.',
     );
 
     return true;
   }
 
+  /// Admin approves the re-review: resets items and restores property to pending.
+  /// Accepts both [PropertyStatus.rejected] and [PropertyStatus.underReview].
   static Future<bool> adminRestoreRejected(Property p) async {
     if (!RoleGuard.hasRoleVerified(UserRole.admin)) return false;
 
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    if (fresh.status != PropertyStatus.rejected) return false;
+
+    if (fresh.status != PropertyStatus.rejected &&
+        fresh.status != PropertyStatus.underReview) {
+      return false;
+    }
+
+    // Reset all items that haven't completed the full journey back to pending
+    // so the desk officer can re-select and re-load them.
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final items = itemSvc.getItemsForProperty(fresh.key.toString());
+    int resetCount = 0;
+
+    for (final item in items) {
+      if (item.status == PropertyItemStatus.pickedUp) continue;
+      item.status = PropertyItemStatus.pending;
+      item.tripId = '';
+      item.loadedAt = null;
+      item.inTransitAt = null;
+      item.deliveredAt = null;
+      await item.save();
+      resetCount++;
+    }
+
+    final fromStatus = fresh.status.name;
 
     fresh.status = PropertyStatus.pending;
     fresh.rejectionCategory = null;
@@ -1069,26 +1119,367 @@ class PropertyService {
     fresh.rejectedAt = null;
     fresh.isLocked = false;
     fresh.commitHash = null;
+    fresh.loadedAt = null;
+    fresh.loadedAtStation = '';
+    fresh.loadedByUserId = '';
+    fresh.tripId = null;
+    fresh.inTransitAt = null;
     fresh.aggregateVersion += 1;
     await fresh.save();
+
+    await itemSvc.recomputePropertyAggregate(property: fresh);
 
     await AuditService.log(
       action: 'PROPERTY_REJECTION_RESTORED',
       propertyKey: fresh.key.toString(),
       details:
-          'Admin ${(Session.currentUserId ?? '').trim()} restored rejected '
-          'property ${fresh.propertyCode} to pending.',
+          'Admin ${(Session.currentUserId ?? '').trim()} approved re-review, '
+          'restored $fromStatus → pending. '
+          '$resetCount item(s) reset for re-loading.',
+    );
+
+    await SyncService.enqueueAdminOverrideApplied(
+      aggregateType: 'property',
+      aggregateId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim(),
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'fromStatus': fromStatus,
+        'toStatus': PropertyStatus.pending.name,
+        'resetItems': true,
+        'appliedAt': DateTime.now().toIso8601String(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
     );
 
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
-      title: 'Property rejection cleared',
+      title: 'Re-review approved',
       message:
-          'Admin has cleared the rejection on your property '
-          '(${fresh.propertyCode}). You may now re-present it at the desk.',
+          'Admin has approved your re-review request for property '
+          '(${fresh.propertyCode}). It has been restored to Pending.\n'
+          'Please re-present it at the desk for loading.',
+    );
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: 'Re-review approved — desk action needed',
+      message:
+          'Property ${fresh.propertyCode} for ${fresh.receiverName} restored '
+          'to Pending. $resetCount item(s) reset. '
+          'Desk officer should re-load and re-process.',
     );
 
     return true;
+  }
+
+  /// Admin denies the re-review: sets status back to rejected, notifies sender.
+  static Future<bool> adminDenyReReview(Property p, {String note = ''}) async {
+    if (!RoleGuard.hasRoleVerified(UserRole.admin)) return false;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status != PropertyStatus.underReview) return false;
+
+    fresh.status = PropertyStatus.rejected;
+    fresh.aggregateVersion += 1;
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'PROPERTY_REREVIEW_DENIED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Admin ${(Session.currentUserId ?? '').trim()} denied re-review. '
+          '${note.trim().isEmpty ? '' : 'Note: ${note.trim()}'}',
+    );
+
+    await SyncService.enqueueAdminOverrideApplied(
+      aggregateType: 'property',
+      aggregateId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim(),
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'fromStatus': PropertyStatus.underReview.name,
+        'toStatus': PropertyStatus.rejected.name,
+        'note': note.trim(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
+
+    await NotificationService.notify(
+      targetUserId: fresh.createdByUserId,
+      title: 'Re-review denied',
+      message:
+          'Your re-review request for property (${fresh.propertyCode}) '
+          'has been denied by admin. The rejection stands.\n'
+          '${note.trim().isEmpty ? '' : 'Note: ${note.trim()}\n'}'
+          'Contact the desk or admin if you have questions.',
+    );
+
+    return true;
+  }
+
+  // ── F5 + adminSetStatus ─────────────────────────────────────────────────
+  static Future<void> adminSetStatus(
+    Property p,
+    PropertyStatus newStatus,
+  ) async {
+    if (!RoleGuard.hasRoleVerified(UserRole.admin)) return;
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    if (fresh.status == newStatus) return;
+
+    await repairMissingLoadedMilestone(fresh);
+
+    final itemBox = HiveService.propertyItemBox();
+    final itemSvc = PropertyItemService(itemBox);
+
+    await itemSvc.ensureItemsForProperty(
+      propertyKey: fresh.key.toString(),
+      trackingCode: fresh.trackingCode,
+      itemCount: fresh.itemCount,
+    );
+
+    final actorUserId = (Session.currentUserId ?? '').trim().isEmpty
+        ? 'admin'
+        : (Session.currentUserId ?? '').trim();
+
+    final fromStatus = fresh.status.name;
+
+    // F5: expired → pending via PropertyTtlService
+    if (fresh.status == PropertyStatus.expired &&
+        newStatus == PropertyStatus.pending) {
+      await PropertyTtlService.adminRestoreExpired(fresh);
+      return;
+    }
+
+    // Guard: expired transitions only via PropertyTtlService
+    if (fresh.status == PropertyStatus.expired ||
+        newStatus == PropertyStatus.expired) {
+      await AuditService.log(
+        action: 'admin_set_status_skipped',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Blocked unsupported expired transition: '
+            '${fresh.status.name} -> ${newStatus.name}.',
+      );
+      return;
+    }
+
+    // underReview: approve (→ pending) or deny (→ rejected) via dedicated methods
+    if (fresh.status == PropertyStatus.underReview ||
+        newStatus == PropertyStatus.underReview) {
+      await AuditService.log(
+        action: 'admin_set_status_skipped',
+        propertyKey: fresh.key.toString(),
+        details:
+            'Blocked direct underReview transition: '
+            '${fresh.status.name} -> ${newStatus.name}. '
+            'Use adminRestoreRejected or adminDenyReReview.',
+      );
+      return;
+    }
+
+    if (newStatus == PropertyStatus.inTransit &&
+        (fresh.status == PropertyStatus.pending ||
+            fresh.status == PropertyStatus.loaded)) {
+      await markInTransit(fresh);
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.inTransit.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+      return;
+    }
+
+    if (newStatus == PropertyStatus.delivered &&
+        fresh.status == PropertyStatus.inTransit) {
+      await markDelivered(fresh);
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.delivered.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+      return;
+    }
+
+    if (newStatus == PropertyStatus.pickedUp &&
+        fresh.status == PropertyStatus.delivered) {
+      final now = DateTime.now();
+
+      final items = itemSvc.getItemsForProperty(fresh.key.toString());
+      final deliveredNos =
+          items
+              .where((x) => x.status == PropertyItemStatus.delivered)
+              .map((x) => x.itemNo)
+              .toList()
+            ..sort();
+
+      if (deliveredNos.isNotEmpty) {
+        await itemSvc.markItemsPickedUp(
+          propertyKey: fresh.key.toString(),
+          itemNos: deliveredNos,
+          now: now,
+        );
+      }
+
+      fresh.pickedUpAt ??= now;
+      fresh.deliveredAt ??= now;
+      fresh.inTransitAt ??= fresh.deliveredAt;
+      fresh.loadedAt ??= fresh.inTransitAt;
+      fresh.status = PropertyStatus.pickedUp;
+      fresh.staffPickupConfirmed = true;
+      fresh.receiverPickupConfirmed = true;
+      fresh.pickupOtp = null;
+      fresh.otpGeneratedAt = null;
+      fresh.otpAttempts = 0;
+      fresh.otpLockedUntil = null;
+      fresh.qrConsumedAt ??= now;
+      fresh.aggregateVersion += 1;
+      await fresh.save();
+
+      await itemSvc.recomputePropertyAggregate(property: fresh);
+
+      await SyncService.enqueuePropertyPickedUp(
+        propertyId: fresh.propertyCode.trim(),
+        actorUserId: actorUserId,
+        aggregateVersion: fresh.aggregateVersion,
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'pickedUpAt': now.toIso8601String(),
+          'aggregateVersion': fresh.aggregateVersion,
+        },
+      );
+
+      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
+
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: updated.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': updated.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.pickedUp.name,
+          'propertyKey': updated.key.toString(),
+          'resetItems': false,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+
+      await AuditService.log(
+        action: 'admin_set_status',
+        propertyKey: updated.key.toString(),
+        details: 'Admin set status to pickedUp (direct override)',
+      );
+
+      await _safeNotifyReceiver(fresh: updated, eventLabel: 'PICKED UP');
+
+      await NotificationService.notify(
+        targetUserId: updated.createdByUserId,
+        title: 'Admin status update',
+        message:
+            'Admin updated your property for ${updated.receiverName} to pickedUp.',
+      );
+
+      await NotificationService.notify(
+        targetUserId: NotificationService.adminInbox,
+        title: 'Admin override applied',
+        message:
+            'Status set to pickedUp for ${updated.receiverName} (${updated.receiverPhone}).',
+      );
+
+      return;
+    }
+
+    // Restore rejected → pending (direct, no re-review flow)
+    if (newStatus == PropertyStatus.pending &&
+        fresh.status == PropertyStatus.rejected) {
+      await adminRestoreRejected(fresh);
+      return;
+    }
+
+    if (newStatus == PropertyStatus.pending) {
+      final items = itemSvc.getItemsForProperty(fresh.key.toString());
+
+      for (final item in items) {
+        item.status = PropertyItemStatus.pending;
+        item.tripId = '';
+        item.loadedAt = null;
+        item.inTransitAt = null;
+        item.deliveredAt = null;
+        item.pickedUpAt = null;
+        await item.save();
+      }
+
+      fresh.status = PropertyStatus.pending;
+      fresh.inTransitAt = null;
+      fresh.deliveredAt = null;
+      fresh.pickedUpAt = null;
+      fresh.pickupOtp = null;
+      fresh.otpGeneratedAt = null;
+      fresh.otpAttempts = 0;
+      fresh.otpLockedUntil = null;
+      fresh.staffPickupConfirmed = false;
+      fresh.receiverPickupConfirmed = false;
+      fresh.tripId = null;
+      fresh.qrIssuedAt = null;
+      fresh.qrNonce = '';
+      fresh.qrConsumedAt = null;
+      fresh.loadedAt = null;
+      fresh.loadedAtStation = '';
+      fresh.loadedByUserId = '';
+      fresh.aggregateVersion += 1;
+      await fresh.save();
+
+      await SyncService.enqueueAdminOverrideApplied(
+        aggregateType: 'property',
+        aggregateId: fresh.propertyCode.trim(),
+        actorUserId: actorUserId,
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'fromStatus': fromStatus,
+          'toStatus': PropertyStatus.pending.name,
+          'propertyKey': fresh.key.toString(),
+          'resetItems': true,
+          'appliedAt': DateTime.now().toIso8601String(),
+        },
+      );
+
+      await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PENDING');
+
+      await AuditService.log(
+        action: 'admin_set_status',
+        propertyKey: fresh.key.toString(),
+        details: 'Admin set status to pending (full reset)',
+      );
+      return;
+    }
+
+    await AuditService.log(
+      action: 'admin_set_status_skipped',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Admin attempted unsupported transition '
+          '${fresh.status.name} -> ${newStatus.name}',
+    );
   }
 
   static Future<void> markInTransit(Property p) async {
@@ -1402,351 +1793,6 @@ class PropertyService {
     await refreshed.save();
   }
 
-  // ── F5: exhaustive adminSetStatus — expired is now handled ───────────────
-  static Future<void> adminSetStatus(
-    Property p,
-    PropertyStatus newStatus,
-  ) async {
-    if (!RoleGuard.hasRoleVerified(UserRole.admin)) return;
-
-    final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    if (fresh.status == newStatus) return;
-
-    await repairMissingLoadedMilestone(fresh);
-
-    final itemBox = HiveService.propertyItemBox();
-    final itemSvc = PropertyItemService(itemBox);
-
-    await itemSvc.ensureItemsForProperty(
-      propertyKey: fresh.key.toString(),
-      trackingCode: fresh.trackingCode,
-      itemCount: fresh.itemCount,
-    );
-
-    final actorUserId = (Session.currentUserId ?? '').trim().isEmpty
-        ? 'admin'
-        : (Session.currentUserId ?? '').trim();
-
-    final fromStatus = fresh.status.name;
-
-    // ── F5: expired → pending restore (delegated to PropertyTtlService) ──
-    if (fresh.status == PropertyStatus.expired &&
-        newStatus == PropertyStatus.pending) {
-      await PropertyTtlService.adminRestoreExpired(fresh);
-      return;
-    }
-
-    // ── Guard: any other transition involving expired is blocked here.
-    // Expiry is only set by PropertyTtlService; the admin status-change
-    // dialog does not offer expired as a target status.
-    if (fresh.status == PropertyStatus.expired ||
-        newStatus == PropertyStatus.expired) {
-      await AuditService.log(
-        action: 'admin_set_status_skipped',
-        propertyKey: fresh.key.toString(),
-        details:
-            'Blocked unsupported expired transition: '
-            '${fresh.status.name} -> ${newStatus.name}. '
-            'Use PropertyTtlService to expire or restore.',
-      );
-      return;
-    }
-
-    if (newStatus == PropertyStatus.inTransit &&
-        (fresh.status == PropertyStatus.pending ||
-            fresh.status == PropertyStatus.loaded)) {
-      await markInTransit(fresh);
-      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
-      await SyncService.enqueueAdminOverrideApplied(
-        aggregateType: 'property',
-        aggregateId: updated.propertyCode.trim(),
-        actorUserId: actorUserId,
-        payload: {
-          'propertyCode': updated.propertyCode,
-          'fromStatus': fromStatus,
-          'toStatus': PropertyStatus.inTransit.name,
-          'propertyKey': updated.key.toString(),
-          'resetItems': false,
-          'appliedAt': DateTime.now().toIso8601String(),
-        },
-      );
-      return;
-    }
-
-    if (newStatus == PropertyStatus.delivered &&
-        fresh.status == PropertyStatus.inTransit) {
-      await markDelivered(fresh);
-      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
-      await SyncService.enqueueAdminOverrideApplied(
-        aggregateType: 'property',
-        aggregateId: updated.propertyCode.trim(),
-        actorUserId: actorUserId,
-        payload: {
-          'propertyCode': updated.propertyCode,
-          'fromStatus': fromStatus,
-          'toStatus': PropertyStatus.delivered.name,
-          'propertyKey': updated.key.toString(),
-          'resetItems': false,
-          'appliedAt': DateTime.now().toIso8601String(),
-        },
-      );
-      return;
-    }
-
-    if (newStatus == PropertyStatus.pickedUp &&
-        fresh.status == PropertyStatus.delivered) {
-      final now = DateTime.now();
-
-      final items = itemSvc.getItemsForProperty(fresh.key.toString());
-      final deliveredNos =
-          items
-              .where((x) => x.status == PropertyItemStatus.delivered)
-              .map((x) => x.itemNo)
-              .toList()
-            ..sort();
-
-      if (deliveredNos.isNotEmpty) {
-        await itemSvc.markItemsPickedUp(
-          propertyKey: fresh.key.toString(),
-          itemNos: deliveredNos,
-          now: now,
-        );
-      }
-
-      fresh.pickedUpAt ??= now;
-      fresh.deliveredAt ??= now;
-      fresh.inTransitAt ??= fresh.deliveredAt;
-      fresh.loadedAt ??= fresh.inTransitAt;
-      fresh.status = PropertyStatus.pickedUp;
-      fresh.staffPickupConfirmed = true;
-      fresh.receiverPickupConfirmed = true;
-      fresh.pickupOtp = null;
-      fresh.otpGeneratedAt = null;
-      fresh.otpAttempts = 0;
-      fresh.otpLockedUntil = null;
-      fresh.qrConsumedAt ??= now;
-      fresh.aggregateVersion += 1;
-      await fresh.save();
-
-      await itemSvc.recomputePropertyAggregate(property: fresh);
-
-      await SyncService.enqueuePropertyPickedUp(
-        propertyId: fresh.propertyCode.trim(),
-        actorUserId: actorUserId,
-        aggregateVersion: fresh.aggregateVersion,
-        payload: {
-          'propertyCode': fresh.propertyCode,
-          'pickedUpAt': now.toIso8601String(),
-          'aggregateVersion': fresh.aggregateVersion,
-        },
-      );
-
-      final updated = HiveService.propertyBox().get(fresh.key) ?? fresh;
-
-      await SyncService.enqueueAdminOverrideApplied(
-        aggregateType: 'property',
-        aggregateId: updated.propertyCode.trim(),
-        actorUserId: actorUserId,
-        payload: {
-          'propertyCode': updated.propertyCode,
-          'fromStatus': fromStatus,
-          'toStatus': PropertyStatus.pickedUp.name,
-          'propertyKey': updated.key.toString(),
-          'resetItems': false,
-          'appliedAt': DateTime.now().toIso8601String(),
-        },
-      );
-
-      await AuditService.log(
-        action: 'admin_set_status',
-        propertyKey: updated.key.toString(),
-        details: 'Admin set status to pickedUp (direct override)',
-      );
-
-      await _safeNotifyReceiver(fresh: updated, eventLabel: 'PICKED UP');
-
-      await NotificationService.notify(
-        targetUserId: updated.createdByUserId,
-        title: 'Admin status update',
-        message:
-            'Admin updated your property for ${updated.receiverName} to pickedUp.',
-      );
-
-      await NotificationService.notify(
-        targetUserId: NotificationService.adminInbox,
-        title: 'Admin override applied',
-        message:
-            'Status set to pickedUp for ${updated.receiverName} (${updated.receiverPhone}).',
-      );
-
-      return;
-    }
-
-    // F1: restore rejected → pending
-    if (newStatus == PropertyStatus.pending &&
-        fresh.status == PropertyStatus.rejected) {
-      await adminRestoreRejected(fresh);
-      return;
-    }
-
-    if (newStatus == PropertyStatus.pending) {
-      final items = itemSvc.getItemsForProperty(fresh.key.toString());
-
-      for (final item in items) {
-        item.status = PropertyItemStatus.pending;
-        item.tripId = '';
-        item.loadedAt = null;
-        item.inTransitAt = null;
-        item.deliveredAt = null;
-        item.pickedUpAt = null;
-        await item.save();
-      }
-
-      fresh.status = PropertyStatus.pending;
-      fresh.inTransitAt = null;
-      fresh.deliveredAt = null;
-      fresh.pickedUpAt = null;
-      fresh.pickupOtp = null;
-      fresh.otpGeneratedAt = null;
-      fresh.otpAttempts = 0;
-      fresh.otpLockedUntil = null;
-      fresh.staffPickupConfirmed = false;
-      fresh.receiverPickupConfirmed = false;
-      fresh.tripId = null;
-      fresh.qrIssuedAt = null;
-      fresh.qrNonce = '';
-      fresh.qrConsumedAt = null;
-      fresh.loadedAt = null;
-      fresh.loadedAtStation = '';
-      fresh.loadedByUserId = '';
-      fresh.aggregateVersion += 1;
-      await fresh.save();
-
-      await SyncService.enqueueAdminOverrideApplied(
-        aggregateType: 'property',
-        aggregateId: fresh.propertyCode.trim(),
-        actorUserId: actorUserId,
-        payload: {
-          'propertyCode': fresh.propertyCode,
-          'fromStatus': fromStatus,
-          'toStatus': PropertyStatus.pending.name,
-          'propertyKey': fresh.key.toString(),
-          'resetItems': true,
-          'appliedAt': DateTime.now().toIso8601String(),
-        },
-      );
-
-      await _safeNotifyReceiver(fresh: fresh, eventLabel: 'PENDING');
-
-      await AuditService.log(
-        action: 'admin_set_status',
-        propertyKey: fresh.key.toString(),
-        details: 'Admin set status to pending (full reset)',
-      );
-      return;
-    }
-
-    await AuditService.log(
-      action: 'admin_set_status_skipped',
-      propertyKey: fresh.key.toString(),
-      details:
-          'Admin attempted unsupported transition '
-          '${fresh.status.name} -> ${newStatus.name}',
-    );
-  }
-
-  static String _propertyCodeLabel(Property p) {
-    final c = p.propertyCode.trim();
-    return c.isEmpty ? p.key.toString() : c;
-  }
-
-  static String _otpMessage(Property p, String otpPlaintext) {
-    final station = p.destination.trim();
-    final code = _propertyCodeLabel(p);
-
-    final until = p.otpGeneratedAt?.add(_otpTtl);
-    final untilText = until == null
-        ? ''
-        : 'Valid until: ${until.toLocal().toString().substring(0, 16)}';
-
-    return [
-      'BEBETO CARGO — Pickup OTP',
-      'Property: $code',
-      'Receiver: ${p.receiverName.trim().isEmpty ? '—' : p.receiverName.trim()}',
-      if (station.isNotEmpty) 'Station: $station',
-      'OTP: ${otpPlaintext.isEmpty ? '—' : otpPlaintext}',
-      'Instruction: Show this OTP at the pickup desk to receive your cargo.',
-      if (untilText.isNotEmpty) untilText,
-    ].join('\n');
-  }
-
-  static Future<String?> sendPickupOtpViaWhatsApp(
-    Property p, {
-    required String otpPlaintext,
-  }) async {
-    if (!RoleGuard.hasAnyVerified({UserRole.staff, UserRole.admin})) {
-      return 'Not authorized.';
-    }
-
-    final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    await repairMissingLoadedMilestone(fresh);
-
-    if (fresh.status != PropertyStatus.delivered) {
-      return 'Property is not in Delivered state.';
-    }
-
-    if (otpPlaintext.trim().isEmpty) {
-      return 'OTP not available. Ask admin to reset OTP to get a fresh one.';
-    }
-
-    if (_isOtpLocked(fresh)) {
-      final mins = remainingLockMinutes(fresh);
-      return 'OTP locked. Try again in $mins min.';
-    }
-
-    if (_isOtpExpired(fresh)) {
-      return 'OTP expired. Ask admin to reset OTP.';
-    }
-
-    final phoneRaw = fresh.receiverPhone.trim();
-    if (phoneRaw.isEmpty || phoneRaw.length < 9) {
-      return 'Receiver phone missing/invalid.';
-    }
-
-    final phoneE164 = WhatsAppService.ugToE164(phoneRaw);
-
-    final err = await WhatsAppService.openChat(
-      phoneE164: phoneE164,
-      message: _otpMessage(fresh, otpPlaintext),
-    );
-
-    await AuditService.log(
-      action: err == null
-          ? 'staff_whatsapp_otp_opened'
-          : 'staff_whatsapp_otp_failed',
-      propertyKey: fresh.key.toString(),
-      details: err == null
-          ? 'WhatsApp OTP to ${fresh.receiverPhone}'
-          : 'WhatsApp failed: $err | to ${fresh.receiverPhone}',
-    );
-
-    return err;
-  }
-
-  static Future<void> refreshPickupQr(Property p) async {
-    final fresh = HiveService.propertyBox().get(p.key) ?? p;
-    await repairMissingLoadedMilestone(fresh);
-
-    if (fresh.status != PropertyStatus.delivered) return;
-    if (fresh.pickupOtp == null || fresh.otpGeneratedAt == null) return;
-    if (_isOtpLocked(fresh) || _isOtpExpired(fresh)) return;
-    if (fresh.qrConsumedAt != null) return;
-
-    fresh.qrIssuedAt = DateTime.now();
-    fresh.qrNonce = _newNonce();
-    await fresh.save();
-  }
-
   static Future<Trip?> startRouteTrip({required String routeId}) async {
     final currentRole = Session.currentRole;
     if (currentRole != UserRole.driver && currentRole != UserRole.admin) {
@@ -1911,18 +1957,14 @@ class PropertyService {
 
     for (final m in box.values) {
       if (m.propertyKey != propertyKey) continue;
-
       final ch = m.channel.trim().toLowerCase();
       if (ch != 'sms') continue;
-
       final st = m.status.trim().toLowerCase();
       final active =
           st == OutboundMessageService.statusQueued ||
           st == OutboundMessageService.statusOpened ||
           st == OutboundMessageService.statusSent;
-
       if (!active) continue;
-
       if (m.body.contains(needle)) return true;
     }
 
@@ -1946,28 +1988,22 @@ class PropertyService {
 
       if (phone.isEmpty) {
         final pKey = fresh.key.toString();
-
         try {
           await AuditService.log(
             action: 'OTP_SMS_INVALID_PHONE',
             propertyKey: pKey,
-            details:
-                'Receiver phone not message-ready. raw="$rawPhone".\n'
-                'SMS OTP not queued.',
+            details: 'Receiver phone not message-ready. raw="$rawPhone".',
           );
         } catch (_) {}
-
         try {
           await NotificationService.notify(
             targetUserId: NotificationService.adminInbox,
             title: 'OTP not sent (invalid phone)',
             message:
                 'Property for ${fresh.receiverName}: receiver phone is not message-ready.\n'
-                'Phone entered: "$rawPhone"\n'
-                'Fix the receiver phone number to enable SMS OTP.',
+                'Phone entered: "$rawPhone"',
           );
         } catch (_) {}
-
         try {
           if (fresh.createdByUserId.trim().isNotEmpty) {
             await NotificationService.notify(
@@ -1975,12 +2011,10 @@ class PropertyService {
               title: 'OTP not sent (check receiver phone)',
               message:
                   'Receiver phone for ${fresh.receiverName} is not message-ready.\n'
-                  'Phone entered: "$rawPhone"\n'
-                  'Please correct it to enable SMS OTP.',
+                  'Phone entered: "$rawPhone"',
             );
           }
         } catch (_) {}
-
         return;
       }
 
@@ -2011,7 +2045,6 @@ class PropertyService {
         propertyKey: pKey,
       );
 
-      // F3: log OTP delivery confirmation
       await OutboundMessageService.logDeliveryAttempt(
         msg: queuedMsg,
         propertyKey: pKey,
@@ -2031,6 +2064,94 @@ class PropertyService {
         );
       } catch (_) {}
     }
+  }
+
+  static String _propertyCodeLabel(Property p) {
+    final c = p.propertyCode.trim();
+    return c.isEmpty ? p.key.toString() : c;
+  }
+
+  static String _otpMessage(Property p, String otpPlaintext) {
+    final station = p.destination.trim();
+    final code = _propertyCodeLabel(p);
+    final until = p.otpGeneratedAt?.add(_otpTtl);
+    final untilText = until == null
+        ? ''
+        : 'Valid until: ${until.toLocal().toString().substring(0, 16)}';
+
+    return [
+      'BEBETO CARGO — Pickup OTP',
+      'Property: $code',
+      'Receiver: ${p.receiverName.trim().isEmpty ? '—' : p.receiverName.trim()}',
+      if (station.isNotEmpty) 'Station: $station',
+      'OTP: ${otpPlaintext.isEmpty ? '—' : otpPlaintext}',
+      'Instruction: Show this OTP at the pickup desk to receive your cargo.',
+      if (untilText.isNotEmpty) untilText,
+    ].join('\n');
+  }
+
+  static Future<String?> sendPickupOtpViaWhatsApp(
+    Property p, {
+    required String otpPlaintext,
+  }) async {
+    if (!RoleGuard.hasAnyVerified({UserRole.staff, UserRole.admin})) {
+      return 'Not authorized.';
+    }
+
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    await repairMissingLoadedMilestone(fresh);
+
+    if (fresh.status != PropertyStatus.delivered) {
+      return 'Property is not in Delivered state.';
+    }
+    if (otpPlaintext.trim().isEmpty) {
+      return 'OTP not available. Ask admin to reset OTP to get a fresh one.';
+    }
+    if (_isOtpLocked(fresh)) {
+      final mins = remainingLockMinutes(fresh);
+      return 'OTP locked. Try again in $mins min.';
+    }
+    if (_isOtpExpired(fresh)) {
+      return 'OTP expired. Ask admin to reset OTP.';
+    }
+
+    final phoneRaw = fresh.receiverPhone.trim();
+    if (phoneRaw.isEmpty || phoneRaw.length < 9) {
+      return 'Receiver phone missing/invalid.';
+    }
+
+    final phoneE164 = WhatsAppService.ugToE164(phoneRaw);
+
+    final err = await WhatsAppService.openChat(
+      phoneE164: phoneE164,
+      message: _otpMessage(fresh, otpPlaintext),
+    );
+
+    await AuditService.log(
+      action: err == null
+          ? 'staff_whatsapp_otp_opened'
+          : 'staff_whatsapp_otp_failed',
+      propertyKey: fresh.key.toString(),
+      details: err == null
+          ? 'WhatsApp OTP to ${fresh.receiverPhone}'
+          : 'WhatsApp failed: $err | to ${fresh.receiverPhone}',
+    );
+
+    return err;
+  }
+
+  static Future<void> refreshPickupQr(Property p) async {
+    final fresh = HiveService.propertyBox().get(p.key) ?? p;
+    await repairMissingLoadedMilestone(fresh);
+
+    if (fresh.status != PropertyStatus.delivered) return;
+    if (fresh.pickupOtp == null || fresh.otpGeneratedAt == null) return;
+    if (_isOtpLocked(fresh) || _isOtpExpired(fresh)) return;
+    if (fresh.qrConsumedAt != null) return;
+
+    fresh.qrIssuedAt = DateTime.now();
+    fresh.qrNonce = _newNonce();
+    await fresh.save();
   }
 }
 

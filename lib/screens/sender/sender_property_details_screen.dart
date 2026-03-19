@@ -11,6 +11,7 @@ import '../../models/trip_status.dart';
 import '../../services/hive_service.dart';
 import '../../services/pickup_qr_service.dart';
 import '../../services/property_service.dart';
+import 'edit_rejected_property_screen.dart';
 
 class SenderPropertyDetailsScreen extends StatelessWidget {
   final Property property;
@@ -265,33 +266,40 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ],
                       const SizedBox(height: 12),
                       const Text(
-                        'If you believe this rejection is an error, you may '
-                        'request a re-review. Admin will assess and decide whether '
-                        'to restore your property to Pending.',
+                        'Edit the property details below, then submit for admin review. '
+                        'Admin will approve (restore to Pending) or deny your request.',
                         style: TextStyle(fontSize: 13, color: Colors.black54),
                       ),
                       const SizedBox(height: 12),
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
-                          icon: const Icon(Icons.manage_search_outlined),
-                          label: const Text('Request Re-Review'),
+                          icon: const Icon(Icons.edit_outlined),
+                          label: const Text('Edit & Request Review'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.orange,
                             foregroundColor: Colors.white,
                           ),
                           onPressed: () async {
-                            final ok = await PropertyService.requestReReview(p);
-                            if (!context.mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              SnackBar(
-                                content: Text(
-                                  ok
-                                      ? 'Re-review requested ✅ — awaiting admin decision'
-                                      : 'Could not submit request ❌',
-                                ),
+                            final saved = await Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    EditRejectedPropertyScreen(property: p),
                               ),
                             );
+                            // saved == true means edits were committed;
+                            // requestReReview is called inside EditRejectedPropertyScreen
+                            // after save, so nothing else needed here.
+                            if (saved == true && context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'Changes saved & re-review submitted ✅ — awaiting admin decision',
+                                  ),
+                                ),
+                              );
+                            }
                           },
                         ),
                       ),

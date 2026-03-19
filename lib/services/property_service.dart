@@ -1029,7 +1029,13 @@ class PropertyService {
   /// Sender taps "Request Re-Review" on a rejected property.
   /// Sets status to [PropertyStatus.underReview] and notifies admin.
   /// Does NOT restore to pending — that is admin's decision only.
-  static Future<bool> requestReReview(Property p) async {
+  /// Sender submits edited property for re-review after making changes.
+  /// [changeSummary] is a human-readable summary of what changed, shown to admin.
+  /// Should only be called after the sender has saved edits via EditRejectedPropertyScreen.
+  static Future<bool> requestReReview(
+    Property p, {
+    String changeSummary = '',
+  }) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
     // Only callable from rejected
@@ -1045,7 +1051,9 @@ class PropertyService {
     await AuditService.log(
       action: 'PROPERTY_REREVIEW_REQUESTED',
       propertyKey: fresh.key.toString(),
-      details: 'Sender $currentUserId requested re-review after rejection.',
+      details:
+          'Sender $currentUserId submitted re-review for ${fresh.propertyCode}.'
+          '${changeSummary.isEmpty ? '' : '\nChanges: $changeSummary'}',
     );
 
     await SyncService.enqueueAdminOverrideApplied(
@@ -1056,17 +1064,23 @@ class PropertyService {
         'propertyCode': fresh.propertyCode,
         'fromStatus': PropertyStatus.rejected.name,
         'toStatus': PropertyStatus.underReview.name,
+        'changeSummary': changeSummary,
         'aggregateVersion': fresh.aggregateVersion,
       },
     );
 
+    final changeNote = changeSummary.isEmpty
+        ? ''
+        : '\nEdited fields: $changeSummary';
+
     await NotificationService.notify(
       targetUserId: NotificationService.adminInbox,
-      title: 'Re-review requested',
+      title: 'Re-review requested — property edited',
       message:
-          'Sender has disputed the rejection of property ${fresh.propertyCode} '
+          'Sender has edited and resubmitted property ${fresh.propertyCode} '
           'for ${fresh.receiverName}.\n'
-          'Original reason: ${rejectionCategoryLabel(fresh.rejectionCategory ?? 'other')}\n'
+          'Original rejection: ${rejectionCategoryLabel(fresh.rejectionCategory ?? 'other')}'
+          '$changeNote\n'
           'Please review and either approve (restore to Pending) or deny.',
     );
 

@@ -11,6 +11,7 @@ import '../models/property_item.dart';
 import '../models/trip.dart';
 import '../models/user.dart';
 
+import 'at_settings_service.dart';
 import 'outbound_message_service.dart';
 import '../models/sync_event.dart';
 
@@ -26,7 +27,6 @@ class HiveService {
   static const String _outboundMsgBoxName = 'outbound_messages';
   static const String _passwordResetBoxName = 'password_resets';
   static const String _syncEventBoxName = 'sync_events';
-
   static const String _appSettingsBoxName = 'app_settings';
 
   static void setUser(String userId) {
@@ -35,6 +35,7 @@ class HiveService {
 
   static Future<void> openAllBoxes() async {
     await openAppSettingsBox();
+    await AtSettingsService.init(); // AT SMS credentials
 
     await openPropertyBox();
     await openPropertyItemBox();
@@ -51,6 +52,7 @@ class HiveService {
     await OutboundMessageService.requeueOpenedMessages();
   }
 
+  // ── App settings ────────────────────────────────────────────────────────
   static Future<void> openAppSettingsBox() async {
     if (!Hive.isBoxOpen(_appSettingsBoxName)) {
       await Hive.openBox(_appSettingsBoxName);
@@ -66,6 +68,7 @@ class HiveService {
     return Hive.box(_appSettingsBoxName);
   }
 
+  // ── Properties ───────────────────────────────────────────────────────────
   static Future<void> openPropertyBox() async {
     if (!Hive.isBoxOpen(_propertyBoxName)) {
       await Hive.openBox<Property>(_propertyBoxName);
@@ -81,6 +84,7 @@ class HiveService {
     return Hive.box<Property>(_propertyBoxName);
   }
 
+  // ── Property items ───────────────────────────────────────────────────────
   static Future<void> openPropertyItemBox() async {
     if (!Hive.isBoxOpen(_propertyItemBoxName)) {
       await Hive.openBox<PropertyItem>(_propertyItemBoxName);
@@ -96,6 +100,7 @@ class HiveService {
     return Hive.box<PropertyItem>(_propertyItemBoxName);
   }
 
+  // ── Notifications ────────────────────────────────────────────────────────
   static Future<void> openNotificationBox() async {
     if (!Hive.isBoxOpen(_notificationBoxName)) {
       await Hive.openBox<NotificationItem>(_notificationBoxName);
@@ -111,6 +116,7 @@ class HiveService {
     return Hive.box<NotificationItem>(_notificationBoxName);
   }
 
+  // ── Trips ────────────────────────────────────────────────────────────────
   static Future<void> openTripBox() async {
     if (!Hive.isBoxOpen(_tripBoxName)) {
       await Hive.openBox<Trip>(_tripBoxName);
@@ -126,6 +132,7 @@ class HiveService {
     return Hive.box<Trip>(_tripBoxName);
   }
 
+  // ── Audit ────────────────────────────────────────────────────────────────
   static Future<void> openAuditBox() async {
     if (!Hive.isBoxOpen(_auditBoxName)) {
       await Hive.openBox<AuditEvent>(_auditBoxName);
@@ -141,6 +148,7 @@ class HiveService {
     return Hive.box<AuditEvent>(_auditBoxName);
   }
 
+  // ── Users ────────────────────────────────────────────────────────────────
   static Future<void> openUserBox() async {
     if (!Hive.isBoxOpen(_userBoxName)) {
       await Hive.openBox<User>(_userBoxName);
@@ -156,8 +164,7 @@ class HiveService {
     return Hive.box<User>(_userBoxName);
   }
 
-  // Payments
-  // ----------------------------
+  // ── Payments ─────────────────────────────────────────────────────────────
   static Future<void> openPaymentBox() async {
     if (!Hive.isBoxOpen(_paymentBoxName)) {
       await Hive.openBox<PaymentRecord>(_paymentBoxName);
@@ -173,6 +180,7 @@ class HiveService {
     return Hive.box<PaymentRecord>(_paymentBoxName);
   }
 
+  // ── Printer settings ─────────────────────────────────────────────────────
   static Future<void> openPrinterSettingsBox() async {
     if (!Hive.isBoxOpen(_printerSettingsBoxName)) {
       await Hive.openBox(_printerSettingsBoxName);
@@ -188,6 +196,7 @@ class HiveService {
     return Hive.box(_printerSettingsBoxName);
   }
 
+  // ── Outbound messages ────────────────────────────────────────────────────
   static Future<void> openOutboundMessageBox() async {
     if (!Hive.isBoxOpen(_outboundMsgBoxName)) {
       await Hive.openBox<OutboundMessage>(_outboundMsgBoxName);
@@ -203,6 +212,7 @@ class HiveService {
     return Hive.box<OutboundMessage>(_outboundMsgBoxName);
   }
 
+  // ── Password resets ──────────────────────────────────────────────────────
   static Future openPasswordResetBox() async {
     if (!Hive.isBoxOpen(_passwordResetBoxName)) {
       await Hive.openBox(_passwordResetBoxName);
@@ -218,6 +228,7 @@ class HiveService {
     return Hive.box(_passwordResetBoxName);
   }
 
+  // ── Sync events ──────────────────────────────────────────────────────────
   static Future<void> openSyncEventBox() async {
     if (!Hive.isBoxOpen(_syncEventBoxName)) {
       await Hive.openBox<SyncEvent>(_syncEventBoxName);
@@ -230,7 +241,6 @@ class HiveService {
         'SyncEvent box is not open.\nCall HiveService.openSyncEventBox() first.',
       );
     }
-
     return Hive.box<SyncEvent>(_syncEventBoxName);
   }
 

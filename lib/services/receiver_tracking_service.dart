@@ -3,6 +3,7 @@ import '../models/property_status.dart';
 import 'audit_service.dart';
 import 'hive_service.dart';
 import 'outbound_message_service.dart';
+import 'property_service.dart';
 import 'session.dart';
 import 'tracking_code_service.dart';
 
@@ -17,9 +18,11 @@ class ReceiverTrackingService {
     return RegExp(r'^\+?\d+$').hasMatch(p);
   }
 
+  // Default channel is sms — safest for receivers without smartphones.
+  // WhatsApp is only used when explicitly set to 'whatsapp'.
   static String _cleanChannel(String raw) {
     final c = raw.trim().toLowerCase();
-    return c == 'sms' ? 'sms' : 'whatsapp';
+    return c == 'whatsapp' ? 'whatsapp' : 'sms';
   }
 
   static String _friendlyStatus(Property p) {
@@ -43,10 +46,11 @@ class ReceiverTrackingService {
     }
   }
 
+  // ── Called by DeskRecordPaymentScreen after payment ──────────────────────
   static Future afterPaymentRecorded({
     required Property property,
     required bool enabled,
-    String channel = 'whatsapp',
+    String channel = 'sms',
   }) async {
     final pBox = HiveService.propertyBox();
     final fresh = pBox.get(property.key) ?? property;
@@ -117,6 +121,101 @@ class ReceiverTrackingService {
     );
   }
 
+  // ── Called by StaffStationScreen when staff taps Mark Delivered ──────────
+  // Sends a delivery notification AND the OTP in the same message for SMS
+  // users (no smartphone = they need the OTP in the SMS itself).
+  // WhatsApp users get a standard delivery update; admin sends OTP separately.
+  static Future afterDelivered({required Property property}) async {
+    final pBox = HiveService.propertyBox();
+    final fresh = pBox.get(property.key) ?? property;
+
+    if (!fresh.notifyReceiver) return;
+
+    final phone = _cleanPhone(fresh.receiverPhone);
+    if (!_looksLikePhone(phone)) return;
+
+    final channel = _cleanChannel(
+      fresh.receiverNotifyChannel.trim().isEmpty
+          ? 'sms'
+          : fresh.receiverNotifyChannel,
+    );
+
+    if (fresh.trackingCode.trim().isEmpty) {
+      fresh.trackingCode = TrackingCodeService.ensureUnique(fresh);
+      await fresh.save();
+    }
+
+    // For SMS channel: generate/refresh OTP and include it in the message
+    // so the receiver gets everything they need in one SMS.
+    // For WhatsApp: send standard delivery update; OTP sent separately by admin.
+    String body;
+    if (channel == 'sms') {
+      // Generate a fresh OTP for delivery notification
+      final otpPlaintext = await PropertyService.adminResetOtp(fresh);
+      body = buildDeliveredWithOtpMessage(fresh, otpPlaintext: otpPlaintext);
+    } else {
+      body = buildStatusUpdateMessage(fresh, eventLabel: 'DELIVERED');
+    }
+
+    await OutboundMessageService.queue(
+      toPhone: phone,
+      channel: channel,
+      body: body,
+      propertyKey: fresh.key.toString(),
+    );
+
+    fresh.lastReceiverNotifiedAt = DateTime.now();
+    await fresh.save();
+
+    await AuditService.log(
+      action: 'RECEIVER_NOTIFY_QUEUED',
+      propertyKey: fresh.key.toString(),
+      details:
+          'Queued delivered notification to $phone via $channel '
+          '(OTP included: ${channel == 'sms'}).',
+    );
+  }
+
+  // ── Called by StaffStationScreen Resend SMS button ───────────────────────
+  // Re-queues the OTP SMS without exposing plaintext to staff.
+  // Generates a fresh OTP, encodes it in the message, queues it.
+  static Future resendPickupOtpSms(Property property) async {
+    final pBox = HiveService.propertyBox();
+    final fresh = pBox.get(property.key) ?? property;
+
+    final phone = _cleanPhone(fresh.receiverPhone);
+    if (!_looksLikePhone(phone)) {
+      throw Exception('Receiver phone missing or invalid');
+    }
+
+    // Always send as SMS — this method is specifically for non-smartphone users
+    const channel = 'sms';
+
+    final otpPlaintext = await PropertyService.adminResetOtp(fresh);
+    if (otpPlaintext == null) {
+      throw Exception('Could not generate OTP');
+    }
+
+    final refetched = pBox.get(property.key) ?? fresh;
+    final body = buildDeliveredWithOtpMessage(
+      refetched,
+      otpPlaintext: otpPlaintext,
+    );
+
+    await OutboundMessageService.queue(
+      toPhone: phone,
+      channel: channel,
+      body: body,
+      propertyKey: fresh.key.toString(),
+    );
+
+    await AuditService.log(
+      action: 'RECEIVER_OTP_SMS_RESENT',
+      propertyKey: fresh.key.toString(),
+      details: 'OTP SMS re-queued to $phone by staff/admin.',
+    );
+  }
+
   static Future notifyReceiverOnStatusChange({
     required Property property,
     required String eventLabel,
@@ -132,7 +231,7 @@ class ReceiverTrackingService {
 
     final effective = channel.trim().isEmpty
         ? (fresh.receiverNotifyChannel.trim().isEmpty
-              ? 'whatsapp'
+              ? 'sms'
               : fresh.receiverNotifyChannel)
         : channel;
 
@@ -169,45 +268,6 @@ class ReceiverTrackingService {
     );
   }
 
-  static String buildPaymentConfirmedMessage(Property p) {
-    final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
-    final cur = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
-    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
-    final when = DateTime.now().toLocal().toString().substring(0, 16);
-    final status = _friendlyStatus(p);
-    final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
-
-    return 'Bebeto Cargo ✅ Payment confirmed\n'
-        'Tracking: $code\n'
-        'Item: $desc (x${p.itemCount})\n'
-        'Amount: $cur ${p.amountPaidTotal}\n'
-        'Route: $route | Dest: ${p.destination}\n'
-        'Status: $status\n'
-        'Time: $when\n'
-        'Help: $_supportPhones';
-  }
-
-  static String buildStatusUpdateMessage(
-    Property p, {
-    required String eventLabel,
-  }) {
-    final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
-    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
-    final when = DateTime.now().toLocal().toString().substring(0, 16);
-    final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
-    final pickupHint =
-        (eventLabel == 'DELIVERED') ? '\nPickup requires: OTP + QR' : '';
-
-    return 'Bebeto Cargo update \n'
-        'Tracking: $code\n'
-        'Item: $desc (x${p.itemCount})\n'
-        'Status: $eventLabel\n'
-        'Route: $route | Dest: ${p.destination}\n'
-        'Time: $when'
-        '$pickupHint\n'
-        'Help: $_supportPhones';
-  }
-
   static Future notifyReceiverPartialLoadOnTripStart({
     required Property property,
     required int loadedForTrip,
@@ -226,7 +286,7 @@ class ReceiverTrackingService {
 
     final effective = channel.trim().isEmpty
         ? (fresh.receiverNotifyChannel.trim().isEmpty
-              ? 'whatsapp'
+              ? 'sms'
               : fresh.receiverNotifyChannel)
         : channel;
 
@@ -286,5 +346,71 @@ class ReceiverTrackingService {
           'Queued partial-load trip-start update to $phone. '
           'inTransit=$loadedForTrip/$total remaining=$remainingAtStation/$total',
     );
+  }
+
+  // ── Message builders ──────────────────────────────────────────────────────
+
+  static String buildPaymentConfirmedMessage(Property p) {
+    final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
+    final cur = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
+    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
+    final when = DateTime.now().toLocal().toString().substring(0, 16);
+    final status = _friendlyStatus(p);
+    final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
+
+    return 'Bebeto Cargo ✅ Payment confirmed\n'
+        'Tracking: $code\n'
+        'Item: $desc (x${p.itemCount})\n'
+        'Amount: $cur ${p.amountPaidTotal}\n'
+        'Route: $route | Dest: ${p.destination}\n'
+        'Status: $status\n'
+        'Time: $when\n'
+        'Help: $_supportPhones';
+  }
+
+  static String buildStatusUpdateMessage(
+    Property p, {
+    required String eventLabel,
+  }) {
+    final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
+    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
+    final when = DateTime.now().toLocal().toString().substring(0, 16);
+    final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
+    final pickupHint = (eventLabel == 'DELIVERED')
+        ? '\nPickup requires: OTP + QR'
+        : '';
+
+    return 'Bebeto Cargo update \n'
+        'Tracking: $code\n'
+        'Item: $desc (x${p.itemCount})\n'
+        'Status: $eventLabel\n'
+        'Route: $route | Dest: ${p.destination}\n'
+        'Time: $when'
+        '$pickupHint\n'
+        'Help: $_supportPhones';
+  }
+
+  // SMS-specific delivery message that includes the OTP inline.
+  // Used for receivers without smartphones who cannot use WhatsApp.
+  static String buildDeliveredWithOtpMessage(
+    Property p, {
+    required String? otpPlaintext,
+  }) {
+    final code = p.trackingCode.trim().isEmpty ? '—' : p.trackingCode.trim();
+    final route = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
+    final when = DateTime.now().toLocal().toString().substring(0, 16);
+    final desc = p.description.trim().isEmpty ? 'Cargo' : p.description.trim();
+    final otpLine = (otpPlaintext != null && otpPlaintext.isNotEmpty)
+        ? '\nPickup OTP: $otpPlaintext'
+        : '\nPickup OTP: (contact station)';
+
+    return 'Bebeto Cargo: Your cargo has arrived ✅\n'
+        'Tracking: $code\n'
+        'Item: $desc (x${p.itemCount})\n'
+        'Route: $route | Dest: ${p.destination}\n'
+        'Time: $when'
+        '$otpLine\n'
+        'Show this SMS + OTP at ${p.destination} station to collect.\n'
+        'Help: $_supportPhones';
   }
 }

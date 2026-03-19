@@ -17,7 +17,8 @@ class DeskRecordPaymentScreen extends StatefulWidget {
   const DeskRecordPaymentScreen({super.key, required this.property});
 
   @override
-  State<DeskRecordPaymentScreen> createState() => _DeskRecordPaymentScreenState();
+  State<DeskRecordPaymentScreen> createState() =>
+      _DeskRecordPaymentScreenState();
 }
 
 class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
@@ -29,7 +30,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   bool _saving = false;
 
   bool _notifyReceiver = false;
-  String _notifyChannel = 'whatsapp';
+  // SMS is the default — safer for receivers without smartphones.
+  // Staff can switch to WhatsApp if the receiver has it.
+  String _notifyChannel = 'sms';
 
   AppRoute? _selectedRouteForConfirmation;
 
@@ -43,8 +46,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final p = widget.property;
     _notifyReceiver = p.notifyReceiver == true;
 
+    // Default to sms unless explicitly set to whatsapp
     final c = (p.receiverNotifyChannel).trim().toLowerCase();
-    _notifyChannel = (c == 'sms') ? 'sms' : 'whatsapp';
+    _notifyChannel = (c == 'whatsapp') ? 'whatsapp' : 'sms';
 
     final matches = findRoutesByDestination(p.destination);
     if (matches.isNotEmpty) {
@@ -96,8 +100,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final displayCode = fresh.propertyCode.trim().isEmpty
         ? fresh.key.toString()
         : fresh.propertyCode.trim();
-    final displayCurrency =
-        fresh.currency.trim().isEmpty ? 'UGX' : fresh.currency.trim();
+    final displayCurrency = fresh.currency.trim().isEmpty
+        ? 'UGX'
+        : fresh.currency.trim();
 
     final routeMatches = findRoutesByDestination(fresh.destination);
     final needsRouteConfirmation =
@@ -128,7 +133,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                           Expanded(
                             child: Text(
                               'Property: $displayCode',
-                              style: const TextStyle(fontWeight: FontWeight.w700),
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
                             ),
                           ),
                           if (fresh.propertyCode.trim().isNotEmpty)
@@ -174,7 +181,8 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                         ),
                         const SizedBox(height: 6),
                         const Text(
-                          'This destination matches multiple operational routes. Confirm the route before recording payment.',
+                          'This destination matches multiple operational routes. '
+                          'Confirm the route before recording payment.',
                         ),
                         const SizedBox(height: 10),
                         DropdownButtonFormField<AppRoute>(
@@ -281,19 +289,25 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                         const SizedBox(height: 6),
                         DropdownButtonFormField<String>(
                           initialValue: _notifyChannel,
+                          isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Channel',
                             border: OutlineInputBorder(),
                           ),
                           items: const [
                             DropdownMenuItem(
-                              value: 'whatsapp',
-                              child: Text('WhatsApp'),
+                              value: 'sms',
+                              child: Text(
+                                'SMS (recommended — works on all phones)',
+                              ),
                             ),
-                            DropdownMenuItem(value: 'sms', child: Text('SMS')),
+                            DropdownMenuItem(
+                              value: 'whatsapp',
+                              child: Text('WhatsApp (smartphone only)'),
+                            ),
                           ],
                           onChanged: (v) =>
-                              setState(() => _notifyChannel = (v ?? 'whatsapp')),
+                              setState(() => _notifyChannel = (v ?? 'sms')),
                         ),
                       ],
                     ],
@@ -336,7 +350,8 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
     try {
       final pBox = HiveService.propertyBox();
-      final freshBeforePayment = pBox.get(widget.property.key) ?? widget.property;
+      final freshBeforePayment =
+          pBox.get(widget.property.key) ?? widget.property;
 
       if (!freshBeforePayment.routeConfirmed) {
         if (_selectedRouteForConfirmation == null) {
@@ -400,8 +415,8 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
       final msg = (printed == true)
           ? 'Payment + receipt ✅'
           : (printed == false)
-              ? 'Payment saved (receipt failed) ⚠️'
-              : 'Payment recorded ✅';
+          ? 'Payment saved (receipt failed) ⚠️'
+          : 'Payment recorded ✅';
 
       messenger.showSnackBar(SnackBar(content: Text(msg)));
       Navigator.pop(context, true);

@@ -1,3 +1,4 @@
+import 'package:bus_cargo_tracker/models/at_settings.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -84,6 +85,9 @@ void main() async {
   if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
     Hive.registerAdapter(SyncEventAdapter());
   }
+  if (!Hive.isAdapterRegistered(AtSettingsAdapter().typeId)) {
+    Hive.registerAdapter(AtSettingsAdapter());
+  }
 
   await HiveService.openAllBoxes();
 
@@ -157,7 +161,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'Bebeto Cargo',
+      title: 'UNEx Logistics',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
       // S5: SessionGuard wraps every screen built by the navigator.

@@ -1,3 +1,4 @@
+import 'package:bus_cargo_tracker/screens/admin/at_settings_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -576,6 +577,17 @@ class _AdminDashboardState extends State<AdminDashboard> {
                         context,
                         MaterialPageRoute(
                           builder: (_) => const AdminOutboundMessagesScreen(),
+                        ),
+                      ),
+                    ),
+                    actionTile(
+                      icon: Icons.settings_outlined,
+                      title: 'SMS Settings',
+                      subtitle: 'Africa\'s Talking API key and sender ID',
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const AtSettingsScreen(),
                         ),
                       ),
                     ),

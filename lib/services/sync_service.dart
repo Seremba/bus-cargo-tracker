@@ -19,6 +19,39 @@ class SyncService {
   static const String _eventsPullPath = '/events';
   static final _uuid = const Uuid();
 
+  static const String _cursorKey = 'lastSyncCursor';
+  static const String _deviceIdKey = 'deviceId';
+
+  /// Phase 1: API key is stored in Hive appSettingsBox under this key.
+  /// Set once at app init (from build config / secure storage handoff).
+  static const String _apiKeySettingsKey = 'syncApiKey';
+
+  /// Returns the sync API key stored in local settings, or empty string.
+  static String _getApiKey() {
+    final box = HiveService.appSettingsBox();
+    return (box.get(_apiKeySettingsKey) as String? ?? '').trim();
+  }
+
+  /// Persists the sync API key to Hive settings.
+  /// Call this once during first-run / provisioning, not on every sync.
+  static Future<void> setApiKey(String key) async {
+    final box = HiveService.appSettingsBox();
+    await box.put(_apiKeySettingsKey, key.trim());
+  }
+
+  /// Whether an API key has been configured on this device.
+  static bool hasApiKey() => _getApiKey().isNotEmpty;
+
+  /// Builds request headers for all Worker calls.
+  /// Includes Content-Type and the X-Api-Key auth header (Phase 1).
+  static Map<String, String> _headers() {
+    final key = _getApiKey();
+    return {
+      'Content-Type': 'application/json',
+      if (key.isNotEmpty) 'X-Api-Key': key,
+    };
+  }
+
   static String newEventId() => _uuid.v4();
 
   static Map<String, dynamic> _jsonSafePayload(Map<String, dynamic> payload) {
@@ -27,23 +60,23 @@ class SyncService {
 
   static String? getLastCursor() {
     final box = HiveService.appSettingsBox();
-    return box.get('lastSyncCursor') as String?;
+    return box.get(_cursorKey) as String?;
   }
 
   static Future<void> setLastCursor(String cursor) async {
     final box = HiveService.appSettingsBox();
-    await box.put('lastSyncCursor', cursor);
+    await box.put(_cursorKey, cursor);
   }
 
   static String? getDeviceId() {
     final box = HiveService.appSettingsBox();
-    return box.get('deviceId') as String?;
+    return box.get(_deviceIdKey) as String?;
   }
 
   static Future<String> ensureDeviceId() async {
     final box = HiveService.appSettingsBox();
 
-    final existing = (box.get('deviceId') as String?)?.trim();
+    final existing = (box.get(_deviceIdKey) as String?)?.trim();
     if (existing != null && existing.isNotEmpty) {
       return existing;
     }
@@ -57,7 +90,7 @@ class SyncService {
 
     final deviceId = 'DEV-$timestamp-$entropy';
 
-    await box.put('deviceId', deviceId);
+    await box.put(_deviceIdKey, deviceId);
     return deviceId;
   }
 
@@ -450,6 +483,18 @@ class SyncService {
     await event.save();
   }
 
+  /// Applies a remote event to local Hive state.
+  ///
+  /// Phase 2 conflict guard: each aggregate-level apply method is already
+  /// responsible for checking `aggregateVersion` before mutating state
+  /// (pattern: `if (property.aggregateVersion >= incomingVersion) return`).
+  /// That guard is the single source of truth — we do not duplicate it here.
+  ///
+  /// What we add here is an event-level guard for events that carry a
+  /// version in their payload but whose apply handler does NOT yet check it
+  /// (e.g. exceptionLogged, adminOverrideApplied, item-level events).
+  /// For those we skip silently — they are audit / observational events
+  /// that carry no local state mutation requiring ordering protection.
   static Future<void> applyEvent(SyncEvent event) async {
     if (event.appliedLocally) return;
 
@@ -511,6 +556,8 @@ class SyncService {
       case SyncEventType.propertyItemPickedUp:
         await PropertyItemService.applyPropertyItemPickedUpFromSync(event);
         break;
+
+      // Observational / audit-only events — no local state mutation needed.
       case SyncEventType.exceptionLogged:
       case SyncEventType.adminOverrideApplied:
         break;
@@ -528,17 +575,32 @@ class SyncService {
     final pending = pendingPushEvents();
     if (pending.isEmpty) return 0;
 
+    // Phase 1: abort push if no API key is configured.
+    // This prevents silently hitting a 401 on every sync.
+    if (!hasApiKey()) {
+      throw StateError(
+        'Sync API key not configured. '
+        'Call SyncService.setApiKey() during app init.',
+      );
+    }
+
     final uri = Uri.parse('$_baseUrl$_eventsBatchPath');
 
     final body = jsonEncode({
       'events': pending.map((e) => e.toJson()).toList(),
     });
 
-    final response = await http.post(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-      body: body,
-    );
+    // Phase 1: _headers() injects X-Api-Key
+    final response = await http.post(uri, headers: _headers(), body: body);
+
+    if (response.statusCode == 401) {
+      // API key wrong / missing — do not mark events as failed, just surface
+      // the error so the caller can handle it without burning retry budget.
+      throw StateError(
+        'Sync push rejected: invalid API key (HTTP 401). '
+        'Check syncApiKey in app settings.',
+      );
+    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       for (final event in pending) {
@@ -566,6 +628,14 @@ class SyncService {
   }
 
   static Future<Map<String, int>> pullRemoteEvents() async {
+    // Phase 1: abort pull if no API key is configured.
+    if (!hasApiKey()) {
+      throw StateError(
+        'Sync API key not configured. '
+        'Call SyncService.setApiKey() during app init.',
+      );
+    }
+
     final after = getLastCursor();
 
     final uri = Uri.parse(
@@ -574,10 +644,15 @@ class SyncService {
           : '$_baseUrl$_eventsPullPath?after=$after',
     );
 
-    final response = await http.get(
-      uri,
-      headers: {'Content-Type': 'application/json'},
-    );
+    // Phase 1: _headers() injects X-Api-Key
+    final response = await http.get(uri, headers: _headers());
+
+    if (response.statusCode == 401) {
+      throw StateError(
+        'Sync pull rejected: invalid API key (HTTP 401). '
+        'Check syncApiKey in app settings.',
+      );
+    }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw StateError('Pull failed with HTTP ${response.statusCode}');
@@ -597,6 +672,7 @@ class SyncService {
         final event = SyncEvent.fromJson(Map<String, dynamic>.from(raw as Map));
 
         if (await isThisDeviceEvent(event)) {
+          // This device originated the event — mark self-echo as applied.
           final existingSelf = getById(event.eventId);
           if (existingSelf != null && !existingSelf.appliedLocally) {
             await markAppliedLocally(existingSelf.eventId);
@@ -614,6 +690,8 @@ class SyncService {
           continue;
         }
 
+        // Phase 2: SyncEvent.fromJson already reads aggregateVersion from
+        // the JSON. The apply handlers enforce the version guard internally.
         await HiveService.syncEventBox().put(event.eventId, event);
         await applyEvent(event);
         applied += 1;

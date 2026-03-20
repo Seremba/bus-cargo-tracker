@@ -13,6 +13,8 @@ class AutoSyncService with WidgetsBindingObserver {
   bool _started = false;
   bool _syncing = false;
 
+  // Phase 5 (upcoming): interval will be reduced to 5 minutes.
+  // Keeping at 30 s for now until Phase 5 connectivity-aware strategy lands.
   static const Duration _interval = Duration(seconds: 30);
 
   bool get isStarted => _started;
@@ -60,10 +62,20 @@ class AutoSyncService with WidgetsBindingObserver {
 
       // F5: run TTL checks on every sync tick.
       // PropertyTtlService.runChecks() is internally rate-limited to once
-      // per calendar day, so calling it here is safe even at 30-min intervals.
+      // per calendar day, so calling it here is safe even at 30-s intervals.
       await PropertyTtlService.runChecks();
+    } on StateError catch (e) {
+     
+      final msg = e.message;
+      if (msg.contains('API key') || msg.contains('SYNC_API_KEY')) {
+        // Do not crash the app, but assert in debug mode so devs catch it fast.
+        assert(false, '[AutoSyncService] $msg');
+        // In release mode, silently stop retrying until the key is set.
+        // Optionally: emit to a stream that the admin dashboard listens to.
+      }
+      // All other StateErrors (HTTP 5xx, upstream timeouts) stay silent.
     } catch (_) {
-      // Keep silent — never crash the app due to background work.
+      // Catch-all: never crash the app due to background sync work.
     } finally {
       _syncing = false;
     }

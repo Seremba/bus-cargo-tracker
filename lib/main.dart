@@ -93,6 +93,11 @@ void main() async {
 
   await SyncService.ensureDeviceId();
 
+  // After:
+  await SyncService.setApiKey(
+    '32e7b586771b352adacb0d597fb22dcf7dd0676d60d9eeab9ccc72eefb041738',
+  );
+
   await AutoSyncService.instance.start();
 
   // F5: run TTL checks on every startup so expired/warned properties are

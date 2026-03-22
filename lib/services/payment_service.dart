@@ -134,7 +134,7 @@ class PaymentService {
         : rec.recordedByUserId;
 
     if (cleanKind == 'refund') {
-      await SyncService.enqueuePaymentRefunded(
+      await SyncService.enqueuePaymentVoided(
         paymentId: rec.paymentId,
         actorUserId: syncActor,
         aggregateVersion: fresh.aggregateVersion,

@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:http/http.dart' as http;
 import 'package:uuid/uuid.dart';
 
@@ -8,6 +10,7 @@ import '../models/sync_event.dart';
 import '../models/sync_event_type.dart';
 import '../models/sync_run_result.dart';
 import 'hive_service.dart';
+import 'auth_service.dart';
 import 'payment_service.dart';
 import 'property_item_service.dart';
 import 'property_service.dart';
@@ -19,37 +22,84 @@ class SyncService {
   static const String _eventsPullPath = '/events';
   static final _uuid = const Uuid();
 
+  // ── Settings keys ──────────────────────────────────────────────────────────
+
   static const String _cursorKey = 'lastSyncCursor';
   static const String _deviceIdKey = 'deviceId';
-
-  /// Phase 1: API key is stored in Hive appSettingsBox under this key.
-  /// Set once at app init (from build config / secure storage handoff).
   static const String _apiKeySettingsKey = 'syncApiKey';
 
-  /// Returns the sync API key stored in local settings, or empty string.
+  // Backoff ladder (seconds): 10s, 30s, 1m, 3m, 8m, 15m
+  static const List<int> _backoffSeconds = [10, 30, 60, 180, 480, 900];
+  static int _consecutiveFailures = 0;
+  static DateTime? _nextAllowedSyncAt;
+
+  /// Fires a non-blocking background sync after every enqueue() call.
+
+  static void _triggerBackgroundSync() {
+    // ignore: discarded_futures
+    Future.microtask(() async {
+      try {
+        await syncNow();
+      } catch (_) {
+        // Failures here are handled by the backoff ladder in syncNow().
+        // AutoSyncService ticker acts as the retry safety net.
+      }
+    });
+  }
+
   static String _getApiKey() {
     final box = HiveService.appSettingsBox();
     return (box.get(_apiKeySettingsKey) as String? ?? '').trim();
   }
 
-  /// Persists the sync API key to Hive settings.
-  /// Call this once during first-run / provisioning, not on every sync.
   static Future<void> setApiKey(String key) async {
     final box = HiveService.appSettingsBox();
     await box.put(_apiKeySettingsKey, key.trim());
   }
 
-  /// Whether an API key has been configured on this device.
   static bool hasApiKey() => _getApiKey().isNotEmpty;
 
-  /// Builds request headers for all Worker calls.
-  /// Includes Content-Type and the X-Api-Key auth header (Phase 1).
   static Map<String, String> _headers() {
     final key = _getApiKey();
     return {
       'Content-Type': 'application/json',
       if (key.isNotEmpty) 'X-Api-Key': key,
     };
+  }
+
+  /// Returns true if the device has any non-none connectivity.
+  /// Requires connectivity_plus: ^6.0.0 in pubspec.yaml.
+  static Future<bool> _isOnline() async {
+    try {
+      final results = await Connectivity().checkConnectivity();
+      return results.any((r) => r != ConnectivityResult.none);
+    } catch (_) {
+      // If the connectivity API misbehaves, assume online and let the
+      // HTTP call fail naturally.
+      return true;
+    }
+  }
+
+  static bool _isInBackoff() {
+    final next = _nextAllowedSyncAt;
+    if (next == null) return false;
+    return DateTime.now().isBefore(next);
+  }
+
+  static void _recordFailure() {
+    _consecutiveFailures += 1;
+    final index = (_consecutiveFailures - 1).clamp(
+      0,
+      _backoffSeconds.length - 1,
+    );
+    _nextAllowedSyncAt = DateTime.now().add(
+      Duration(seconds: _backoffSeconds[index]),
+    );
+  }
+
+  static void _recordSuccess() {
+    _consecutiveFailures = 0;
+    _nextAllowedSyncAt = null;
   }
 
   static String newEventId() => _uuid.v4();
@@ -77,9 +127,7 @@ class SyncService {
     final box = HiveService.appSettingsBox();
 
     final existing = (box.get(_deviceIdKey) as String?)?.trim();
-    if (existing != null && existing.isNotEmpty) {
-      return existing;
-    }
+    if (existing != null && existing.isNotEmpty) return existing;
 
     final random = Random.secure();
     final timestamp = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
@@ -89,7 +137,6 @@ class SyncService {
     ).join().toUpperCase();
 
     final deviceId = 'DEV-$timestamp-$entropy';
-
     await box.put(_deviceIdKey, deviceId);
     return deviceId;
   }
@@ -135,8 +182,16 @@ class SyncService {
     );
 
     await box.put(event.eventId, event);
+
+    // Phase 5: fire-and-forget sync immediately after every local write.
+    _triggerBackgroundSync();
+
     return event;
   }
+
+  // ── Typed enqueue helpers ──────────────────────────────────────────────────
+
+  // Property
 
   static Future<SyncEvent> enqueuePropertyCreated({
     required String propertyId,
@@ -154,131 +209,51 @@ class SyncService {
     );
   }
 
-  static Future<SyncEvent> enqueuePaymentRecorded({
-    required String paymentId,
-    required String actorUserId,
-    required Map<String, dynamic> payload,
-    int aggregateVersion = 1,
-  }) {
-    return enqueue(
-      type: SyncEventType.paymentRecorded,
-      aggregateType: 'payment',
-      aggregateId: paymentId,
-      actorUserId: actorUserId,
-      payload: payload,
-      aggregateVersion: aggregateVersion,
-    );
-  }
-
-  static Future<SyncEvent> enqueuePaymentRefunded({
-    required String paymentId,
-    required String actorUserId,
-    required int aggregateVersion,
-    required Map<String, dynamic> payload,
-  }) {
-    return enqueue(
-      type: SyncEventType.paymentRefunded,
-      aggregateType: 'payment',
-      aggregateId: paymentId,
-      actorUserId: actorUserId,
-      aggregateVersion: aggregateVersion,
-      payload: payload,
-    );
-  }
-
-  static Future<SyncEvent> enqueuePaymentAdjusted({
-    required String paymentId,
-    required String actorUserId,
-    required int aggregateVersion,
-    required Map<String, dynamic> payload,
-  }) {
-    return enqueue(
-      type: SyncEventType.paymentAdjusted,
-      aggregateType: 'payment',
-      aggregateId: paymentId,
-      actorUserId: actorUserId,
-      aggregateVersion: aggregateVersion,
-      payload: payload,
-    );
-  }
-
-  static Future<SyncEvent> enqueueTripStarted({
-    required String tripId,
-    required String actorUserId,
-    required Map<String, dynamic> payload,
-    int aggregateVersion = 1,
-  }) {
-    return enqueue(
-      type: SyncEventType.tripStarted,
-      aggregateType: 'trip',
-      aggregateId: tripId,
-      actorUserId: actorUserId,
-      payload: payload,
-      aggregateVersion: aggregateVersion,
-    );
-  }
-
-  static Future<SyncEvent> enqueueTripCheckpointReached({
-    required String tripId,
-    required String actorUserId,
-    required Map<String, dynamic> payload,
-    required int aggregateVersion,
-  }) {
-    return enqueue(
-      type: SyncEventType.tripCheckpointReached,
-      aggregateType: 'trip',
-      aggregateId: tripId,
-      actorUserId: actorUserId,
-      payload: payload,
-      aggregateVersion: aggregateVersion,
-    );
-  }
-
-  static Future<SyncEvent> enqueueTripEnded({
-    required String tripId,
-    required String actorUserId,
-    required Map<String, dynamic> payload,
-    required int aggregateVersion,
-  }) {
-    return enqueue(
-      type: SyncEventType.tripEnded,
-      aggregateType: 'trip',
-      aggregateId: tripId,
-      actorUserId: actorUserId,
-      payload: payload,
-      aggregateVersion: aggregateVersion,
-    );
-  }
-
-  static Future<SyncEvent> enqueueTripCancelled({
-    required String tripId,
-    required String actorUserId,
-    required Map<String, dynamic> payload,
-    required int aggregateVersion,
-  }) {
-    return enqueue(
-      type: SyncEventType.tripCancelled,
-      aggregateType: 'trip',
-      aggregateId: tripId,
-      actorUserId: actorUserId,
-      payload: payload,
-      aggregateVersion: aggregateVersion,
-    );
-  }
-
-  static Future<void> enqueueItemsLoadedPartial({
+  static Future<SyncEvent> enqueuePropertyCommitted({
     required String propertyId,
     required String actorUserId,
     required int aggregateVersion,
     required Map<String, dynamic> payload,
-  }) async {
-    await enqueue(
-      type: SyncEventType.itemsLoadedPartial,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyCommitted,
       aggregateType: 'property',
       aggregateId: propertyId,
       actorUserId: actorUserId,
-      aggregateVersion: aggregateVersion,
       payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyLoaded({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyLoaded,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePropertyStatusManuallyChanged({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.propertyStatusManuallyChanged,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
     );
   }
 
@@ -327,6 +302,185 @@ class SyncService {
       actorUserId: actorUserId,
       payload: payload,
       aggregateVersion: aggregateVersion,
+    );
+  }
+
+  // Payment
+
+  static Future<SyncEvent> enqueuePaymentRecorded({
+    required String paymentId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
+  }) {
+    return enqueue(
+      type: SyncEventType.paymentRecorded,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePaymentVoided({
+    required String paymentId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.paymentVoided,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePaymentAdjusted({
+    required String paymentId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.paymentAdjusted,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
+    );
+  }
+
+  static Future<SyncEvent> enqueueReceiptPrinted({
+    required String paymentId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.receiptPrinted,
+      aggregateType: 'payment',
+      aggregateId: paymentId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  // Pickup / security
+
+  static Future<SyncEvent> enqueuePickupOtpGenerated({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.pickupOtpGenerated,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePickupOtpReset({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.pickupOtpReset,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePickupConfirmed({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.pickupConfirmed,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePickupAttemptFailed({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.pickupAttemptFailed,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      // Observational — does not advance aggregateVersion
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueuePickupLockedOut({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.pickupLockedOut,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueQrNonceRotated({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.qrNonceRotated,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  // Items
+
+  static Future<void> enqueueItemsLoadedPartial({
+    required String propertyId,
+    required String actorUserId,
+    required int aggregateVersion,
+    required Map<String, dynamic> payload,
+  }) async {
+    await enqueue(
+      type: SyncEventType.itemsLoadedPartial,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      aggregateVersion: aggregateVersion,
+      payload: payload,
     );
   }
 
@@ -398,6 +552,153 @@ class SyncService {
     );
   }
 
+  // Trip
+
+  static Future<SyncEvent> enqueueTripStarted({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    int aggregateVersion = 1,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripStarted,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripCheckpointReached({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripCheckpointReached,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  /// Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted.
+  /// Update all call sites in trip_service.dart accordingly.
+  static Future<SyncEvent> enqueueTripCompleted({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripCompleted,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  static Future<SyncEvent> enqueueTripCancelled({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+    required int aggregateVersion,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripCancelled,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: aggregateVersion,
+    );
+  }
+
+  // Receiver / tracking
+
+  static Future<SyncEvent> enqueueTrackingCodeGenerated({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.trackingCodeGenerated,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueReceiverNotificationsEnabled({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.receiverNotificationsEnabled,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueReceiverNotificationQueued({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.receiverNotificationQueued,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueReceiverNotificationSent({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.receiverNotificationSent,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  static Future<SyncEvent> enqueueReceiverNotificationFailed({
+    required String propertyId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.receiverNotificationFailed,
+      aggregateType: 'property',
+      aggregateId: propertyId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
+  // Misc
+
   static Future<SyncEvent> enqueueExceptionLogged({
     required String aggregateType,
     required String aggregateId,
@@ -430,6 +731,8 @@ class SyncService {
     );
   }
 
+  // ── Read helpers ───────────────────────────────────────────────────────────
+
   static bool exists(String eventId) {
     final box = HiveService.syncEventBox();
     return box.containsKey(eventId.trim());
@@ -442,10 +745,11 @@ class SyncService {
 
   static List<SyncEvent> pendingPushEvents() {
     final box = HiveService.syncEventBox();
-
     return box.values.where((e) => e.pendingPush && !e.pushed).toList()
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
+
+  // ── State mutators ─────────────────────────────────────────────────────────
 
   static Future<void> markPushed(String eventId, {String? remoteCursor}) async {
     final event = getById(eventId);
@@ -483,18 +787,8 @@ class SyncService {
     await event.save();
   }
 
-  /// Applies a remote event to local Hive state.
-  ///
-  /// Phase 2 conflict guard: each aggregate-level apply method is already
-  /// responsible for checking `aggregateVersion` before mutating state
-  /// (pattern: `if (property.aggregateVersion >= incomingVersion) return`).
-  /// That guard is the single source of truth — we do not duplicate it here.
-  ///
-  /// What we add here is an event-level guard for events that carry a
-  /// version in their payload but whose apply handler does NOT yet check it
-  /// (e.g. exceptionLogged, adminOverrideApplied, item-level events).
-  /// For those we skip silently — they are audit / observational events
-  /// that carry no local state mutation requiring ordering protection.
+  // ── applyEvent ─────────────────────────────────────────────────────────────
+
   static Future<void> applyEvent(SyncEvent event) async {
     if (event.appliedLocally) return;
 
@@ -504,7 +798,7 @@ class SyncService {
         break;
 
       case SyncEventType.paymentRecorded:
-      case SyncEventType.paymentRefunded:
+      case SyncEventType.paymentVoided:
       case SyncEventType.paymentAdjusted:
         await PaymentService.applyPaymentRecordedFromSync(event);
         break;
@@ -514,10 +808,11 @@ class SyncService {
         break;
 
       case SyncEventType.tripCheckpointReached:
+      case SyncEventType.checkpointReached: // legacy alias — same handler
         await TripService.applyTripCheckpointReachedFromSync(event);
         break;
 
-      case SyncEventType.tripEnded:
+      case SyncEventType.tripCompleted:
         await TripService.applyTripEndedFromSync(event);
         break;
 
@@ -557,26 +852,128 @@ class SyncService {
         await PropertyItemService.applyPropertyItemPickedUpFromSync(event);
         break;
 
-      // Observational / audit-only events — no local state mutation needed.
+      // Observational / audit-only events — recorded for the remote event
+      // store but require no local Hive state mutation on other devices.
       case SyncEventType.exceptionLogged:
       case SyncEventType.adminOverrideApplied:
+      case SyncEventType.propertyCommitted:
+      case SyncEventType.propertyLoaded:
+      case SyncEventType.propertyStatusManuallyChanged:
+      case SyncEventType.receiptPrinted:
+      case SyncEventType.pickupOtpGenerated:
+      case SyncEventType.pickupOtpReset:
+      case SyncEventType.pickupConfirmed:
+      case SyncEventType.pickupAttemptFailed:
+      case SyncEventType.pickupLockedOut:
+      case SyncEventType.qrNonceRotated:
+      case SyncEventType.propertyItemCreated:
+      case SyncEventType.propertyItemDeferred:
+      case SyncEventType.tripCreated:
+      case SyncEventType.tripUpdated:
+      case SyncEventType.trackingCodeGenerated:
+      case SyncEventType.receiverNotificationsEnabled:
+      case SyncEventType.receiverNotificationQueued:
+      case SyncEventType.receiverNotificationSent:
+      case SyncEventType.receiverNotificationFailed:
+      case SyncEventType.userCreated:
+      case SyncEventType.userUpdated:
+        await AuthService.applyUserSyncEvent(event.payload);
         break;
 
-      default:
-        throw UnsupportedError(
-          'Sync event type not supported yet: ${event.type}',
-        );
+      case SyncEventType.senderNotifyRequested:
+      case SyncEventType.partialLoadNotifyRequested:
+      case SyncEventType.passwordResetOtpRequested:
+      case SyncEventType.pickupOtpVerified: // legacy
+      case SyncEventType.receiverNotifyRequested: // legacy
+        break;
     }
 
     await markAppliedLocally(event.eventId);
   }
 
+  // ── Phase 4: pruning ───────────────────────────────────────────────────────
+
+  /// Deletes stale local data to prevent Hive boxes growing indefinitely.
+  /// Called weekly from AutoSyncService.
+  static Future<PruneResult> pruneStaleData() async {
+    int syncEventsDeleted = 0;
+    int auditEventsDeleted = 0;
+    int outboundMessagesDeleted = 0;
+
+    final now = DateTime.now();
+
+    // SyncEvents
+    final syncBox = HiveService.syncEventBox();
+    final syncKeysToDelete = <dynamic>[];
+
+    for (final event in syncBox.values) {
+      final age = now.difference(event.createdAt);
+      final isComplete =
+          !event.pendingPush && event.pushed && event.appliedLocally;
+      if (isComplete && age.inDays >= 7) {
+        syncKeysToDelete.add(event.key);
+        continue;
+      }
+      final isFailed = event.pushAttempts > 0 && !event.pushed;
+      if (isFailed && age.inDays >= 30) {
+        syncKeysToDelete.add(event.key);
+      }
+    }
+
+    for (final key in syncKeysToDelete) {
+      await syncBox.delete(key);
+      syncEventsDeleted++;
+    }
+
+    // AuditEvents
+    final auditBox = HiveService.auditBox();
+    final auditKeysToDelete = <dynamic>[];
+
+    for (final entry in auditBox.values) {
+      if (now.difference(entry.at).inDays >= 30) {
+        auditKeysToDelete.add(entry.key);
+      }
+    }
+
+    for (final key in auditKeysToDelete) {
+      await auditBox.delete(key);
+      auditEventsDeleted++;
+    }
+
+    // OutboundMessages
+    final msgBox = HiveService.outboundMessageBox();
+    final msgKeysToDelete = <dynamic>[];
+
+    for (final msg in msgBox.values) {
+      final age = now.difference(msg.createdAt);
+      final status = msg.status.trim().toLowerCase();
+      if (status == 'sent' && age.inDays >= 3) {
+        msgKeysToDelete.add(msg.key);
+        continue;
+      }
+      if (status == 'failed' && age.inDays >= 7) {
+        msgKeysToDelete.add(msg.key);
+      }
+    }
+
+    for (final key in msgKeysToDelete) {
+      await msgBox.delete(key);
+      outboundMessagesDeleted++;
+    }
+
+    return PruneResult(
+      syncEventsDeleted: syncEventsDeleted,
+      auditEventsDeleted: auditEventsDeleted,
+      outboundMessagesDeleted: outboundMessagesDeleted,
+    );
+  }
+
+  // ── Push ───────────────────────────────────────────────────────────────────
+
   static Future<int> pushPendingEvents() async {
     final pending = pendingPushEvents();
     if (pending.isEmpty) return 0;
 
-    // Phase 1: abort push if no API key is configured.
-    // This prevents silently hitting a 401 on every sync.
     if (!hasApiKey()) {
       throw StateError(
         'Sync API key not configured. '
@@ -590,12 +987,9 @@ class SyncService {
       'events': pending.map((e) => e.toJson()).toList(),
     });
 
-    // Phase 1: _headers() injects X-Api-Key
     final response = await http.post(uri, headers: _headers(), body: body);
 
     if (response.statusCode == 401) {
-      // API key wrong / missing — do not mark events as failed, just surface
-      // the error so the caller can handle it without burning retry budget.
       throw StateError(
         'Sync push rejected: invalid API key (HTTP 401). '
         'Check syncApiKey in app settings.',
@@ -617,18 +1011,17 @@ class SyncService {
         (decoded['acceptedEventIds'] as List?)?.cast<dynamic>() ?? const [];
 
     int pushedCount = 0;
-
     for (final rawId in accepted) {
-      final eventId = rawId.toString();
-      await markPushed(eventId);
-      pushedCount += 1;
+      await markPushed(rawId.toString());
+      pushedCount++;
     }
 
     return pushedCount;
   }
 
+  // ── Pull ───────────────────────────────────────────────────────────────────
+
   static Future<Map<String, int>> pullRemoteEvents() async {
-    // Phase 1: abort pull if no API key is configured.
     if (!hasApiKey()) {
       throw StateError(
         'Sync API key not configured. '
@@ -644,7 +1037,6 @@ class SyncService {
           : '$_baseUrl$_eventsPullPath?after=$after',
     );
 
-    // Phase 1: _headers() injects X-Api-Key
     final response = await http.get(uri, headers: _headers());
 
     if (response.statusCode == 401) {
@@ -666,13 +1058,11 @@ class SyncService {
     int failed = 0;
 
     for (final raw in rawEvents) {
-      pulled += 1;
-
+      pulled++;
       try {
         final event = SyncEvent.fromJson(Map<String, dynamic>.from(raw as Map));
 
         if (await isThisDeviceEvent(event)) {
-          // This device originated the event — mark self-echo as applied.
           final existingSelf = getById(event.eventId);
           if (existingSelf != null && !existingSelf.appliedLocally) {
             await markAppliedLocally(existingSelf.eventId);
@@ -685,18 +1075,16 @@ class SyncService {
         if (existing != null) {
           if (!existing.appliedLocally) {
             await applyEvent(existing);
-            applied += 1;
+            applied++;
           }
           continue;
         }
 
-        // Phase 2: SyncEvent.fromJson already reads aggregateVersion from
-        // the JSON. The apply handlers enforce the version guard internally.
         await HiveService.syncEventBox().put(event.eventId, event);
         await applyEvent(event);
-        applied += 1;
+        applied++;
       } catch (_) {
-        failed += 1;
+        failed++;
       }
     }
 
@@ -708,19 +1096,33 @@ class SyncService {
     return {'pulled': pulled, 'applied': applied, 'failed': failed};
   }
 
+  // ── syncNow (Phase 5: connectivity + backoff guards) ──────────────────────
+
   static Future<SyncRunResult> syncNow() async {
+    if (_isInBackoff()) {
+      return SyncRunResult(pushed: 0, pulled: 0, applied: 0, failed: 0);
+    }
+
+    if (!await _isOnline()) {
+      return SyncRunResult(pushed: 0, pulled: 0, applied: 0, failed: 0);
+    }
+
     int pushed = 0;
     int pulled = 0;
     int applied = 0;
     int failed = 0;
 
-    pushed = await pushPendingEvents();
-
-    final pull = await pullRemoteEvents();
-
-    pulled = pull['pulled'] ?? 0;
-    applied = pull['applied'] ?? 0;
-    failed = pull['failed'] ?? 0;
+    try {
+      pushed = await pushPendingEvents();
+      final pull = await pullRemoteEvents();
+      pulled = pull['pulled'] ?? 0;
+      applied = pull['applied'] ?? 0;
+      failed = pull['failed'] ?? 0;
+      _recordSuccess();
+    } catch (_) {
+      _recordFailure();
+      rethrow;
+    }
 
     return SyncRunResult(
       pushed: pushed,
@@ -729,4 +1131,27 @@ class SyncService {
       failed: failed,
     );
   }
+}
+
+// ── PruneResult ────────────────────────────────────────────────────────────────
+
+class PruneResult {
+  final int syncEventsDeleted;
+  final int auditEventsDeleted;
+  final int outboundMessagesDeleted;
+
+  const PruneResult({
+    required this.syncEventsDeleted,
+    required this.auditEventsDeleted,
+    required this.outboundMessagesDeleted,
+  });
+
+  int get totalDeleted =>
+      syncEventsDeleted + auditEventsDeleted + outboundMessagesDeleted;
+
+  @override
+  String toString() =>
+      'PruneResult(syncEvents: $syncEventsDeleted, '
+      'auditEvents: $auditEventsDeleted, '
+      'outboundMessages: $outboundMessagesDeleted)';
 }

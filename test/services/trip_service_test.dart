@@ -133,7 +133,8 @@ void main() {
   }) {
     return SyncEvent(
       eventId: 'evt-ended-$tripId-$aggregateVersion',
-      type: SyncEventType.tripEnded,
+      // Phase 3: tripEnded renamed to tripCompleted
+      type: SyncEventType.tripCompleted,
       aggregateType: 'trip',
       aggregateId: tripId,
       actorUserId: 'driver-remote',

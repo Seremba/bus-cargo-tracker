@@ -1,5 +1,6 @@
 import 'package:bus_cargo_tracker/models/at_settings.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -93,14 +94,24 @@ void main() async {
 
   await SyncService.ensureDeviceId();
 
-  // After:
-  await SyncService.setApiKey(
-    '32e7b586771b352adacb0d597fb22dcf7dd0676d60d9eeab9ccc72eefb041738',
-  );
+  const injectedKey = String.fromEnvironment('SYNC_API_KEY', defaultValue: '');
+  if (injectedKey.isNotEmpty) {
+    await SyncService.setApiKey(injectedKey);
+  }
+  // If injectedKey is empty, SyncService uses whatever key is already
+  // stored in Hive from the last time --dart-define was passed.
 
   await AutoSyncService.instance.start();
 
-  // F5: run TTL checks on every startup so expired/warned properties are
+  // This catches up events that were queued while the device was offline
+  // without waiting for the next 5-minute ticker tick.
+  Connectivity().onConnectivityChanged.listen((results) {
+    final isOnline = results.any((r) => r != ConnectivityResult.none);
+    if (isOnline) {
+      AutoSyncService.instance.triggerNow();
+    }
+  });
+
   // caught even if the app was closed for several days.
   // This is safe to call before the user logs in — it only reads/writes
   // Hive boxes, which are already open.

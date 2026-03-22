@@ -4,6 +4,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../models/notification_item.dart';
 import '../../models/outbound_message.dart';
 import '../../models/property_status.dart';
+import '../../models/sync_event.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../models/user.dart';
@@ -561,22 +562,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   ],
                 ),
 
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
 
-                // Last synced strip
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 12),
-                  child: Row(
-                    children: [
-                      Icon(Icons.sync, size: 13, color: muted),
-                      const SizedBox(width: 6),
-                      Text(
-                        _fmtSynced(_lastSynced),
-                        style: TextStyle(fontSize: 12, color: muted),
-                      ),
-                    ],
-                  ),
+                // ── Phase 6: Sync status strip (replaces plain last-synced text) ──
+                _SyncStatusStrip(
+                  lastSynced: _lastSynced,
+                  syncing: _syncing,
+                  onSyncTap: _runSync,
                 ),
+
+                const SizedBox(height: 14),
 
                 // ── Action sections ────────────────────────────────────
                 sectionCard(
@@ -1000,6 +995,144 @@ class _AdminDashboardState extends State<AdminDashboard> {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ── Phase 6: Sync status strip ─────────────────────────────────────────────
+//
+// Replaces the plain "Last synced: ..." text with a reactive strip that
+// shows pending + failed counts from the live Hive sync event box.
+// Stays compact — single row, no card chrome — so it doesn't compete
+// with the KPI section above it.
+
+class _SyncStatusStrip extends StatelessWidget {
+  final DateTime? lastSynced;
+  final bool syncing;
+  final VoidCallback onSyncTap;
+
+  const _SyncStatusStrip({
+    required this.lastSynced,
+    required this.syncing,
+    required this.onSyncTap,
+  });
+
+  String _fmtRelative(DateTime? d) {
+    if (d == null) return 'Not synced yet';
+    final diff = DateTime.now().difference(d);
+    if (diff.inSeconds < 60) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '${diff.inHours}h ago';
+    return '${diff.inDays}d ago';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.55);
+
+    return ValueListenableBuilder<Box<SyncEvent>>(
+      valueListenable: HiveService.syncEventBox().listenable(),
+      builder: (context, box, _) {
+        final events = box.values.toList();
+        final pendingCount =
+            events.where((e) => e.pendingPush && !e.pushed).length;
+        final failedCount =
+            events.where((e) => e.pushAttempts > 0 && !e.pushed).length;
+
+        final hasFailures = failedCount > 0;
+        final hasPending = pendingCount > 0;
+
+        final statusColor = hasFailures
+            ? Colors.red.shade600
+            : hasPending
+            ? Colors.amber.shade700
+            : Colors.green.shade600;
+
+        final statusIcon = hasFailures
+            ? Icons.sync_problem_outlined
+            : hasPending
+            ? Icons.sync_outlined
+            : Icons.check_circle_outline;
+
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: 0.06),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: statusColor.withValues(alpha: 0.20),
+            ),
+          ),
+          child: Row(
+            children: [
+              Icon(statusIcon, size: 14, color: statusColor),
+              const SizedBox(width: 7),
+              Expanded(
+                child: Wrap(
+                  spacing: 10,
+                  children: [
+                    Text(
+                      _fmtRelative(lastSynced),
+                      style: TextStyle(fontSize: 12, color: muted),
+                    ),
+                    if (hasPending)
+                      Text(
+                        '$pendingCount pending',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.amber.shade700,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    if (hasFailures)
+                      Text(
+                        '$failedCount failed — will retry',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.red.shade600,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              GestureDetector(
+                onTap: syncing ? null : onSyncTap,
+                child: AnimatedOpacity(
+                  opacity: syncing ? 0.4 : 1.0,
+                  duration: const Duration(milliseconds: 200),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      syncing
+                          ? SizedBox(
+                              width: 12,
+                              height: 12,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 1.5,
+                                color: cs.primary,
+                              ),
+                            )
+                          : Icon(Icons.sync, size: 13, color: cs.primary),
+                      const SizedBox(width: 3),
+                      Text(
+                        syncing ? 'Syncing…' : 'Sync now',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.primary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

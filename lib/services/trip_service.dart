@@ -140,9 +140,7 @@ class TripService {
     final box = tripBox();
 
     final tripId = (payload['tripId'] ?? '').toString().trim();
-    if (tripId.isEmpty) {
-      return;
-    }
+    if (tripId.isEmpty) return;
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
@@ -221,9 +219,7 @@ class TripService {
 
     final startedAtRaw = (payload['startedAt'] ?? '').toString().trim();
     final startedAt = DateTime.tryParse(startedAtRaw);
-    if (startedAt == null) {
-      return;
-    }
+    if (startedAt == null) return;
 
     final trip = Trip(
       tripId: tripId,
@@ -251,9 +247,7 @@ class TripService {
   ) async {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
-    if (tripId.isEmpty) {
-      return;
-    }
+    if (tripId.isEmpty) return;
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
@@ -262,15 +256,11 @@ class TripService {
     final checkpointIndexRaw = payload['checkpointIndex'];
     final reachedAtRaw = (payload['reachedAt'] ?? '').toString().trim();
 
-    if (checkpointIndexRaw == null || reachedAtRaw.isEmpty) {
-      return;
-    }
+    if (checkpointIndexRaw == null || reachedAtRaw.isEmpty) return;
 
     final checkpointIndex = (checkpointIndexRaw as num).toInt();
     final reachedAt = DateTime.tryParse(reachedAtRaw);
-    if (reachedAt == null) {
-      return;
-    }
+    if (reachedAt == null) return;
 
     final box = tripBox();
     Trip? trip;
@@ -282,22 +272,15 @@ class TripService {
       }
     }
 
-    if (trip == null) {
-      return;
-    }
-
-    if (trip.aggregateVersion >= incomingVersion) {
-      return;
-    }
+    if (trip == null) return;
+    if (trip.aggregateVersion >= incomingVersion) return;
 
     if (checkpointIndex < 0 || checkpointIndex >= trip.checkpoints.length) {
       return;
     }
 
     // Never allow replay to move checkpoint progress backward or sideways.
-    if (checkpointIndex <= trip.lastCheckpointIndex) {
-      return;
-    }
+    if (checkpointIndex <= trip.lastCheckpointIndex) return;
 
     trip.checkpoints[checkpointIndex].reachedAt = reachedAt;
     trip.lastCheckpointIndex = checkpointIndex;
@@ -311,9 +294,7 @@ class TripService {
   static Future<void> applyTripEndedFromSync(SyncEvent event) async {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
-    if (tripId.isEmpty) {
-      return;
-    }
+    if (tripId.isEmpty) return;
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
@@ -329,19 +310,12 @@ class TripService {
       }
     }
 
-    if (trip == null) {
-      return;
-    }
-
-    if (trip.aggregateVersion >= incomingVersion) {
-      return;
-    }
+    if (trip == null) return;
+    if (trip.aggregateVersion >= incomingVersion) return;
 
     final endedAtRaw = (payload['endedAt'] ?? '').toString().trim();
     final endedAt = DateTime.tryParse(endedAtRaw);
-    if (endedAt == null) {
-      return;
-    }
+    if (endedAt == null) return;
 
     trip.status = TripStatus.ended;
     trip.endedAt = endedAt;
@@ -353,9 +327,7 @@ class TripService {
   static Future<void> applyTripCancelledFromSync(SyncEvent event) async {
     final payload = event.payload;
     final tripId = (payload['tripId'] ?? '').toString().trim();
-    if (tripId.isEmpty) {
-      return;
-    }
+    if (tripId.isEmpty) return;
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
@@ -371,19 +343,12 @@ class TripService {
       }
     }
 
-    if (trip == null) {
-      return;
-    }
-
-    if (trip.aggregateVersion >= incomingVersion) {
-      return;
-    }
+    if (trip == null) return;
+    if (trip.aggregateVersion >= incomingVersion) return;
 
     final endedAtRaw = (payload['endedAt'] ?? '').toString().trim();
     final endedAt = DateTime.tryParse(endedAtRaw);
-    if (endedAt == null) {
-      return;
-    }
+    if (endedAt == null) return;
 
     trip.status = TripStatus.cancelled;
     trip.endedAt = endedAt;
@@ -440,9 +405,7 @@ class TripService {
 
       if (currentTrip.lastGpsAt != null) {
         final dt = DateTime.now().difference(currentTrip.lastGpsAt!).inSeconds;
-        if (dt >= 0 && dt < _minSecondsBetweenSamples) {
-          return false;
-        }
+        if (dt >= 0 && dt < _minSecondsBetweenSamples) return false;
       }
 
       if (!_acceptSample(currentTrip, lat: lat, lng: lng)) {
@@ -468,11 +431,8 @@ class TripService {
       final acc = (accuracyMeters ?? 0).isNaN ? 0.0 : (accuracyMeters ?? 0);
 
       final enterRadius = nextCp.radiusMeters + acc;
-      final exitRadius = nextCp.radiusMeters + _exitPaddingMeters + acc;
 
       final insideNow = dist <= enterRadius;
-      final outsideNow = dist >= exitRadius;
-
       final isCandidateForThis =
           currentTrip.candidateCheckpointIndex == nextIndex;
 
@@ -561,9 +521,7 @@ class TripService {
     if (dt <= 0) return true;
 
     final d = GeoService.distanceMeters(prevLat, prevLng, lat, lng);
-    if (dt < 5 && d > 1000) {
-      return false;
-    }
+    if (dt < 5 && d > 1000) return false;
 
     return true;
   }
@@ -583,7 +541,6 @@ class TripService {
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
-
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {
@@ -605,7 +562,8 @@ class TripService {
     trip.aggregateVersion += 1;
     await trip.save();
 
-    await SyncService.enqueueTripEnded(
+    // Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted
+    await SyncService.enqueueTripCompleted(
       tripId: trip.tripId,
       actorUserId: trip.driverUserId,
       aggregateVersion: trip.aggregateVersion,
@@ -629,7 +587,8 @@ class TripService {
     trip.aggregateVersion += 1;
     await trip.save();
 
-    await SyncService.enqueueTripEnded(
+    // Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted
+    await SyncService.enqueueTripCompleted(
       tripId: trip.tripId,
       actorUserId: trip.driverUserId,
       aggregateVersion: trip.aggregateVersion,
@@ -656,7 +615,6 @@ class TripService {
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
-
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {
@@ -709,7 +667,6 @@ class TripService {
 
     final pBox = HiveService.propertyBox();
     final cargoOnTrip = pBox.values.where((p) => p.tripId == trip.tripId);
-
     final senderIds = cargoOnTrip.map((p) => p.createdByUserId).toSet();
 
     for (final senderId in senderIds) {

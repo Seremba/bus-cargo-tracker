@@ -704,6 +704,42 @@ class PropertyService {
             'QR nonce rotated.',
       );
 
+      // Phase 3: record failed attempt in remote event store
+      await SyncService.enqueuePickupAttemptFailed(
+        propertyId: fresh.propertyCode.trim(),
+        actorUserId: (Session.currentUserId ?? '').trim(),
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'attemptNumber': fresh.otpAttempts,
+          'maxAttempts': _maxOtpAttempts,
+          'attemptAt': DateTime.now().toIso8601String(),
+        },
+      );
+
+      // Phase 3: record lockout if threshold was just reached
+      if (fresh.otpAttempts >= _maxOtpAttempts) {
+        await SyncService.enqueuePickupLockedOut(
+          propertyId: fresh.propertyCode.trim(),
+          actorUserId: (Session.currentUserId ?? '').trim(),
+          payload: {
+            'propertyCode': fresh.propertyCode,
+            'lockedUntil': fresh.otpLockedUntil?.toIso8601String() ?? '',
+            'lockedAt': DateTime.now().toIso8601String(),
+          },
+        );
+      }
+
+      // Phase 3: record QR nonce rotation
+      await SyncService.enqueueQrNonceRotated(
+        propertyId: fresh.propertyCode.trim(),
+        actorUserId: (Session.currentUserId ?? '').trim(),
+        payload: {
+          'propertyCode': fresh.propertyCode,
+          'rotatedAt': DateTime.now().toIso8601String(),
+          'reason': 'failed_otp_attempt',
+        },
+      );
+
       return PickupResult.otpWrong;
     }
 
@@ -773,6 +809,20 @@ class PropertyService {
         'propertyCode': refreshed.propertyCode,
         'pickedUpAt': now.toIso8601String(),
         'aggregateVersion': refreshed.aggregateVersion,
+      },
+    );
+
+    // Phase 3: record successful pickup confirmation in remote event store
+    await SyncService.enqueuePickupConfirmed(
+      propertyId: refreshed.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim().isEmpty
+          ? refreshed.createdByUserId
+          : (Session.currentUserId ?? '').trim(),
+      aggregateVersion: refreshed.aggregateVersion,
+      payload: {
+        'propertyCode': refreshed.propertyCode,
+        'confirmedAt': now.toIso8601String(),
+        'confirmedByUserId': (Session.currentUserId ?? '').trim(),
       },
     );
 
@@ -919,8 +969,22 @@ class PropertyService {
     fresh.qrIssuedAt = DateTime.now();
     fresh.qrNonce = _newNonce();
     fresh.qrConsumedAt = null;
+    fresh.aggregateVersion += 1; // Phase 3: version bump on OTP reset
 
     await fresh.save();
+
+    // Phase 3: record OTP reset in remote event store
+    await SyncService.enqueuePickupOtpReset(
+      propertyId: fresh.propertyCode.trim(),
+      actorUserId: (Session.currentUserId ?? '').trim(),
+      aggregateVersion: fresh.aggregateVersion,
+      payload: {
+        'propertyCode': fresh.propertyCode,
+        'resetAt': DateTime.now().toIso8601String(),
+        'resetByUserId': (Session.currentUserId ?? '').trim(),
+        'aggregateVersion': fresh.aggregateVersion,
+      },
+    );
 
     await _safeSendOtpIfSms(fresh: fresh, otp: otp);
 
@@ -1021,24 +1085,12 @@ class PropertyService {
     return true;
   }
 
-  // ── Re-review flow ──────────────────────────────────────────────────────
-  // Sender requests a review. Status moves to underReview — NOT pending.
-  // Admin must approve (→ pending) or deny (→ rejected) before anything
-  // can proceed at the desk.
-
-  /// Sender taps "Request Re-Review" on a rejected property.
-  /// Sets status to [PropertyStatus.underReview] and notifies admin.
-  /// Does NOT restore to pending — that is admin's decision only.
-  /// Sender submits edited property for re-review after making changes.
-  /// [changeSummary] is a human-readable summary of what changed, shown to admin.
-  /// Should only be called after the sender has saved edits via EditRejectedPropertyScreen.
   static Future<bool> requestReReview(
     Property p, {
     String changeSummary = '',
   }) async {
     final fresh = HiveService.propertyBox().get(p.key) ?? p;
 
-    // Only callable from rejected
     if (fresh.status != PropertyStatus.rejected) return false;
 
     final currentUserId = (Session.currentUserId ?? '').trim();
@@ -1087,8 +1139,6 @@ class PropertyService {
     return true;
   }
 
-  /// Admin approves the re-review: resets items and restores property to pending.
-  /// Accepts both [PropertyStatus.rejected] and [PropertyStatus.underReview].
   static Future<bool> adminRestoreRejected(Property p) async {
     if (!RoleGuard.hasRoleVerified(UserRole.admin)) return false;
 
@@ -1099,8 +1149,6 @@ class PropertyService {
       return false;
     }
 
-    // Reset all items that haven't completed the full journey back to pending
-    // so the desk officer can re-select and re-load them.
     final itemBox = HiveService.propertyItemBox();
     final itemSvc = PropertyItemService(itemBox);
 
@@ -1187,7 +1235,6 @@ class PropertyService {
     return true;
   }
 
-  /// Admin denies the re-review: sets status back to rejected, notifies sender.
   static Future<bool> adminDenyReReview(Property p, {String note = ''}) async {
     if (!RoleGuard.hasRoleVerified(UserRole.admin)) return false;
 
@@ -1232,7 +1279,6 @@ class PropertyService {
     return true;
   }
 
-  // ── F5 + adminSetStatus ─────────────────────────────────────────────────
   static Future<void> adminSetStatus(
     Property p,
     PropertyStatus newStatus,
@@ -1259,14 +1305,12 @@ class PropertyService {
 
     final fromStatus = fresh.status.name;
 
-    // F5: expired → pending via PropertyTtlService
     if (fresh.status == PropertyStatus.expired &&
         newStatus == PropertyStatus.pending) {
       await PropertyTtlService.adminRestoreExpired(fresh);
       return;
     }
 
-    // Guard: expired transitions only via PropertyTtlService
     if (fresh.status == PropertyStatus.expired ||
         newStatus == PropertyStatus.expired) {
       await AuditService.log(
@@ -1279,7 +1323,6 @@ class PropertyService {
       return;
     }
 
-    // underReview: approve (→ pending) or deny (→ rejected) via dedicated methods
     if (fresh.status == PropertyStatus.underReview ||
         newStatus == PropertyStatus.underReview) {
       await AuditService.log(
@@ -1423,7 +1466,6 @@ class PropertyService {
       return;
     }
 
-    // Restore rejected → pending (direct, no re-review flow)
     if (newStatus == PropertyStatus.pending &&
         fresh.status == PropertyStatus.rejected) {
       await adminRestoreRejected(fresh);

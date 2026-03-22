@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:math';
+import 'package:bus_cargo_tracker/models/sync_event_type.dart';
 import 'package:crypto/crypto.dart';
 
 import '../models/user.dart';
@@ -7,16 +8,14 @@ import '../models/user_role.dart';
 import 'hive_service.dart';
 import 'phone_normalizer.dart';
 import 'role_guard.dart';
+import 'sync_service.dart';
 
 class AuthService {
   //
   // 100,000 rounds makes brute-force ~100,000x more expensive than plain
   // SHA-256 while adding only ~15 ms on a low-end Android device at login.
-  // A full PBKDF2/bcrypt/argon2 implementation is ideal for a future
-  // upgrade (Session 10), but this requires zero new dependencies and is a
-  // substantial improvement over the previous single-round SHA-256.
   //
-  // The salt is a 16-byte hex string stored on the User model (field 10).
+  // Salt is a 16-byte hex string stored on the User model (field 10).
   // Format stored in passwordHash: "v2:<base64(hash)>"
   // Legacy hashes (no prefix) are detected and migrated on next login.
 
@@ -31,8 +30,6 @@ class AuthService {
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  /// Hash a password with a known salt (used at account creation and
-  /// on login after migration).
   static String _hashWithSalt(String password, String salt) {
     List<int> bytes = utf8.encode('$salt:${password.trim()}');
     for (int i = 0; i < _hashRounds; i++) {
@@ -41,20 +38,11 @@ class AuthService {
     return '$_hashVersion:${base64.encode(bytes)}';
   }
 
-  /// Legacy single-round unsalted hash — used only for migration detection.
   static String _legacyHash(String password) {
     final bytes = utf8.encode(password.trim());
     return sha256.convert(bytes).toString();
   }
 
-  /// Public helper kept for any call sites that previously used
-  /// hashPassword(). Now generates a salt internally and returns the
-  /// salted hash. Prefer _hashWithSalt() internally where a salt is
-  /// already available.
-  ///
-  /// NOTE: This overload cannot be used for verification because the salt
-  /// is generated fresh each call. Use login() / adminResetPassword() for
-  /// all verification and re-hash flows.
   static ({String hash, String salt}) hashPasswordWithSalt(String password) {
     final salt = _generateSalt();
     return (hash: _hashWithSalt(password, salt), salt: salt);
@@ -68,14 +56,32 @@ class AuthService {
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
-  //  Public helpers
+  // ── Sync payload helper ────────────────────────────────────────────────────
+
+  /// Builds the sync payload for a user. Intentionally excludes
+  /// passwordHash and passwordSalt — credentials never leave the device.
+  static Map<String, dynamic> _userSyncPayload(User user) {
+    return {
+      'userId': user.id,
+      'fullName': user.fullName,
+      'phone': user.phone,
+      'role': user.role.name,
+      'stationName': user.stationName ?? '',
+      'assignedRouteId': user.assignedRouteId ?? '',
+      'assignedRouteName': user.assignedRouteName ?? '',
+      'phoneVerified': user.phoneVerified,
+      'createdAt': user.createdAt.toIso8601String(),
+    };
+  }
+
+  // ── Public helpers ─────────────────────────────────────────────────────────
 
   static User? getUserById(String id) {
     final box = HiveService.userBox();
     return box.get(id);
   }
 
-  //  Seed admin
+  // ── Seed admin ─────────────────────────────────────────────────────────────
 
   static Future<void> seedAdminIfMissing({
     required String phone,
@@ -114,14 +120,28 @@ class AuthService {
       createdAt: DateTime.now(),
       assignedRouteId: null,
       assignedRouteName: null,
-      // Admin is created by a human with a known phone — treat as verified
       phoneVerified: true,
     );
 
     await box.put(id, admin);
+
+    // Phase 6: sync seeded admin so other devices know this user exists.
+    // Credentials are never included in the payload.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userCreated,
+        aggregateType: 'user',
+        aggregateId: admin.id,
+        actorUserId: admin.id,
+        payload: _userSyncPayload(admin),
+        aggregateVersion: 1,
+      );
+    } catch (_) {
+      // Local-first: user exists locally even if sync queueing fails.
+    }
   }
 
-  //  Role helpers
+  // ── Role helpers ───────────────────────────────────────────────────────────
 
   static bool _requiresStation(UserRole role) {
     return role == UserRole.staff || role == UserRole.deskCargoOfficer;
@@ -131,7 +151,7 @@ class AuthService {
     return role == UserRole.driver;
   }
 
-  //  Register sender
+  // ── Register sender ────────────────────────────────────────────────────────
 
   static Future<User?> registerSender({
     required String fullName,
@@ -148,12 +168,11 @@ class AuthService {
       assignedRouteName: null,
       requireAdminForNonSender: false,
       allowAdminCreation: false,
-      // S3: sender phone unverified until OTP flow (Session 8)
       phoneVerified: false,
     );
   }
 
-  //  Admin create user
+  // ── Admin create user ──────────────────────────────────────────────────────
 
   static Future<User?> adminCreateUser({
     required String fullName,
@@ -177,12 +196,11 @@ class AuthService {
       assignedRouteName: assignedRouteName,
       requireAdminForNonSender: false,
       allowAdminCreation: false,
-      // Admin has verified the phone out-of-band — mark verified
       phoneVerified: true,
     );
   }
 
-  //  Core register
+  // ── Core register ──────────────────────────────────────────────────────────
 
   static Future<User?> register({
     required String fullName,
@@ -255,30 +273,38 @@ class AuthService {
     );
 
     await box.put(id, user);
+
+    // Phase 6: sync new user so other devices can authenticate them.
+    // Credentials (passwordHash, passwordSalt) are never included.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userCreated,
+        aggregateType: 'user',
+        aggregateId: user.id,
+        actorUserId: user.id,
+        payload: _userSyncPayload(user),
+        aggregateVersion: 1,
+      );
+    } catch (_) {
+      // Local-first: user exists locally even if sync queueing fails.
+    }
+
     return user;
   }
 
-  //  Login — with legacy hash migration
+  // ── Login — with legacy hash migration ────────────────────────────────────
 
-  /// Verifies a password against the stored hash.
-  /// Handles two cases:
-  ///   • New accounts: stored hash starts with "v2:" — use salted path.
-  ///   • Legacy accounts: stored hash has no prefix — use old SHA-256,
-  ///     then silently migrate to salted hash on success.
   static Future<bool> _verifyAndMigrate(User user, String password) async {
     final stored = user.passwordHash;
 
     if (stored.startsWith('$_hashVersion:')) {
-      // New salted hash — straightforward comparison
       final salt = user.passwordSalt ?? '';
       if (salt.isEmpty) return false;
       return _hashWithSalt(password, salt) == stored;
     }
 
-    // Legacy unsalted SHA-256 — check then migrate
     if (_legacyHash(password) != stored) return false;
 
-    // Correct password — migrate to salted hash in place
     final salt = _generateSalt();
     final newHash = _hashWithSalt(password, salt);
 
@@ -347,7 +373,7 @@ class AuthService {
     }
   }
 
-  //  Admin password reset
+  // ── Admin password reset ───────────────────────────────────────────────────
 
   static Future<bool> adminResetPassword({
     required String userId,
@@ -377,10 +403,25 @@ class AuthService {
     );
 
     await box.put(userId, updated);
+
+    // Phase 6: sync the profile update (credentials excluded).
+    // Password hash is intentionally not included — each device keeps
+    // its own credentials. This event only updates profile metadata.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userUpdated,
+        aggregateType: 'user',
+        aggregateId: updated.id,
+        actorUserId: updated.id,
+        payload: _userSyncPayload(updated),
+        aggregateVersion: 2,
+      );
+    } catch (_) {}
+
     return true;
   }
 
-  //  Admin update station
+  // ── Admin update station ───────────────────────────────────────────────────
 
   static Future<bool> adminUpdateUserStation({
     required String userId,
@@ -415,10 +456,23 @@ class AuthService {
     );
 
     await box.put(userId, updated);
+
+    // Phase 6: sync station update so other devices reflect the new assignment.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userUpdated,
+        aggregateType: 'user',
+        aggregateId: updated.id,
+        actorUserId: updated.id,
+        payload: _userSyncPayload(updated),
+        aggregateVersion: 2,
+      );
+    } catch (_) {}
+
     return true;
   }
 
-  //  Admin update driver route
+  // ── Admin update driver route ──────────────────────────────────────────────
 
   static Future<bool> adminUpdateDriverAssignedRoute({
     required String userId,
@@ -455,11 +509,24 @@ class AuthService {
     );
 
     await box.put(userId, updated);
+
+    // Phase 6: sync route assignment so driver's new route is visible
+    // on all devices immediately.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userUpdated,
+        aggregateType: 'user',
+        aggregateId: updated.id,
+        actorUserId: updated.id,
+        payload: _userSyncPayload(updated),
+        aggregateVersion: 2,
+      );
+    } catch (_) {}
+
     return true;
   }
 
-  //  S3 groundwork — mark phone verified
-  //  Called by the OTP verification screen in Session 8.
+  // ── S3 groundwork — mark phone verified ───────────────────────────────────
 
   static Future<void> markPhoneVerified(String userId) async {
     final box = HiveService.userBox();
@@ -483,5 +550,104 @@ class AuthService {
     );
 
     await box.put(userId, updated);
+
+    // Phase 6: sync phone verification status.
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userUpdated,
+        aggregateType: 'user',
+        aggregateId: updated.id,
+        actorUserId: updated.id,
+        payload: _userSyncPayload(updated),
+        aggregateVersion: 2,
+      );
+    } catch (_) {}
+  }
+
+  // ── Phase 6: apply user sync from remote device ───────────────────────────
+
+  /// Applies a UserCreated or UserUpdated event received from another device.
+  ///
+  /// Security rules:
+  ///   • Passwords are NEVER synced — each device keeps its own credentials.
+  ///   • A remote event can create a user shell (name, phone, role) but
+  ///     cannot overwrite a locally-set password.
+  ///   • If the user already exists locally with a password, only profile
+  ///     metadata (station, route, phoneVerified) is updated.
+  static Future<void> applyUserSyncEvent(
+    Map<String, dynamic> payload,
+  ) async {
+    final box = HiveService.userBox();
+
+    final userId = (payload['userId'] ?? '').toString().trim();
+    if (userId.isEmpty) return;
+
+    final fullName = (payload['fullName'] ?? '').toString().trim();
+    final phone = (payload['phone'] ?? '').toString().trim();
+    final roleRaw = (payload['role'] ?? '').toString().trim();
+    final stationName = (payload['stationName'] ?? '').toString().trim();
+    final assignedRouteId =
+        (payload['assignedRouteId'] ?? '').toString().trim();
+    final assignedRouteName =
+        (payload['assignedRouteName'] ?? '').toString().trim();
+    final phoneVerified = (payload['phoneVerified'] as bool?) ?? false;
+    final createdAtRaw = (payload['createdAt'] ?? '').toString().trim();
+
+    if (fullName.isEmpty || phone.isEmpty || roleRaw.isEmpty) return;
+
+    UserRole role;
+    try {
+      role = UserRole.values.byName(roleRaw);
+    } catch (_) {
+      return; // unknown role — ignore
+    }
+
+    final existing = box.get(userId);
+
+    if (existing != null) {
+      // User exists locally — only update profile metadata, never credentials.
+      final updated = User(
+        id: existing.id,
+        fullName: fullName,
+        phone: phone,
+        passwordHash: existing.passwordHash, // never overwrite
+        passwordSalt: existing.passwordSalt, // never overwrite
+        role: role,
+        stationName: stationName.isEmpty ? existing.stationName : stationName,
+        createdAt: existing.createdAt,
+        photoPath: existing.photoPath,
+        assignedRouteId: assignedRouteId.isEmpty
+            ? existing.assignedRouteId
+            : assignedRouteId,
+        assignedRouteName: assignedRouteName.isEmpty
+            ? existing.assignedRouteName
+            : assignedRouteName,
+        phoneVerified: phoneVerified,
+      );
+      await box.put(userId, updated);
+      return;
+    }
+
+    // New user from remote — create a shell with no password.
+    // They will not be able to log in until they set a password locally
+    // (via admin reset or first-login flow), but they will be visible
+    // in user lists and role guards will recognise their role.
+    final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
+
+    final shell = User(
+      id: userId,
+      fullName: fullName,
+      phone: phone,
+      passwordHash: '', // no credentials until set locally
+      passwordSalt: null,
+      role: role,
+      stationName: stationName.isEmpty ? null : stationName,
+      createdAt: createdAt,
+      assignedRouteId: assignedRouteId.isEmpty ? null : assignedRouteId,
+      assignedRouteName: assignedRouteName.isEmpty ? null : assignedRouteName,
+      phoneVerified: phoneVerified,
+    );
+
+    await box.put(userId, shell);
   }
 }

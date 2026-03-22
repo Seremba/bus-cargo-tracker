@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../services/auth_service.dart';
+import '../services/phone_otp_service.dart';
 import 'login_screen.dart';
+import 'otp_verification_screen.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -41,18 +43,14 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String _digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
 
-  /// ✅ Normalize Uganda phone to a single canonical format:
-  /// Store as "2567XXXXXXXX" or "2563XXXXXXXX" (no plus sign).
   String _normalizePhoneUg(String raw) {
     var d = _digitsOnly(raw.trim());
     if (d.isEmpty) return '';
 
-    // 07XXXXXXXX -> 2567XXXXXXXX
     if (d.startsWith('0') && d.length == 10) {
       d = '256${d.substring(1)}';
     }
 
-    // 7XXXXXXXX -> 2567XXXXXXXX (if user omits leading 0)
     if (!d.startsWith('256') &&
         d.length == 9 &&
         (d.startsWith('7') || d.startsWith('3'))) {
@@ -89,7 +87,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // ✅ Brand header (matches Login)
             Row(
               children: [
                 Container(
@@ -127,7 +124,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
             const SizedBox(height: 18),
 
-            // ✅ Form container (structure + calm)
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -216,7 +212,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                               ? 'Show password'
                               : 'Hide password',
                           icon: Icon(
-                            _hidePass ? Icons.visibility : Icons.visibility_off,
+                            _hidePass
+                                ? Icons.visibility
+                                : Icons.visibility_off,
                           ),
                           onPressed: _loading
                               ? null
@@ -254,7 +252,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           onPressed: _loading
                               ? null
                               : () => setState(
-                                  () => _hideConfirmPass = !_hideConfirmPass,
+                                  () =>
+                                      _hideConfirmPass = !_hideConfirmPass,
                                 ),
                         ),
                       ),
@@ -309,7 +308,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ),
                                 );
                               },
-                        child: const Text('Already have an account? Login'),
+                        child: const Text(
+                          'Already have an account? Login',
+                        ),
                       ),
                     ),
                   ],
@@ -337,17 +338,45 @@ class _RegisterScreenState extends State<RegisterScreen> {
       if (!mounted) return;
 
       if (user == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Phone already registered ❌')),
-        );
+        _toast('Phone already registered ❌');
         return;
       }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Account created ✅ You can now login')),
-      );
+      // S3: generate OTP and send via AT SMS before navigating.
+      // If SMS fails (e.g. AT sandbox not configured), we still
+      // navigate to the verification screen — the sender can tap Resend.
+      try {
+        await PhoneOtpService.generateAndSend(
+          userId: user.id,
+          phone: user.phone,
+        );
+      } catch (e) {
+        // SMS send failed — navigate anyway, resend available on next screen.
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Account created but SMS failed to send. '
+                'Tap Resend on the next screen.',
+              ),
+            ),
+          );
+        }
+      }
 
-      Navigator.pop(context, user.phone);
+      if (!mounted) return;
+
+      // Navigate to OTP verification screen.
+      // Use pushReplacement so back button doesn't return to registration.
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OtpVerificationScreen(
+            userId: user.id,
+            phone: user.phone,
+          ),
+        ),
+      );
     } finally {
       if (mounted) setState(() => _loading = false);
     }

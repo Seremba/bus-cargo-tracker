@@ -13,9 +13,17 @@ class AutoSyncService with WidgetsBindingObserver {
   bool _started = false;
   bool _syncing = false;
 
-  // Phase 5 (upcoming): interval will be reduced to 5 minutes.
-  // Keeping at 30 s for now until Phase 5 connectivity-aware strategy lands.
-  static const Duration _interval = Duration(seconds: 30);
+  // Phase 5: reduced from 30s → 5 minutes.
+  // Write-triggered sync (SyncService.enqueue) handles immediate pushes.
+  // This ticker is now a safety net for:
+  //   • Failed pushes that need retry after backoff clears
+  //   • Pull (receiving events written by other devices)
+  //   • Devices returning from offline/background
+  static const Duration _interval = Duration(minutes: 5);
+
+  // Phase 4: prune once per week
+  static const Duration _pruneInterval = Duration(days: 7);
+  DateTime? _lastPrunedAt;
 
   bool get isStarted => _started;
   bool get isSyncing => _syncing;
@@ -26,6 +34,7 @@ class AutoSyncService with WidgetsBindingObserver {
     _started = true;
     WidgetsBinding.instance.addObserver(this);
 
+    // Immediate sync on start — catches up from any offline period
     _safeSync();
 
     _timer = Timer.periodic(_interval, (_) {
@@ -48,6 +57,7 @@ class AutoSyncService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_started) return;
 
+    // Phase 5: sync on app resume — catches up from background/offline period
     if (state == AppLifecycleState.resumed) {
       _safeSync();
     }
@@ -60,24 +70,69 @@ class AutoSyncService with WidgetsBindingObserver {
     try {
       await SyncService.syncNow();
 
-      // F5: run TTL checks on every sync tick.
-      // PropertyTtlService.runChecks() is internally rate-limited to once
-      // per calendar day, so calling it here is safe even at 30-s intervals.
+      // F5: TTL checks — internally rate-limited to once per calendar day
       await PropertyTtlService.runChecks();
+
+      // Phase 4: weekly pruning
+      await _maybePrune();
     } on StateError catch (e) {
-     
+      // Phase 1: surface API key config errors in debug builds.
+      // These are configuration problems, not transient failures.
       final msg = e.message;
       if (msg.contains('API key') || msg.contains('SYNC_API_KEY')) {
-        // Do not crash the app, but assert in debug mode so devs catch it fast.
         assert(false, '[AutoSyncService] $msg');
-        // In release mode, silently stop retrying until the key is set.
-        // Optionally: emit to a stream that the admin dashboard listens to.
+        // In release: silently stop until key is configured.
       }
       // All other StateErrors (HTTP 5xx, upstream timeouts) stay silent.
     } catch (_) {
-      // Catch-all: never crash the app due to background sync work.
+      // Never crash the app due to background sync work.
     } finally {
       _syncing = false;
     }
   }
+
+  // ── Phase 4: weekly pruning ────────────────────────────────────────────────
+
+  Future<void> _maybePrune() async {
+    final last = _lastPrunedAt;
+    if (last != null && DateTime.now().difference(last) < _pruneInterval) {
+      return;
+    }
+
+    try {
+      final result = await SyncService.pruneStaleData();
+      _lastPrunedAt = DateTime.now();
+
+      if (result.totalDeleted > 0) {
+        assert(() {
+          // ignore: avoid_print
+          print(
+            '[AutoSyncService] Pruned ${result.totalDeleted} stale records: '
+            '${result.syncEventsDeleted} sync events, '
+            '${result.auditEventsDeleted} audit events, '
+            '${result.outboundMessagesDeleted} outbound messages.',
+          );
+          return true;
+        }());
+      }
+    } catch (_) {
+      // Pruning failures are non-critical — boxes just grow a bit longer.
+    }
+  }
+
+  // ── Phase 5: connectivity-restored trigger ─────────────────────────────────
+
+  /// Call this when connectivity is restored to sync immediately
+  /// instead of waiting for the next 5-minute ticker tick.
+  ///
+  /// Wire up in main.dart alongside AutoSyncService.instance.start():
+  ///
+  /// ```dart
+  /// Connectivity().onConnectivityChanged.listen((result) {
+  ///   if (result != ConnectivityResult.none) {
+  ///     AutoSyncService.instance.triggerNow();
+  ///   }
+  /// });
+  /// ```
+  Future<void> triggerNow() => _safeSync();
 }

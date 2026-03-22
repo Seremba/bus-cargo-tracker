@@ -166,7 +166,7 @@ void main() {
     expect(refreshedProperty.aggregateVersion, 0);
   });
 
-  test('recordPayment with refund emits paymentRefunded sync event', () async {
+  test('recordPayment with refund emits paymentVoided sync event', () async {
     final property = Property(
       receiverName: 'John Receiver',
       receiverPhone: '0700000000',
@@ -213,7 +213,8 @@ void main() {
       (e) => e.payload['paymentId'] == refund.paymentId,
     );
 
-    expect(refundEvent.type, SyncEventType.paymentRefunded);
+    // Phase 3: paymentRefunded renamed to paymentVoided
+    expect(refundEvent.type, SyncEventType.paymentVoided);
     expect(refundEvent.aggregateType, 'payment');
     expect(refundEvent.aggregateId, refund.paymentId);
     expect(refundEvent.aggregateVersion, 2);
@@ -284,7 +285,7 @@ void main() {
     expect(adjustmentEvent.payload['aggregateVersion'], 2);
   });
 
-  test('applyEvent supports paymentRefunded and paymentAdjusted', () async {
+  test('applyEvent supports paymentVoided and paymentAdjusted', () async {
     final property = Property(
       receiverName: 'Sync Receiver',
       receiverPhone: '0700000002',
@@ -300,9 +301,10 @@ void main() {
 
     await HiveService.propertyBox().add(property);
 
+    // Phase 3: paymentRefunded renamed to paymentVoided
     final refundEvent = SyncEvent(
       eventId: 'evt-refund-1',
-      type: SyncEventType.paymentRefunded,
+      type: SyncEventType.paymentVoided,
       aggregateType: 'payment',
       aggregateId: 'pay-refund-1',
       actorUserId: 'remote-user',

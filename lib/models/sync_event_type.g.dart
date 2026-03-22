@@ -44,13 +44,13 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
       case 14:
         return SyncEventType.tripCheckpointReached;
       case 15:
-        return SyncEventType.tripEnded;
+        return SyncEventType.tripCompleted;
       case 16:
         return SyncEventType.tripCancelled;
       case 17:
         return SyncEventType.propertyInTransit;
       case 18:
-        return SyncEventType.paymentRefunded;
+        return SyncEventType.paymentVoided;
       case 19:
         return SyncEventType.paymentAdjusted;
       case 20:
@@ -63,6 +63,46 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         return SyncEventType.propertyItemPickedUp;
       case 24:
         return SyncEventType.adminOverrideApplied;
+      case 25:
+        return SyncEventType.propertyCommitted;
+      case 26:
+        return SyncEventType.propertyLoaded;
+      case 27:
+        return SyncEventType.propertyStatusManuallyChanged;
+      case 28:
+        return SyncEventType.receiptPrinted;
+      case 29:
+        return SyncEventType.pickupOtpReset;
+      case 30:
+        return SyncEventType.pickupConfirmed;
+      case 31:
+        return SyncEventType.pickupAttemptFailed;
+      case 32:
+        return SyncEventType.pickupLockedOut;
+      case 33:
+        return SyncEventType.qrNonceRotated;
+      case 34:
+        return SyncEventType.propertyItemCreated;
+      case 35:
+        return SyncEventType.propertyItemDeferred;
+      case 36:
+        return SyncEventType.tripCreated;
+      case 37:
+        return SyncEventType.tripUpdated;
+      case 38:
+        return SyncEventType.trackingCodeGenerated;
+      case 39:
+        return SyncEventType.receiverNotificationsEnabled;
+      case 40:
+        return SyncEventType.receiverNotificationQueued;
+      case 41:
+        return SyncEventType.receiverNotificationSent;
+      case 42:
+        return SyncEventType.receiverNotificationFailed;
+      case 43:
+        return SyncEventType.userCreated;
+      case 44:
+        return SyncEventType.userUpdated;
       default:
         return SyncEventType.propertyCreated;
     }
@@ -116,7 +156,7 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
       case SyncEventType.tripCheckpointReached:
         writer.writeByte(14);
         break;
-      case SyncEventType.tripEnded:
+      case SyncEventType.tripCompleted:
         writer.writeByte(15);
         break;
       case SyncEventType.tripCancelled:
@@ -125,7 +165,7 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
       case SyncEventType.propertyInTransit:
         writer.writeByte(17);
         break;
-      case SyncEventType.paymentRefunded:
+      case SyncEventType.paymentVoided:
         writer.writeByte(18);
         break;
       case SyncEventType.paymentAdjusted:
@@ -145,6 +185,66 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         break;
       case SyncEventType.adminOverrideApplied:
         writer.writeByte(24);
+        break;
+      case SyncEventType.propertyCommitted:
+        writer.writeByte(25);
+        break;
+      case SyncEventType.propertyLoaded:
+        writer.writeByte(26);
+        break;
+      case SyncEventType.propertyStatusManuallyChanged:
+        writer.writeByte(27);
+        break;
+      case SyncEventType.receiptPrinted:
+        writer.writeByte(28);
+        break;
+      case SyncEventType.pickupOtpReset:
+        writer.writeByte(29);
+        break;
+      case SyncEventType.pickupConfirmed:
+        writer.writeByte(30);
+        break;
+      case SyncEventType.pickupAttemptFailed:
+        writer.writeByte(31);
+        break;
+      case SyncEventType.pickupLockedOut:
+        writer.writeByte(32);
+        break;
+      case SyncEventType.qrNonceRotated:
+        writer.writeByte(33);
+        break;
+      case SyncEventType.propertyItemCreated:
+        writer.writeByte(34);
+        break;
+      case SyncEventType.propertyItemDeferred:
+        writer.writeByte(35);
+        break;
+      case SyncEventType.tripCreated:
+        writer.writeByte(36);
+        break;
+      case SyncEventType.tripUpdated:
+        writer.writeByte(37);
+        break;
+      case SyncEventType.trackingCodeGenerated:
+        writer.writeByte(38);
+        break;
+      case SyncEventType.receiverNotificationsEnabled:
+        writer.writeByte(39);
+        break;
+      case SyncEventType.receiverNotificationQueued:
+        writer.writeByte(40);
+        break;
+      case SyncEventType.receiverNotificationSent:
+        writer.writeByte(41);
+        break;
+      case SyncEventType.receiverNotificationFailed:
+        writer.writeByte(42);
+        break;
+      case SyncEventType.userCreated:
+        writer.writeByte(43);
+        break;
+      case SyncEventType.userUpdated:
+        writer.writeByte(44);
         break;
     }
   }

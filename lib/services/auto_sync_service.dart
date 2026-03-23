@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/widgets.dart';
 
 import 'property_ttl_service.dart';
+import 'session.dart';
 import 'sync_service.dart';
 
 class AutoSyncService with WidgetsBindingObserver {
@@ -64,6 +65,15 @@ class AutoSyncService with WidgetsBindingObserver {
   }
 
   Future<void> _safeSync() async {
+    // Don't sync until a user is logged in.
+    // On a fresh install, pulling remote user events before login creates
+    // password-less shells that interfere with authentication.
+    // Sync only makes sense when there is an active session anyway.
+    if (Session.currentUserId == null ||
+        (Session.currentUserId ?? '').trim().isEmpty) {
+      return;
+    }
+
     if (_syncing) return;
 
     _syncing = true;
@@ -120,19 +130,7 @@ class AutoSyncService with WidgetsBindingObserver {
     }
   }
 
-  // ── Phase 5: connectivity-restored trigger ─────────────────────────────────
-
-  /// Call this when connectivity is restored to sync immediately
-  /// instead of waiting for the next 5-minute ticker tick.
-  ///
-  /// Wire up in main.dart alongside AutoSyncService.instance.start():
-  ///
-  /// ```dart
-  /// Connectivity().onConnectivityChanged.listen((result) {
-  ///   if (result != ConnectivityResult.none) {
-  ///     AutoSyncService.instance.triggerNow();
-  ///   }
-  /// });
-  /// ```
+  /// Triggers an immediate sync when connectivity is restored.
+  /// Already wired in main.dart via Connectivity().onConnectivityChanged.```
   Future<void> triggerNow() => _safeSync();
 }

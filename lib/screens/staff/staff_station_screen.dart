@@ -18,6 +18,7 @@ import '../../services/session.dart';
 import '../../services/audit_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/pickup_qr_service.dart';
+import '../../services/phone_normalizer.dart';
 
 import '../../screens/admin/pickup_qr_scanner_screen.dart';
 
@@ -49,9 +50,9 @@ class StaffStationScreen extends StatelessWidget {
   Future<void> _callReceiver(BuildContext context, Property p) async {
     final phone = p.receiverPhone.trim();
     if (phone.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Receiver phone missing ❌')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Receiver phone missing ❌')),
+      );
       return;
     }
     final uri = Uri.parse('tel:$phone');
@@ -116,9 +117,10 @@ class StaffStationScreen extends StatelessWidget {
               await Clipboard.setData(ClipboardData(text: newOtp));
               if (!ctx.mounted) return;
               Navigator.pop(ctx);
-              ScaffoldMessenger.of(
-                context,
-              ).showSnackBar(const SnackBar(content: Text('OTP copied ✅')));
+              if (!context.mounted) return;
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('OTP copied ✅')),
+              );
             },
             child: const Text('Copy'),
           ),
@@ -165,22 +167,84 @@ class StaffStationScreen extends StatelessWidget {
     });
   }
 
-  // ── SMS resend: queues a new outbound OTP SMS without exposing plaintext ──
+  // ── SMS resend ─────────────────────────────────────────────────────────────
+  // Staff resend does NOT call adminResetOtp() — that requires admin role and
+  // generates a new OTP. Instead, staff resend re-queues an SMS using the
+  // existing OTP via OutboundMessageService directly. The plaintext OTP is
+  // never exposed to staff — only the hashed version is stored, so the SMS
+  // body is reconstructed using the tracking code only, prompting the receiver
+  // to contact the station for the OTP if they need it resent.
+  //
+  // For a full OTP resend with plaintext, admin uses Reset OTP from the
+  // Admin popup menu — that generates a fresh OTP and shows it in the dialog.
   Future<void> _resendOtpSms(BuildContext context, Property p) async {
     final messenger = ScaffoldMessenger.of(context);
+
     if (!_hasValidPhone(p)) {
       messenger.showSnackBar(
         const SnackBar(content: Text('Receiver phone missing ❌')),
       );
       return;
     }
+
+    if (!_hasOtp(p)) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('No OTP exists. Ask admin to reset OTP first.'),
+        ),
+      );
+      return;
+    }
+
     try {
-      await ReceiverTrackingService.resendPickupOtpSms(p);
+      // If user is admin, use the full resend flow that regenerates OTP
+      if (RoleGuard.hasRoleVerified(UserRole.admin)) {
+        await ReceiverTrackingService.resendPickupOtpSms(p);
+      } else {
+        // Staff: queue a reminder SMS without exposing or regenerating OTP.
+        // Tells receiver to present themselves at the station with their ID.
+        final phone = PhoneNormalizer.normalizeForMessaging(
+          p.receiverPhone.trim(),
+        );
+        if (phone.isEmpty) {
+          messenger.showSnackBar(
+            const SnackBar(content: Text('Phone not message-ready ❌')),
+          );
+          return;
+        }
+
+        final code = p.trackingCode.trim().isEmpty
+            ? p.propertyCode.trim()
+            : p.trackingCode.trim();
+
+        final body = 'UNEX LOGISTICS\n'
+            'Your cargo is ready for pickup at ${p.destination.trim()}.\n'
+            'Tracking: $code\n'
+            'Please present your OTP at the station desk to collect.';
+
+        await OutboundMessageService.queue(
+          toPhone: phone,
+          channel: 'sms',
+          body: body,
+          propertyKey: p.key.toString(),
+        );
+
+        await AuditService.log(
+          action: 'STAFF_PICKUP_REMINDER_SMS_QUEUED',
+          propertyKey: p.key.toString(),
+          details: 'Staff queued pickup reminder SMS to $phone',
+        );
+      }
+
       if (!context.mounted) return;
-      messenger.showSnackBar(const SnackBar(content: Text('OTP SMS queued ✅')));
+      messenger.showSnackBar(
+        const SnackBar(content: Text('SMS queued ✅')),
+      );
     } catch (e) {
       if (!context.mounted) return;
-      messenger.showSnackBar(SnackBar(content: Text('SMS resend failed: $e')));
+      messenger.showSnackBar(
+        SnackBar(content: Text('SMS failed: $e')),
+      );
     }
   }
 
@@ -212,7 +276,8 @@ class StaffStationScreen extends StatelessWidget {
           final items = box.values.where((p) {
             return p.destination.trim().toLowerCase() ==
                 station.trim().toLowerCase();
-          }).toList()..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+          }).toList()
+            ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
           final arriving = items
               .where((p) => p.status == PropertyStatus.inTransit)
@@ -431,20 +496,14 @@ class StaffStationScreen extends StatelessWidget {
                   onPressed: !canMarkDelivered
                       ? null
                       : () async {
-                          // Mark delivered in Hive
                           await PropertyService.markDelivered(p);
-
-                          // Notify receiver/sender after delivery
                           final fresh =
                               HiveService.propertyBox().get(p.key) ?? p;
                           try {
                             await ReceiverTrackingService.afterDelivered(
                               property: fresh,
                             );
-                          } catch (_) {
-                            // Non-fatal — delivery is already recorded
-                          }
-
+                          } catch (_) {}
                           await AuditService.log(
                             action: 'staff_mark_delivered',
                             propertyKey: fresh.key.toString(),
@@ -454,7 +513,9 @@ class StaffStationScreen extends StatelessWidget {
                           );
                           if (!context.mounted) return;
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('Marked Delivered ✅')),
+                            const SnackBar(
+                              content: Text('Marked Delivered ✅'),
+                            ),
                           );
                         },
                   style: ElevatedButton.styleFrom(
@@ -576,12 +637,15 @@ class StaffStationScreen extends StatelessWidget {
               ],
             ),
 
-            // ── F3: OTP SMS delivery confirmation badge ──
             if (otpSmsSent) ...[
               const SizedBox(height: 4),
               Row(
                 children: [
-                  const Icon(Icons.sms_outlined, size: 13, color: Colors.green),
+                  const Icon(
+                    Icons.sms_outlined,
+                    size: 13,
+                    color: Colors.green,
+                  ),
                   const SizedBox(width: 4),
                   Text(
                     'OTP delivery confirmed (SMS queued)',
@@ -595,7 +659,6 @@ class StaffStationScreen extends StatelessWidget {
               ),
             ],
 
-            // ── Warnings ──
             if (!hasValidPhone || !hasOtp || (qrExpired && !locked && !expired))
               Padding(
                 padding: const EdgeInsets.only(top: 6),
@@ -616,7 +679,6 @@ class StaffStationScreen extends StatelessWidget {
 
             const SizedBox(height: 10),
 
-            // ── Action buttons ──
             Wrap(
               spacing: 8,
               runSpacing: 6,
@@ -643,12 +705,14 @@ class StaffStationScreen extends StatelessWidget {
                           ? 'staff_confirm_pickup_ok'
                           : 'staff_confirm_pickup_failed',
                       propertyKey: p.key.toString(),
-                      details: 'Station: $st | ${ok ? 'OTP ok' : 'OTP failed'}',
+                      details:
+                          'Station: $st | ${ok ? 'OTP ok' : 'OTP failed'}',
                     );
                     if (!context.mounted) return;
                     final lockedNow = PropertyService.isOtpLocked(p);
                     final expiredNow = PropertyService.isOtpExpired(p);
-                    final lockMinsNow = PropertyService.remainingLockMinutes(p);
+                    final lockMinsNow =
+                        PropertyService.remainingLockMinutes(p);
                     final msg = ok
                         ? 'Pickup confirmed ✅'
                         : lockedNow
@@ -656,13 +720,13 @@ class StaffStationScreen extends StatelessWidget {
                         : expiredNow
                         ? 'OTP expired ⏱ Ask admin to reset.'
                         : 'Wrong OTP ❌';
-                    ScaffoldMessenger.of(
-                      context,
-                    ).showSnackBar(SnackBar(content: Text(msg)));
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text(msg)),
+                    );
                   },
                 ),
 
-                // Resend OTP via SMS (staff-accessible, no plaintext exposed)
+                // Resend SMS — staff sends pickup reminder, admin resends OTP
                 _tileButton(
                   label: 'Resend SMS',
                   icon: Icons.sms_outlined,
@@ -695,7 +759,9 @@ class StaffStationScreen extends StatelessWidget {
                       if (!context.mounted) return;
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(
-                          content: Text(err ?? 'WhatsApp opened ✅ (tap send)'),
+                          content: Text(
+                            err ?? 'WhatsApp opened ✅ (tap send)',
+                          ),
                         ),
                       );
                     },
@@ -709,7 +775,7 @@ class StaffStationScreen extends StatelessWidget {
                   onTap: () => _callReceiver(context, p),
                 ),
 
-                // Refresh QR (only if expired)
+                // Refresh QR
                 if (qrExpired)
                   _tileButton(
                     label: 'Refresh QR',
@@ -735,14 +801,17 @@ class StaffStationScreen extends StatelessWidget {
                     final parsed = PickupQrService.parsePayload(raw.trim());
                     if (parsed == null) {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Invalid pickup QR ❌')),
+                        const SnackBar(
+                          content: Text('Invalid pickup QR ❌'),
+                        ),
                       );
                       return;
                     }
                     final tileKey = (p.key is int)
                         ? (p.key as int)
                         : int.tryParse(p.key.toString());
-                    if (tileKey == null || parsed.propertyKey != tileKey) {
+                    if (tileKey == null ||
+                        parsed.propertyKey != tileKey) {
                       ScaffoldMessenger.of(context).showSnackBar(
                         const SnackBar(
                           content: Text(
@@ -766,11 +835,14 @@ class StaffStationScreen extends StatelessWidget {
                           ? 'staff_qr_pickup_ok'
                           : 'staff_qr_pickup_failed',
                       propertyKey: p.key.toString(),
-                      details: ok ? 'Pickup via QR OK' : 'QR rejected: $err',
+                      details:
+                          ok ? 'Pickup via QR OK' : 'QR rejected: $err',
                     );
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text(ok ? 'Pickup via QR ✅' : err!)),
+                      SnackBar(
+                        content: Text(ok ? 'Pickup via QR ✅' : err!),
+                      ),
                     );
                   },
                 ),
@@ -797,7 +869,10 @@ class StaffStationScreen extends StatelessWidget {
                       }
                     },
                     itemBuilder: (_) => const [
-                      PopupMenuItem(value: 'unlock', child: Text('Unlock OTP')),
+                      PopupMenuItem(
+                        value: 'unlock',
+                        child: Text('Unlock OTP'),
+                      ),
                       PopupMenuItem(
                         value: 'reset',
                         child: Text('Reset OTP (new code)'),
@@ -901,17 +976,22 @@ class StaffStationScreen extends StatelessWidget {
           color: disabled ? Colors.grey.shade300 : AppColors.primary,
         ),
         foregroundColor: disabled ? Colors.grey : AppColors.primary,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
       ),
     );
   }
 
+  // ── _askOtp — uses dialog's own context (ctx) not outer context ───────────
+  // Fixes: '_dependents.isEmpty' crash caused by using outer BuildContext
+  // after the dialog closes and the widget tree has moved on.
   Future<String?> _askOtp(BuildContext context) async {
     final c = TextEditingController();
     try {
       return await showDialog<String>(
         context: context,
-        builder: (_) => AlertDialog(
+        builder: (ctx) => AlertDialog(
           title: const Text('Enter OTP'),
           content: TextField(
             controller: c,
@@ -919,9 +999,10 @@ class StaffStationScreen extends StatelessWidget {
             decoration: InputDecoration(
               labelText: '6-digit OTP',
               filled: true,
-              fillColor: Theme.of(
-                context,
-              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.30),
+              fillColor: Theme.of(ctx)
+                  .colorScheme
+                  .surfaceContainerHighest
+                  .withValues(alpha: 0.30),
               border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(10),
               ),
@@ -929,11 +1010,12 @@ class StaffStationScreen extends StatelessWidget {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, null),
+              // Use ctx (dialog context) not context (outer widget context)
+              onPressed: () => Navigator.pop(ctx, null),
               child: const Text('Cancel'),
             ),
             ElevatedButton(
-              onPressed: () => Navigator.pop(context, c.text.trim()),
+              onPressed: () => Navigator.pop(ctx, c.text.trim()),
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,

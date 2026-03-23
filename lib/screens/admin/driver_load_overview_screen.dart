@@ -47,9 +47,17 @@ class DriverLoadOverviewScreen extends StatelessWidget {
           final itemSvc = PropertyItemService(iBox);
           final activeTrip = TripService.getActiveTripForCurrentDriver();
 
+          // Phase fix: include both pending AND loaded properties.
+          // After items are loaded by desk officer, property status becomes
+          // PropertyStatus.loaded — previously this screen only showed
+          // PropertyStatus.pending so loaded properties never appeared.
           final pendingProps =
               pBox.values
-                  .where((p) => p.status == PropertyStatus.pending)
+                  .where(
+                    (p) =>
+                        p.status == PropertyStatus.pending ||
+                        p.status == PropertyStatus.loaded,
+                  )
                   .toList()
                 ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
@@ -58,14 +66,14 @@ class DriverLoadOverviewScreen extends StatelessWidget {
               padding: const EdgeInsets.all(16),
               child: Row(
                 children: [
-                  Icon(
+                  const Icon(
                     Icons.inventory_2_outlined,
                     size: 16,
                     color: Colors.black38,
                   ),
                   const SizedBox(width: 8),
                   const Text(
-                    'No pending properties.',
+                    'No pending or loaded properties.',
                     style: TextStyle(color: Colors.black54, fontSize: 13),
                   ),
                 ],
@@ -167,7 +175,6 @@ class DriverLoadOverviewScreen extends StatelessWidget {
 
     final cs = Theme.of(context).colorScheme;
 
-    // Progress fraction for loaded items
     final total = p.itemCount > 0 ? p.itemCount : 1;
     final loadFraction = (loadedReady / total).clamp(0.0, 1.0);
 
@@ -182,7 +189,6 @@ class DriverLoadOverviewScreen extends StatelessWidget {
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Property code avatar
                 Container(
                   width: 40,
                   height: 40,
@@ -211,7 +217,6 @@ class DriverLoadOverviewScreen extends StatelessWidget {
                         ),
                       ),
                       const SizedBox(height: 2),
-                      // Receiver + destination
                       Row(
                         children: [
                           Icon(Icons.person_outline, size: 12, color: muted),
@@ -269,7 +274,6 @@ class DriverLoadOverviewScreen extends StatelessWidget {
             ),
             const SizedBox(height: 8),
 
-            // Progress bar
             ClipRRect(
               borderRadius: BorderRadius.circular(4),
               child: LinearProgressIndicator(
@@ -344,7 +348,6 @@ class DriverLoadOverviewScreen extends StatelessWidget {
     );
   }
 
-  // ── Stat pill: icon + label + value ──
   Widget _statPill({
     required IconData icon,
     required String label,

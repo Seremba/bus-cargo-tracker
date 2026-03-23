@@ -350,9 +350,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(6, (i) {
                       return Container(
-                        width: 44,
+                        width: 38,
                         height: 52,
-                        margin: const EdgeInsets.symmetric(horizontal: 4),
+                        margin: const EdgeInsets.symmetric(horizontal: 3),
                         child: TextFormField(
                           controller: _controllers[i],
                           focusNode: _focusNodes[i],

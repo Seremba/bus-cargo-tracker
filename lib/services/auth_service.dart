@@ -564,16 +564,7 @@ class AuthService {
     } catch (_) {}
   }
 
-  // ── Phase 6: apply user sync from remote device ───────────────────────────
-
-  /// Applies a UserCreated or UserUpdated event received from another device.
-  ///
-  /// Security rules:
-  ///   • Passwords are NEVER synced — each device keeps its own credentials.
-  ///   • A remote event can create a user shell (name, phone, role) but
-  ///     cannot overwrite a locally-set password.
-  ///   • If the user already exists locally with a password, only profile
-  ///     metadata (station, route, phoneVerified) is updated.
+ 
   static Future<void> applyUserSyncEvent(
     Map<String, dynamic> payload,
   ) async {
@@ -599,39 +590,68 @@ class AuthService {
     try {
       role = UserRole.values.byName(roleRaw);
     } catch (_) {
-      return; // unknown role — ignore
+      return;
     }
 
     final existing = box.get(userId);
 
     if (existing != null) {
-      // User exists locally — only update profile metadata, never credentials.
-      final updated = User(
-        id: existing.id,
-        fullName: fullName,
-        phone: phone,
-        passwordHash: existing.passwordHash, // never overwrite
-        passwordSalt: existing.passwordSalt, // never overwrite
-        role: role,
-        stationName: stationName.isEmpty ? existing.stationName : stationName,
-        createdAt: existing.createdAt,
-        photoPath: existing.photoPath,
-        assignedRouteId: assignedRouteId.isEmpty
-            ? existing.assignedRouteId
-            : assignedRouteId,
-        assignedRouteName: assignedRouteName.isEmpty
-            ? existing.assignedRouteName
-            : assignedRouteName,
-        phoneVerified: phoneVerified,
-      );
-      await box.put(userId, updated);
+      // User exists locally — never overwrite a real password with a shell.
+      // A real password hash always starts with 'v2:' (salted) or is a
+      // 64-char hex string (legacy unsalted). An empty hash = shell only.
+      final hasRealPassword = existing.passwordHash.trim().isNotEmpty;
+
+      if (hasRealPassword) {
+        // Only update non-credential profile metadata.
+        // Credentials stay exactly as set locally — never touched by sync.
+        final updated = User(
+          id: existing.id,
+          fullName: fullName,
+          phone: phone,
+          passwordHash: existing.passwordHash, // never overwrite
+          passwordSalt: existing.passwordSalt, // never overwrite
+          role: role,
+          stationName: stationName.isEmpty ? existing.stationName : stationName,
+          createdAt: existing.createdAt,
+          photoPath: existing.photoPath,
+          assignedRouteId: assignedRouteId.isEmpty
+              ? existing.assignedRouteId
+              : assignedRouteId,
+          assignedRouteName: assignedRouteName.isEmpty
+              ? existing.assignedRouteName
+              : assignedRouteName,
+          phoneVerified: phoneVerified,
+        );
+        await box.put(userId, updated);
+      } else {
+        // Shell exists (empty password) — safe to update everything
+        // since there are no real credentials to protect.
+        final updated = User(
+          id: existing.id,
+          fullName: fullName,
+          phone: phone,
+          passwordHash: existing.passwordHash,
+          passwordSalt: existing.passwordSalt,
+          role: role,
+          stationName: stationName.isEmpty ? existing.stationName : stationName,
+          createdAt: existing.createdAt,
+          photoPath: existing.photoPath,
+          assignedRouteId: assignedRouteId.isEmpty
+              ? existing.assignedRouteId
+              : assignedRouteId,
+          assignedRouteName: assignedRouteName.isEmpty
+              ? existing.assignedRouteName
+              : assignedRouteName,
+          phoneVerified: phoneVerified,
+        );
+        await box.put(userId, updated);
+      }
       return;
     }
 
     // New user from remote — create a shell with no password.
-    // They will not be able to log in until they set a password locally
-    // (via admin reset or first-login flow), but they will be visible
-    // in user lists and role guards will recognise their role.
+    // They cannot log in until admin resets their password locally,
+    // but they are visible in user lists and role guards recognise their role.
     final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
 
     final shell = User(

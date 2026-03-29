@@ -71,6 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   void _toast(String msg) {
+    if (!mounted) return;
     final m = ScaffoldMessenger.of(context);
     m.clearSnackBars();
     m.hideCurrentSnackBar();
@@ -104,12 +105,10 @@ class _LoginScreenState extends State<LoginScreen> {
     final screenHeight = MediaQuery.of(context).size.height;
 
     return Scaffold(
-      // No AppBar — reclaim the space for vertical centering
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: ConstrainedBox(
-            // Ensure content fills screen height so card centers nicely
             constraints: BoxConstraints(
               minHeight:
                   screenHeight -
@@ -121,7 +120,7 @@ class _LoginScreenState extends State<LoginScreen> {
               children: [
                 const SizedBox(height: 32),
 
-                // ── Branding header ───────────────────────────────────────
+                // ── Branding header ──
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
@@ -162,7 +161,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                 const SizedBox(height: 28),
 
-                // ── Login card ────────────────────────────────────────────
+                // ── Login card ──
                 Container(
                   width: double.infinity,
                   padding: const EdgeInsets.all(20),
@@ -185,7 +184,6 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // Card header
                         const Text(
                           'Welcome back',
                           style: TextStyle(
@@ -271,8 +269,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               onPressed: _loading
                                   ? null
-                                  : () =>
-                                        setState(() => _hidePass = !_hidePass),
+                                  : () => setState(
+                                        () => _hidePass = !_hidePass,
+                                      ),
                             ),
                           ),
                           validator: (value) {
@@ -287,7 +286,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 8),
 
-                        // Forgot password — smaller, right-aligned, muted
+                        // Forgot password
                         Align(
                           alignment: Alignment.centerRight,
                           child: TextButton(
@@ -306,7 +305,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 4),
 
-                        // Login button with spinner
+                        // Login button
                         SizedBox(
                           width: double.infinity,
                           child: ElevatedButton(
@@ -345,12 +344,13 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 16),
 
-                        // Divider before create account
+                        // Divider
                         Row(
                           children: [
                             Expanded(
                               child: Divider(
-                                color: cs.outlineVariant.withValues(alpha: 0.5),
+                                color:
+                                    cs.outlineVariant.withValues(alpha: 0.5),
                               ),
                             ),
                             Padding(
@@ -364,7 +364,8 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             Expanded(
                               child: Divider(
-                                color: cs.outlineVariant.withValues(alpha: 0.5),
+                                color:
+                                    cs.outlineVariant.withValues(alpha: 0.5),
                               ),
                             ),
                           ],
@@ -372,7 +373,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
                         const SizedBox(height: 12),
 
-                        // Create account — outlined button, clear CTA
+                        // Create account button
                         SizedBox(
                           width: double.infinity,
                           child: OutlinedButton.icon(
@@ -393,7 +394,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           ),
                         ),
 
-                        // Inline create account hint panel
+                        // Inline create account hint
                         AnimatedSwitcher(
                           duration: const Duration(milliseconds: 200),
                           switchInCurve: Curves.easeOut,
@@ -452,17 +453,18 @@ class _LoginScreenState extends State<LoginScreen> {
                                                   style: TextButton.styleFrom(
                                                     foregroundColor: muted,
                                                     padding:
-                                                        const EdgeInsets.symmetric(
+                                                        const EdgeInsets
+                                                            .symmetric(
                                                           horizontal: 4,
                                                         ),
                                                   ),
                                                   onPressed: _loading
                                                       ? null
                                                       : () => setState(
-                                                          () =>
-                                                              _showCreateHint =
-                                                                  false,
-                                                        ),
+                                                            () =>
+                                                                _showCreateHint =
+                                                                    false,
+                                                          ),
                                                   child: const Text('Cancel'),
                                                 ),
                                                 const Spacer(),
@@ -513,6 +515,7 @@ class _LoginScreenState extends State<LoginScreen> {
         password: password,
       );
 
+      // Check mounted immediately after every async gap
       if (!mounted) return;
 
       if (user == null) {
@@ -522,6 +525,9 @@ class _LoginScreenState extends State<LoginScreen> {
 
       await SessionService.saveUser(user);
       OutboundQueueRunner.start();
+
+      // Check mounted again after second async gap
+      if (!mounted) return;
 
       final Widget destination;
       switch (user.role) {

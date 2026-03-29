@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../services/auth_service.dart';
 import '../services/phone_otp_service.dart';
 import 'login_screen.dart';
 

@@ -63,7 +63,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // ✅ Brand header (consistent)
             Row(
               children: [
                 Container(
@@ -101,7 +100,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
             const SizedBox(height: 18),
 
-            // ✅ Form container
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
@@ -117,7 +115,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      _otpSent ? 'Enter OTP and new password' : 'Reset your password',
+                      _otpSent
+                          ? 'Enter OTP and new password'
+                          : 'Reset your password',
                       style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 20,
@@ -131,7 +131,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       style: TextStyle(color: muted),
                     ),
 
-                    // ✅ little hint after OTP sent
                     if (_otpSent && displayPhone.isNotEmpty) ...[
                       const SizedBox(height: 8),
                       Container(
@@ -169,10 +168,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                     TextFormField(
                       controller: _phone,
-                      enabled: !_otpSent && !_loading, // ✅ lock once OTP sent
+                      enabled: !_otpSent && !_loading,
                       keyboardType: TextInputType.phone,
-                      textInputAction:
-                          _otpSent ? TextInputAction.next : TextInputAction.done,
+                      textInputAction: _otpSent
+                          ? TextInputAction.next
+                          : TextInputAction.done,
                       inputFormatters: [
                         FilteringTextInputFormatter.digitsOnly,
                         LengthLimitingTextInputFormatter(15),
@@ -186,17 +186,17 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       validator: (v) {
                         final raw = (v ?? '').trim();
                         if (raw.isEmpty) return 'Phone is required';
-
                         final digits = PhoneNormalizer.digitsOnly(raw);
-                        if (digits.length < 9) return 'Enter a valid phone number';
+                        if (digits.length < 9) {
+                          return 'Enter a valid phone number';
+                        }
                         if (digits.length > 15) return 'Phone number too long';
                         if (RegExp(r'^0+$').hasMatch(digits)) {
                           return 'Enter a valid phone number';
                         }
-
-                        // Only require "message-ready" when sending OTP
                         if (!_otpSent) {
-                          final msg = PhoneNormalizer.normalizeForMessaging(raw);
+                          final msg =
+                              PhoneNormalizer.normalizeForMessaging(raw);
                           if (msg.isEmpty) {
                             return 'Enter a message-ready number (07.. or include country code).';
                           }
@@ -254,13 +254,18 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           border: const OutlineInputBorder(),
                           prefixIcon: const Icon(Icons.lock_outline),
                           suffixIcon: IconButton(
-                            tooltip: _hidePass ? 'Show password' : 'Hide password',
+                            tooltip: _hidePass
+                                ? 'Show password'
+                                : 'Hide password',
                             icon: Icon(
-                              _hidePass ? Icons.visibility : Icons.visibility_off,
+                              _hidePass
+                                  ? Icons.visibility
+                                  : Icons.visibility_off,
                             ),
                             onPressed: _loading
                                 ? null
-                                : () => setState(() => _hidePass = !_hidePass),
+                                : () =>
+                                      setState(() => _hidePass = !_hidePass),
                           ),
                         ),
                         validator: (v) {
@@ -276,7 +281,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                     const SizedBox(height: 6),
 
-                    // ✅ Buttons
                     if (!_otpSent) ...[
                       SizedBox(
                         width: double.infinity,
@@ -292,7 +296,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               ? const SizedBox(
                                   height: 18,
                                   width: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.send),
                           label: Text(_loading ? 'Sending…' : 'Send OTP'),
@@ -313,10 +319,14 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                               ? const SizedBox(
                                   height: 18,
                                   width: 18,
-                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
                                 )
                               : const Icon(Icons.lock_reset),
-                          label: Text(_loading ? 'Resetting…' : 'Reset Password'),
+                          label: Text(
+                            _loading ? 'Resetting…' : 'Reset Password',
+                          ),
                         ),
                       ),
                       const SizedBox(height: 10),
@@ -354,11 +364,11 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         rawPhone: _phone.text.trim(),
       );
 
+      if (!mounted) return;
       _snack(res.message);
 
       if (res.ok) {
         setState(() => _otpSent = true);
-
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (!mounted) return;
           _otpFocus.requestFocus();
@@ -375,6 +385,10 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     if (!_formKey.currentState!.validate()) return;
 
     setState(() => _loading = true);
+
+    // Capture display value before async gap
+    final displayPhone = PhoneNormalizer.displayUg(_phone.text.trim());
+
     try {
       final res = await PasswordResetService.verifyOtpAndResetPassword(
         rawPhone: _phone.text.trim(),
@@ -382,11 +396,13 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         newPassword: _newPassword.text.trim(),
       );
 
+      if (!mounted) return;
+
       _snack(res.message);
 
       if (res.ok) {
-        final display = PhoneNormalizer.displayUg(_phone.text.trim());
-        Navigator.pop(context, display); // 
+        // Use Navigator with mounted check already done above
+        Navigator.pop(context, displayPhone);
       }
     } finally {
       if (mounted) setState(() => _loading = false);

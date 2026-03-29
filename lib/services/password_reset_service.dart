@@ -132,14 +132,16 @@ class PasswordResetService {
       );
     }
 
+    // Check existing reset record for lock/cooldown
     final existing = box.get(key);
-    if (existing is Map) {
-      final lockedUntilMs = (existing['lockedUntilMs'] as int?) ?? 0;
+    if (existing != null) {
+      final existingMap = Map<String, dynamic>.from(existing as Map);
+      final lockedUntilMs = (existingMap['lockedUntilMs'] as int?) ?? 0;
       if (lockedUntilMs > 0 && now.millisecondsSinceEpoch < lockedUntilMs) {
         return const ResetResult(false, 'Too many attempts. Try again later.');
       }
 
-      final lastSentAtMs = (existing['lastSentAtMs'] as int?) ?? 0;
+      final lastSentAtMs = (existingMap['lastSentAtMs'] as int?) ?? 0;
       if (lastSentAtMs > 0) {
         final last = DateTime.fromMillisecondsSinceEpoch(lastSentAtMs);
         if (now.isBefore(last.add(resendCooldown))) {
@@ -162,8 +164,7 @@ class PasswordResetService {
       'lastSentAtMs': now.millisecondsSinceEpoch,
     });
 
-    final body =
-        '''
+    final body = '''
 UNEX LOGISTICS
 
 Your password reset OTP is: $otp
@@ -231,20 +232,23 @@ This code expires in ${otpExpiry.inMinutes} minutes.
     final key = _k(phoneDigits);
     final rec = box.get(key);
 
-    if (rec is! Map) {
+    // rec is stored as a Map — check it exists and is a Map
+    if (rec == null) {
       return const ResetResult(
         false,
         'No reset request found. Tap "Send OTP" first.',
       );
     }
 
+    final recMap = Map<String, dynamic>.from(rec as Map);
+
     final now = DateTime.now();
-    final lockedUntilMs = (rec['lockedUntilMs'] as int?) ?? 0;
+    final lockedUntilMs = (recMap['lockedUntilMs'] as int?) ?? 0;
     if (lockedUntilMs > 0 && now.millisecondsSinceEpoch < lockedUntilMs) {
       return const ResetResult(false, 'Too many attempts. Try again later.');
     }
 
-    final createdAtMs = (rec['createdAtMs'] as int?) ?? 0;
+    final createdAtMs = (recMap['createdAtMs'] as int?) ?? 0;
     if (createdAtMs <= 0) {
       return const ResetResult(
         false,
@@ -263,13 +267,13 @@ This code expires in ${otpExpiry.inMinutes} minutes.
       return const ResetResult(false, 'OTP expired. Tap "Send OTP" again.');
     }
 
-    var attempts = (rec['attempts'] as int?) ?? 0;
-    final expectedHash = (rec['otpHash'] as String?) ?? '';
+    var attempts = (recMap['attempts'] as int?) ?? 0;
+    final expectedHash = (recMap['otpHash'] as String?) ?? '';
 
     if (_hashOtp(cleanOtp) != expectedHash) {
       attempts += 1;
 
-      final updated = Map<String, dynamic>.from(rec);
+      final updated = Map<String, dynamic>.from(recMap);
       updated['attempts'] = attempts;
 
       if (attempts >= maxAttempts) {

@@ -1,4 +1,4 @@
-package com.example.bus_cargo_tracker
+package com.unexlogistics.app
 
 import io.flutter.embedding.android.FlutterActivity
 

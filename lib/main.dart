@@ -98,46 +98,12 @@ void main() async {
 
   await SyncService.ensureDeviceId();
 
-  // API key is injected via --dart-define and persisted to Hive on first run.
-  // Subsequent runs read the key from Hive automatically — no --dart-define needed.
-  //
-  // First run / key rotation:
-  //   flutter run --dart-define=SYNC_API_KEY=your-key-here
-  //
-  // Release build:
-  //   flutter build apk --dart-define=SYNC_API_KEY=your-key-here
-  //
-  // CI/CD: store key as a secret env variable and pass via --dart-define.
-  // Future upgrade: move to flutter_secure_storage for per-device storage.
+  // API key injected via --dart-define and persisted to Hive on first run.
   const injectedKey = String.fromEnvironment('SYNC_API_KEY', defaultValue: '');
   if (injectedKey.isNotEmpty) {
-    // New key provided — save to Hive, overwriting any previous key.
     await SyncService.setApiKey(injectedKey);
   }
-  // If injectedKey is empty, SyncService uses whatever key is already
-  // stored in Hive from the last time --dart-define was passed.
 
-  await AutoSyncService.instance.start();
-
-  // Phase 5: sync immediately when connectivity is restored.
-  // This catches up events that were queued while the device was offline
-  // without waiting for the next 5-minute ticker tick.
-  Connectivity().onConnectivityChanged.listen((results) {
-    final isOnline = results.any((r) => r != ConnectivityResult.none);
-    if (isOnline) {
-      AutoSyncService.instance.triggerNow();
-    }
-  });
-
-  // F5: run TTL checks on every startup so expired/warned properties are
-  // caught even if the app was closed for several days.
-  // This is safe to call before the user logs in — it only reads/writes
-  // Hive boxes, which are already open.
-  await PropertyTtlService.runChecks();
-
-  // Seed admin on first install if no admin exists.
-  // Safe for production — only runs once when the user box has no admin.
-  // Default credentials should be changed by the admin after first login.
   final hasAdmin = HiveService.userBox().values.any(
     (u) => u.role == UserRole.admin,
   );
@@ -147,37 +113,45 @@ void main() async {
       password: 'admin123',
       fullName: 'System Admin',
     );
+    debugPrint('[Main] Admin seeded on first install.');
   }
 
-  // Phase 8: Fetch AT SMS config from Cloudflare Worker on first install.
-  // This avoids hardcoding or manually configuring AT credentials on every device.
-  // Credentials are stored securely as Cloudflare environment secrets.
-  // Only fetches if AT is not already configured in Hive.
+  await AutoSyncService.instance.start();
+
+  Connectivity().onConnectivityChanged.listen((results) {
+    final isOnline = results.any((r) => r != ConnectivityResult.none);
+    if (isOnline) {
+      AutoSyncService.instance.triggerNow();
+    }
+  });
+
+  // F5: TTL checks on startup.
+  await PropertyTtlService.runChecks();
+
+  // Phase 8: fetch AT SMS config from Cloudflare on first install.
+  // Fire-and-forget — non-blocking, non-fatal if offline.
   unawaited(_fetchAndStoreAtConfig());
 
   runApp(const MyApp());
 }
 
-/// Fetches AT SMS configuration from the Cloudflare Worker /config endpoint.
-/// Called once on first install — credentials are persisted to Hive so
-/// subsequent launches use the cached values without a network call.
-/// If the fetch fails (offline, etc.) the app still works — SMS will be
-/// queued and retried when credentials become available.
 Future<void> _fetchAndStoreAtConfig() async {
   try {
-    // Only fetch if AT not already configured
     final existing = AtSettingsService.getOrCreate();
     if (existing.apiKey.trim().isNotEmpty) return;
 
-    // Use the public hasApiKey() check then read key via headers internally
     if (!SyncService.hasApiKey()) return;
-    final syncKey = (HiveService.appSettingsBox().get('syncApiKey') as String? ?? '').trim();
+    final syncKey =
+        (HiveService.appSettingsBox().get('syncApiKey') as String? ?? '')
+            .trim();
     if (syncKey.isEmpty) return;
 
-    final response = await http.get(
-      Uri.parse('https://bus-cargo-sync.pserembae.workers.dev/config'),
-      headers: {'X-Api-Key': syncKey},
-    ).timeout(const Duration(seconds: 10));
+    final response = await http
+        .get(
+          Uri.parse('https://bus-cargo-sync.pserembae.workers.dev/config'),
+          headers: {'X-Api-Key': syncKey},
+        )
+        .timeout(const Duration(seconds: 10));
 
     if (response.statusCode != 200) return;
 
@@ -191,15 +165,12 @@ Future<void> _fetchAndStoreAtConfig() async {
 
     if (apiKey.isEmpty || username.isEmpty) return;
 
-    await AtSettingsService.save(AtSettings(
-      apiKey: apiKey,
-      username: username,
-      senderId: senderId,
-    ));
+    await AtSettingsService.save(
+      AtSettings(apiKey: apiKey, username: username, senderId: senderId),
+    );
 
     debugPrint('[Config] AT SMS credentials fetched and stored.');
   } catch (e) {
-    // Non-fatal — app works without SMS, messages stay queued
     debugPrint('[Config] Failed to fetch AT config: $e');
   }
 }
@@ -256,7 +227,6 @@ class MyApp extends StatelessWidget {
       title: 'UNEx Logistics',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
-      // S5: SessionGuard wraps every screen built by the navigator.
       builder: (context, child) {
         return SessionGuard(child: child ?? const SizedBox.shrink());
       },

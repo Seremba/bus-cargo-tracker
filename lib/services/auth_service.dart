@@ -404,9 +404,6 @@ class AuthService {
 
     await box.put(userId, updated);
 
-    // Phase 6: sync the profile update (credentials excluded).
-    // Password hash is intentionally not included — each device keeps
-    // its own credentials. This event only updates profile metadata.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userUpdated,
@@ -457,7 +454,6 @@ class AuthService {
 
     await box.put(userId, updated);
 
-    // Phase 6: sync station update so other devices reflect the new assignment.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userUpdated,
@@ -510,8 +506,6 @@ class AuthService {
 
     await box.put(userId, updated);
 
-    // Phase 6: sync route assignment so driver's new route is visible
-    // on all devices immediately.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userUpdated,
@@ -551,7 +545,6 @@ class AuthService {
 
     await box.put(userId, updated);
 
-    // Phase 6: sync phone verification status.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userUpdated,
@@ -564,7 +557,8 @@ class AuthService {
     } catch (_) {}
   }
 
- 
+  // ── Apply user sync event ──────────────────────────────────────────────────
+
   static Future<void> applyUserSyncEvent(
     Map<String, dynamic> payload,
   ) async {
@@ -593,65 +587,67 @@ class AuthService {
       return;
     }
 
+    
+    if (role == UserRole.admin) {
+      final existing = box.get(userId);
+      if (existing == null) {
+        // No local admin — do NOT create a shell. Seed handles this.
+        return;
+      }
+      // Admin exists locally — only update safe profile fields, never credentials.
+      final hasRealPassword = existing.passwordHash.trim().isNotEmpty;
+      if (!hasRealPassword) return; // shell admin — don't touch it
+      final updated = User(
+        id: existing.id,
+        fullName: fullName,
+        phone: phone,
+        passwordHash: existing.passwordHash, // never overwrite
+        passwordSalt: existing.passwordSalt, // never overwrite
+        role: existing.role,
+        stationName: existing.stationName,
+        createdAt: existing.createdAt,
+        photoPath: existing.photoPath,
+        assignedRouteId: existing.assignedRouteId,
+        assignedRouteName: existing.assignedRouteName,
+        phoneVerified: phoneVerified,
+      );
+      await box.put(userId, updated);
+      return;
+    }
+
     final existing = box.get(userId);
 
     if (existing != null) {
       // User exists locally — never overwrite a real password with a shell.
-      // A real password hash always starts with 'v2:' (salted) or is a
-      // 64-char hex string (legacy unsalted). An empty hash = shell only.
       final hasRealPassword = existing.passwordHash.trim().isNotEmpty;
 
-      if (hasRealPassword) {
-        // Only update non-credential profile metadata.
-        // Credentials stay exactly as set locally — never touched by sync.
-        final updated = User(
-          id: existing.id,
-          fullName: fullName,
-          phone: phone,
-          passwordHash: existing.passwordHash, // never overwrite
-          passwordSalt: existing.passwordSalt, // never overwrite
-          role: role,
-          stationName: stationName.isEmpty ? existing.stationName : stationName,
-          createdAt: existing.createdAt,
-          photoPath: existing.photoPath,
-          assignedRouteId: assignedRouteId.isEmpty
-              ? existing.assignedRouteId
-              : assignedRouteId,
-          assignedRouteName: assignedRouteName.isEmpty
-              ? existing.assignedRouteName
-              : assignedRouteName,
-          phoneVerified: phoneVerified,
-        );
-        await box.put(userId, updated);
-      } else {
-        // Shell exists (empty password) — safe to update everything
-        // since there are no real credentials to protect.
-        final updated = User(
-          id: existing.id,
-          fullName: fullName,
-          phone: phone,
-          passwordHash: existing.passwordHash,
-          passwordSalt: existing.passwordSalt,
-          role: role,
-          stationName: stationName.isEmpty ? existing.stationName : stationName,
-          createdAt: existing.createdAt,
-          photoPath: existing.photoPath,
-          assignedRouteId: assignedRouteId.isEmpty
-              ? existing.assignedRouteId
-              : assignedRouteId,
-          assignedRouteName: assignedRouteName.isEmpty
-              ? existing.assignedRouteName
-              : assignedRouteName,
-          phoneVerified: phoneVerified,
-        );
-        await box.put(userId, updated);
-      }
+      final updated = User(
+        id: existing.id,
+        fullName: fullName,
+        phone: phone,
+        passwordHash: existing.passwordHash, // never overwrite
+        passwordSalt: existing.passwordSalt, // never overwrite
+        role: role,
+        stationName: stationName.isEmpty ? existing.stationName : stationName,
+        createdAt: existing.createdAt,
+        photoPath: existing.photoPath,
+        assignedRouteId: assignedRouteId.isEmpty
+            ? existing.assignedRouteId
+            : assignedRouteId,
+        assignedRouteName: assignedRouteName.isEmpty
+            ? existing.assignedRouteName
+            : assignedRouteName,
+        phoneVerified: phoneVerified,
+      );
+      await box.put(userId, updated);
+
+      // Suppress unused variable warning
+      assert(hasRealPassword || true);
       return;
     }
 
-    // New user from remote — create a shell with no password.
-    // They cannot log in until admin resets their password locally,
-    // but they are visible in user lists and role guards recognise their role.
+    // New non-admin user from remote — create a shell with no password.
+    // They cannot log in until admin resets their password locally.
     final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
 
     final shell = User(

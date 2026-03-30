@@ -6,7 +6,6 @@ import '../../services/session.dart';
 import '../../services/session_service.dart';
 import '../screens/login_screen.dart';
 
-
 class SessionGuard extends StatefulWidget {
   final Widget child;
   const SessionGuard({super.key, required this.child});
@@ -30,7 +29,18 @@ class _SessionGuardState extends State<SessionGuard>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _startTicker();
+
+    // Delay the first expiry check by 3 seconds to allow the session to
+    // fully establish after login or restore before we start polling.
+    // Without this delay, the ticker could fire while lastActivityAt is
+    // still null (between SessionService.saveUser() and the first touch()),
+    // causing Session.isExpired to return true and immediately logging the
+    // user out right after a successful login.
+    Future.delayed(const Duration(seconds: 3), () {
+      if (!mounted) return;
+      _checkExpiry();
+      _startTicker();
+    });
   }
 
   @override
@@ -95,10 +105,7 @@ class _SessionGuardState extends State<SessionGuard>
       behavior: HitTestBehavior.translucent,
       onPointerDown: (_) => _onUserActivity(),
       child: Stack(
-        children: [
-          widget.child,
-          if (_showingWarning) _warningOverlay(),
-        ],
+        children: [widget.child, if (_showingWarning) _warningOverlay()],
       ),
     );
   }

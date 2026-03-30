@@ -559,9 +559,7 @@ class AuthService {
 
   // ── Apply user sync event ──────────────────────────────────────────────────
 
-  static Future<void> applyUserSyncEvent(
-    Map<String, dynamic> payload,
-  ) async {
+  static Future<void> applyUserSyncEvent(Map<String, dynamic> payload) async {
     final box = HiveService.userBox();
 
     final userId = (payload['userId'] ?? '').toString().trim();
@@ -571,10 +569,12 @@ class AuthService {
     final phone = (payload['phone'] ?? '').toString().trim();
     final roleRaw = (payload['role'] ?? '').toString().trim();
     final stationName = (payload['stationName'] ?? '').toString().trim();
-    final assignedRouteId =
-        (payload['assignedRouteId'] ?? '').toString().trim();
-    final assignedRouteName =
-        (payload['assignedRouteName'] ?? '').toString().trim();
+    final assignedRouteId = (payload['assignedRouteId'] ?? '')
+        .toString()
+        .trim();
+    final assignedRouteName = (payload['assignedRouteName'] ?? '')
+        .toString()
+        .trim();
     final phoneVerified = (payload['phoneVerified'] as bool?) ?? false;
     final createdAtRaw = (payload['createdAt'] ?? '').toString().trim();
 
@@ -587,7 +587,11 @@ class AuthService {
       return;
     }
 
-    
+    // ── Admin guard ────────────────────────────────────────────────────────
+    // Never create or overwrite an admin from a sync event.
+    // Admin credentials must always be seeded locally via seedAdminIfMissing.
+    // A remote sync event for an admin only updates non-credential metadata
+    // if the admin already exists locally with a real password.
     if (role == UserRole.admin) {
       final existing = box.get(userId);
       if (existing == null) {

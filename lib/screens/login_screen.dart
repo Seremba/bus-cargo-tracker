@@ -269,9 +269,8 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               onPressed: _loading
                                   ? null
-                                  : () => setState(
-                                        () => _hidePass = !_hidePass,
-                                      ),
+                                  : () =>
+                                        setState(() => _hidePass = !_hidePass),
                             ),
                           ),
                           validator: (value) {
@@ -349,8 +348,7 @@ class _LoginScreenState extends State<LoginScreen> {
                           children: [
                             Expanded(
                               child: Divider(
-                                color:
-                                    cs.outlineVariant.withValues(alpha: 0.5),
+                                color: cs.outlineVariant.withValues(alpha: 0.5),
                               ),
                             ),
                             Padding(
@@ -364,8 +362,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             ),
                             Expanded(
                               child: Divider(
-                                color:
-                                    cs.outlineVariant.withValues(alpha: 0.5),
+                                color: cs.outlineVariant.withValues(alpha: 0.5),
                               ),
                             ),
                           ],
@@ -453,18 +450,17 @@ class _LoginScreenState extends State<LoginScreen> {
                                                   style: TextButton.styleFrom(
                                                     foregroundColor: muted,
                                                     padding:
-                                                        const EdgeInsets
-                                                            .symmetric(
+                                                        const EdgeInsets.symmetric(
                                                           horizontal: 4,
                                                         ),
                                                   ),
                                                   onPressed: _loading
                                                       ? null
                                                       : () => setState(
-                                                            () =>
-                                                                _showCreateHint =
-                                                                    false,
-                                                          ),
+                                                          () =>
+                                                              _showCreateHint =
+                                                                  false,
+                                                        ),
                                                   child: const Text('Cancel'),
                                                 ),
                                                 const Spacer(),
@@ -515,7 +511,6 @@ class _LoginScreenState extends State<LoginScreen> {
         password: password,
       );
 
-      // Check mounted immediately after every async gap
       if (!mounted) return;
 
       if (user == null) {
@@ -526,7 +521,6 @@ class _LoginScreenState extends State<LoginScreen> {
       await SessionService.saveUser(user);
       OutboundQueueRunner.start();
 
-      // Check mounted again after second async gap
       if (!mounted) return;
 
       final Widget destination;

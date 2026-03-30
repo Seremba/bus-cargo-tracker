@@ -95,7 +95,6 @@ void main() async {
   }
 
   await HiveService.openAllBoxes();
-
   await SyncService.ensureDeviceId();
 
   // API key injected via --dart-define and persisted to Hive on first run.
@@ -104,6 +103,10 @@ void main() async {
     await SyncService.setApiKey(injectedKey);
   }
 
+  // ── Seed admin BEFORE sync starts ─────────────────────────────────────────
+  // Must run before AutoSyncService.start() to prevent a remote admin shell
+  // (from a previous install) being pulled in and causing hasAdmin=true with
+  // an empty password hash, which would block the seed and break admin login.
   final hasAdmin = HiveService.userBox().values.any(
     (u) => u.role == UserRole.admin,
   );
@@ -113,11 +116,12 @@ void main() async {
       password: 'admin123',
       fullName: 'System Admin',
     );
-    debugPrint('[Main] Admin seeded on first install.');
   }
 
+  // ── Start sync AFTER seed ──────────────────────────────────────────────────
   await AutoSyncService.instance.start();
 
+  // Phase 5: sync immediately when connectivity is restored.
   Connectivity().onConnectivityChanged.listen((results) {
     final isOnline = results.any((r) => r != ConnectivityResult.none);
     if (isOnline) {
@@ -135,6 +139,9 @@ void main() async {
   runApp(const MyApp());
 }
 
+/// Fetches AT SMS configuration from the Cloudflare Worker /config endpoint.
+/// Runs once on first install. Credentials are cached in Hive so subsequent
+/// launches use the stored values without a network call.
 Future<void> _fetchAndStoreAtConfig() async {
   try {
     final existing = AtSettingsService.getOrCreate();
@@ -168,10 +175,8 @@ Future<void> _fetchAndStoreAtConfig() async {
     await AtSettingsService.save(
       AtSettings(apiKey: apiKey, username: username, senderId: senderId),
     );
-
-    debugPrint('[Config] AT SMS credentials fetched and stored.');
-  } catch (e) {
-    debugPrint('[Config] Failed to fetch AT config: $e');
+  } catch (_) {
+    // Non-fatal — app works without SMS, messages stay queued
   }
 }
 

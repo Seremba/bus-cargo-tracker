@@ -4,7 +4,6 @@ import 'package:bus_cargo_tracker/models/at_settings.dart';
 import 'package:bus_cargo_tracker/services/at_settings_service.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:http/http.dart' as http;
@@ -104,9 +103,6 @@ void main() async {
   }
 
   // ── Seed admin BEFORE sync starts ─────────────────────────────────────────
-  // Must run before AutoSyncService.start() to prevent a remote admin shell
-  // (from a previous install) being pulled in and causing hasAdmin=true with
-  // an empty password hash, which would block the seed and break admin login.
   final hasAdmin = HiveService.userBox().values.any(
     (u) => u.role == UserRole.admin,
   );
@@ -117,6 +113,12 @@ void main() async {
       fullName: 'System Admin',
     );
   }
+
+  // ── Phase 8: Fetch AT SMS config BEFORE starting the app ──────────────────
+  // Awaited with a 5-second timeout so SMS works on first sender registration.
+  // If offline or slow, falls through silently — OutboundQueueRunner retries
+  // every 20 seconds so any queued messages will be sent once config arrives.
+  await _fetchAndStoreAtConfig();
 
   // ── Start sync AFTER seed ──────────────────────────────────────────────────
   await AutoSyncService.instance.start();
@@ -132,16 +134,12 @@ void main() async {
   // F5: TTL checks on startup.
   await PropertyTtlService.runChecks();
 
-  // Phase 8: fetch AT SMS config from Cloudflare on first install.
-  // Fire-and-forget — non-blocking, non-fatal if offline.
-  unawaited(_fetchAndStoreAtConfig());
-
   runApp(const MyApp());
 }
 
 /// Fetches AT SMS configuration from the Cloudflare Worker /config endpoint.
-/// Runs once on first install. Credentials are cached in Hive so subsequent
-/// launches use the stored values without a network call.
+/// Now awaited on startup (with timeout) so credentials are ready before
+/// the first sender registers and triggers an OTP SMS.
 Future<void> _fetchAndStoreAtConfig() async {
   try {
     final existing = AtSettingsService.getOrCreate();
@@ -158,7 +156,7 @@ Future<void> _fetchAndStoreAtConfig() async {
           Uri.parse('https://bus-cargo-sync.pserembae.workers.dev/config'),
           headers: {'X-Api-Key': syncKey},
         )
-        .timeout(const Duration(seconds: 10));
+        .timeout(const Duration(seconds: 5));
 
     if (response.statusCode != 200) return;
 
@@ -176,7 +174,7 @@ Future<void> _fetchAndStoreAtConfig() async {
       AtSettings(apiKey: apiKey, username: username, senderId: senderId),
     );
   } catch (_) {
-    // Non-fatal — app works without SMS, messages stay queued
+    // Non-fatal — OutboundQueueRunner retries every 20s
   }
 }
 

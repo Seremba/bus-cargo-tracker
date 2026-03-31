@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/user_role.dart';
 import '../services/auth_service.dart';
+import '../services/hive_service.dart';
 import '../services/outbound_queue_runner.dart';
 import '../services/session_service.dart';
 import '../services/phone_normalizer.dart';
@@ -56,11 +57,15 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-  Future<void> _openForgotPassword() async {
+  Future<void> _openForgotPassword({String? prefilledPhone}) async {
     if (_loading) return;
     final returnedPhone = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (_) => const ForgotPasswordScreen()),
+      MaterialPageRoute(
+        builder: (_) => ForgotPasswordScreen(
+          initialPhone: prefilledPhone,
+        ),
+      ),
     );
     if (!mounted) return;
     final t = (returnedPhone ?? '').trim();
@@ -96,6 +101,19 @@ class _LoginScreenState extends State<LoginScreen> {
       phoneController.text = PhoneNormalizer.displayUg(t);
       _passwordFocus.requestFocus();
     }
+  }
+
+  /// Checks if a phone number belongs to a shell account (empty password).
+  /// Shell accounts are created by sync when admin creates a user on another device.
+  /// These users need to set their password via OTP before they can login.
+  bool _isShellAccount(String phone) {
+    final digits = PhoneNormalizer.digitsOnly(phone);
+    if (digits.isEmpty) return false;
+    final user = HiveService.userBox().values.where((u) {
+      return PhoneNormalizer.digitsOnly(u.phone) == digits;
+    }).firstOrNull;
+    if (user == null) return false;
+    return user.passwordHash.trim().isEmpty;
   }
 
   @override
@@ -297,7 +315,7 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               textStyle: const TextStyle(fontSize: 13),
                             ),
-                            onPressed: _loading ? null : _openForgotPassword,
+                            onPressed: _loading ? null : () => _openForgotPassword(),
                             child: const Text('Forgot password?'),
                           ),
                         ),
@@ -505,6 +523,18 @@ class _LoginScreenState extends State<LoginScreen> {
     try {
       final phone = phoneController.text.trim();
       final password = passwordController.text.trim();
+
+      // ── Shell account detection ──────────────────────────────────────────
+      // If the account exists but has no password hash, it was created as a
+      // sync shell when admin registered this user on another device.
+      // Redirect to ForgotPasswordScreen so they can set their password
+      // via OTP before logging in for the first time.
+      if (_isShellAccount(phone)) {
+        if (!mounted) return;
+        _toast('First login detected. Please set your password via OTP.');
+        await _openForgotPassword(prefilledPhone: phone);
+        return;
+      }
 
       final user = await AuthService.loginByPhonePassword(
         phone: phone,

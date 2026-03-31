@@ -5,7 +5,12 @@ import '../services/password_reset_service.dart';
 import '../services/phone_normalizer.dart';
 
 class ForgotPasswordScreen extends StatefulWidget {
-  const ForgotPasswordScreen({super.key});
+  /// Optional phone number to pre-fill. Used when redirecting a shell
+  /// account user (staff/driver/desk) to set their password for the
+  /// first time via OTP before they can login.
+  final String? initialPhone;
+
+  const ForgotPasswordScreen({super.key, this.initialPhone});
 
   @override
   State<ForgotPasswordScreen> createState() => _ForgotPasswordScreenState();
@@ -24,6 +29,21 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   bool _loading = false;
   bool _otpSent = false;
   bool _hidePass = true;
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill phone if provided (e.g. from shell account first-login redirect)
+    final init = widget.initialPhone?.trim() ?? '';
+    if (init.isNotEmpty) {
+      _phone.text = PhoneNormalizer.displayUg(init);
+      // Auto-send OTP on next frame so user doesn't have to tap Send OTP
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _sendOtp();
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -52,6 +72,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
         ? ''
         : PhoneNormalizer.displayUg(_phone.text.trim());
 
+    // Show a first-login banner when redirected from shell account detection
+    final isFirstLogin = (widget.initialPhone ?? '').trim().isNotEmpty;
+
     return Scaffold(
       appBar: AppBar(
         elevation: 0,
@@ -72,7 +95,12 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     color: cs.primary.withValues(alpha: 0.12),
                     borderRadius: BorderRadius.circular(14),
                   ),
-                  child: Icon(Icons.lock_reset_outlined, color: cs.primary),
+                  child: Icon(
+                    isFirstLogin
+                        ? Icons.key_outlined
+                        : Icons.lock_reset_outlined,
+                    color: cs.primary,
+                  ),
                 ),
                 const SizedBox(width: 12),
                 Expanded(
@@ -89,7 +117,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        'Reset password',
+                        isFirstLogin ? 'Set your password' : 'Reset password',
                         style: TextStyle(color: muted),
                       ),
                     ],
@@ -97,6 +125,38 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                 ),
               ],
             ),
+
+            // First-login info banner
+            if (isFirstLogin) ...[
+              const SizedBox(height: 14),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: cs.primary.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: cs.primary.withValues(alpha: 0.20),
+                  ),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline, size: 18, color: cs.primary),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        'Your account was created by an administrator. '
+                        'Set your own password using the OTP sent to your phone.',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: cs.onSurface.withValues(alpha: 0.80),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
 
             const SizedBox(height: 18),
 
@@ -117,7 +177,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     Text(
                       _otpSent
                           ? 'Enter OTP and new password'
-                          : 'Reset your password',
+                          : isFirstLogin
+                              ? 'Set your password'
+                              : 'Reset your password',
                       style: const TextStyle(
                         fontWeight: FontWeight.w900,
                         fontSize: 20,
@@ -127,7 +189,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     Text(
                       _otpSent
                           ? 'Enter the OTP you received and choose a new password.'
-                          : 'Enter your phone number and we will send you a reset OTP.',
+                          : isFirstLogin
+                              ? 'An OTP will be sent to your registered phone number.'
+                              : 'Enter your phone number and we will send you a reset OTP.',
                       style: TextStyle(color: muted),
                     ),
 
@@ -168,7 +232,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
                     TextFormField(
                       controller: _phone,
-                      enabled: !_otpSent && !_loading,
+                      enabled: !_otpSent && !_loading && !isFirstLogin,
                       keyboardType: TextInputType.phone,
                       textInputAction: _otpSent
                           ? TextInputAction.next
@@ -191,7 +255,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                           return 'Enter a valid phone number';
                         }
                         if (digits.length > 15) return 'Phone number too long';
-                        if (RegExp(r'^0+$').hasMatch(digits)) {
+                        if (RegExp(r'^0+\$').hasMatch(digits)) {
                           return 'Enter a valid phone number';
                         }
                         if (!_otpSent) {
@@ -325,7 +389,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                                 )
                               : const Icon(Icons.lock_reset),
                           label: Text(
-                            _loading ? 'Resetting…' : 'Reset Password',
+                            _loading ? 'Saving…' : isFirstLogin ? 'Set Password' : 'Reset Password',
                           ),
                         ),
                       ),
@@ -386,7 +450,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
 
     setState(() => _loading = true);
 
-    // Capture display value before async gap
     final displayPhone = PhoneNormalizer.displayUg(_phone.text.trim());
 
     try {
@@ -401,7 +464,6 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       _snack(res.message);
 
       if (res.ok) {
-        // Use Navigator with mounted check already done above
         Navigator.pop(context, displayPhone);
       }
     } finally {

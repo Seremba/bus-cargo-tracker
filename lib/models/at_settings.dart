@@ -1,5 +1,4 @@
 import 'package:hive/hive.dart';
-
 part 'at_settings.g.dart';
 
 @HiveType(typeId: 11)
@@ -20,8 +19,8 @@ class AtSettings extends HiveObject {
 
   AtSettings({
     this.apiKey = '',
-    this.username = 'sandbox',
-    this.isSandbox = true,
-    this.senderId = 'UNExLogstx',
+    this.username = 'unex-logistics', // production username
+    this.isSandbox = false,           // production mode by default
+    this.senderId = '',               // empty until sender ID is approved
   });
 }

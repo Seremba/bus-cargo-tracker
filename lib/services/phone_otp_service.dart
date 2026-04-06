@@ -25,10 +25,12 @@ class PhoneOtpService {
     return sha256.convert(utf8.encode(salted)).toString();
   }
 
+  // FIX: Removed \n newline characters — they trigger UCS-2 encoding which
+  // causes AT to reject the message on the shared AFRICASTKNG sender.
+  // All content is now on a single line using plain GSM-7 characters only.
   static String _buildMessage(String otp, String phone) {
-    return 'UNEX LOGISTICS\n'
-        'Your verification code is: $otp\n'
-        'Valid for ${otpTtlSeconds ~/ 60} minutes.\n'
+    return 'UNEX LOGISTICS Your verification code is: $otp. '
+        'Valid for ${otpTtlSeconds ~/ 60} minutes. '
         'Do not share this code.';
   }
 

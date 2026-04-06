@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:bus_cargo_tracker/models/at_settings.dart';
+import 'package:bus_cargo_tracker/models/twilio_settings.dart';
 import 'package:bus_cargo_tracker/services/at_settings_service.dart';
+import 'package:bus_cargo_tracker/services/twilio_settings_service.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -92,6 +94,10 @@ void main() async {
   if (!Hive.isAdapterRegistered(AtSettingsAdapter().typeId)) {
     Hive.registerAdapter(AtSettingsAdapter());
   }
+  // Twilio settings adapter
+  if (!Hive.isAdapterRegistered(TwilioSettingsAdapter().typeId)) {
+    Hive.registerAdapter(TwilioSettingsAdapter());
+  }
 
   await HiveService.openAllBoxes();
   await SyncService.ensureDeviceId();
@@ -103,6 +109,8 @@ void main() async {
   }
 
   // ── Seed admin BEFORE sync starts ─────────────────────────────────────────
+  // Must run before AutoSyncService.start() to prevent a remote admin shell
+  // from being pulled and causing hasAdmin=true with an empty password hash.
   final hasAdmin = HiveService.userBox().values.any(
     (u) => u.role == UserRole.admin,
   );
@@ -114,11 +122,10 @@ void main() async {
     );
   }
 
-  // ── Phase 8: Fetch AT SMS config BEFORE starting the app ──────────────────
-  // Awaited with a 5-second timeout so SMS works on first sender registration.
-  // If offline or slow, falls through silently — OutboundQueueRunner retries
-  // every 20 seconds so any queued messages will be sent once config arrives.
-  await _fetchAndStoreAtConfig();
+  // ── Fetch SMS config (AT + Twilio) BEFORE starting the app ────────────────
+  // Awaited so credentials are ready before the first OTP is triggered.
+  // Falls through silently if offline — OutboundQueueRunner retries every 20s.
+  await _fetchAndStoreSmsConfig();
 
   // ── Start sync AFTER seed ──────────────────────────────────────────────────
   await AutoSyncService.instance.start();
@@ -137,13 +144,24 @@ void main() async {
   runApp(const MyApp());
 }
 
-/// Fetches AT SMS configuration from the Cloudflare Worker /config endpoint.
-/// Now awaited on startup (with timeout) so credentials are ready before
-/// the first sender registers and triggers an OTP SMS.
-Future<void> _fetchAndStoreAtConfig() async {
+/// Fetches AT + Twilio SMS configuration from the Cloudflare Worker /config
+/// endpoint. Awaited on startup so both providers are ready before the first
+/// sender registers and triggers an OTP SMS.
+///
+/// Smart routing in SmsService:
+///   Uganda numbers (+256) → Africa's Talking (cheaper, local)
+///   International numbers → Twilio (reliable global coverage)
+///   If primary fails → fallback to other provider automatically
+Future<void> _fetchAndStoreSmsConfig() async {
   try {
-    final existing = AtSettingsService.getOrCreate();
-    if (existing.apiKey.trim().isNotEmpty) return;
+    final existingAt = AtSettingsService.getOrCreate();
+    final existingTwilio = TwilioSettingsService.getOrCreate();
+
+    final atConfigured = existingAt.apiKey.trim().isNotEmpty;
+    final twilioConfigured = existingTwilio.isConfigured;
+
+    // Both already configured — nothing to fetch
+    if (atConfigured && twilioConfigured) return;
 
     if (!SyncService.hasApiKey()) return;
     final syncKey =
@@ -164,15 +182,44 @@ Future<void> _fetchAndStoreAtConfig() async {
     final sms = data['sms'] as Map<String, dynamic>?;
     if (sms == null) return;
 
-    final apiKey = (sms['apiKey'] as String? ?? '').trim();
-    final username = (sms['username'] as String? ?? '').trim();
-    final senderId = (sms['senderId'] as String? ?? '').trim();
+    // ── Save AT credentials ────────────────────────────────────────────────
+    if (!atConfigured) {
+      final at = sms['at'] as Map<String, dynamic>?;
+      if (at != null) {
+        final apiKey = (at['apiKey'] as String? ?? '').trim();
+        final username = (at['username'] as String? ?? '').trim();
+        final senderId = (at['senderId'] as String? ?? '').trim();
+        if (apiKey.isNotEmpty && username.isNotEmpty) {
+          await AtSettingsService.save(
+            AtSettings(
+              apiKey: apiKey,
+              username: username,
+              senderId: senderId,
+              isSandbox: false,
+            ),
+          );
+        }
+      }
+    }
 
-    if (apiKey.isEmpty || username.isEmpty) return;
-
-    await AtSettingsService.save(
-      AtSettings(apiKey: apiKey, username: username, senderId: senderId),
-    );
+    // ── Save Twilio credentials ────────────────────────────────────────────
+    if (!twilioConfigured) {
+      final twilio = sms['twilio'] as Map<String, dynamic>?;
+      if (twilio != null) {
+        final accountSid = (twilio['accountSid'] as String? ?? '').trim();
+        final authToken = (twilio['authToken'] as String? ?? '').trim();
+        final from = (twilio['from'] as String? ?? '').trim();
+        if (accountSid.isNotEmpty && authToken.isNotEmpty && from.isNotEmpty) {
+          await TwilioSettingsService.save(
+            TwilioSettings(
+              accountSid: accountSid,
+              authToken: authToken,
+              from: from,
+            ),
+          );
+        }
+      }
+    }
   } catch (_) {
     // Non-fatal — OutboundQueueRunner retries every 20s
   }

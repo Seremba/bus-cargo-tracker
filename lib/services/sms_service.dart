@@ -1,51 +1,49 @@
-import 'package:url_launcher/url_launcher.dart';
 import 'africas_talking_service.dart';
-import 'at_settings_service.dart';
+import 'twilio_service.dart';
 
+/// Smart SMS routing:
+/// - Uganda numbers (+256) → Africa's Talking (cheaper, local)
+/// - International numbers → Twilio (reliable global coverage)
+/// - If primary fails → fallback to the other provider
 class SmsService {
   SmsService._();
 
-  /// Sends an SMS via Africa's Talking if configured.
-  ///
-  /// Returns null on success, error string on failure.
-  ///
-  /// NOTE: This method no longer falls back to the device SMS composer.
-  /// Automated OTP and notification SMS must go via AT only — opening a
-  /// composer is inappropriate for background/automated sends and causes
-  /// unexpected popups (WhatsApp, SMS app etc.) on the driver/staff device.
-  ///
-  /// If AT is not configured, returns an error string so the caller can
-  /// keep the message queued for retry when AT is set up.
   static Future<String?> sendSms({
     required String toPhone,
     required String body,
   }) async {
-    if (!AtSettingsService.isConfigured) {
-      return 'AT SMS not configured — message kept queued for retry.';
+    final isUganda = TwilioService.isUgandaNumber(toPhone);
+
+    if (isUganda) {
+      // Uganda → try AT first, fallback to Twilio
+      final atError = await AfricasTalkingService.sendSms(
+        toPhone: toPhone,
+        body: body,
+      );
+      if (atError == null) return null; // AT succeeded
+
+      // AT failed — fallback to Twilio
+      // ignore: avoid_print
+      print('[SmsService] AT failed for Uganda number, falling back to Twilio: $atError');
+      return TwilioService.sendSms(toPhone: toPhone, body: body);
+    } else {
+      // International → try Twilio first, fallback to AT
+      final twilioError = await TwilioService.sendSms(
+        toPhone: toPhone,
+        body: body,
+      );
+      if (twilioError == null) return null; // Twilio succeeded
+
+      // Twilio failed — fallback to AT
+      // ignore: avoid_print
+      print('[SmsService] Twilio failed for international number, falling back to AT: $twilioError');
+      return AfricasTalkingService.sendSms(toPhone: toPhone, body: body);
     }
-    return AfricasTalkingService.sendSms(toPhone: toPhone, body: body);
   }
 
-  /// Opens the device SMS composer (for manual staff actions only —
-  /// e.g. staff tapping a "Send via SMS" button explicitly).
-  /// Never called automatically by the app.
-  ///
-  /// Returns true if the composer was opened successfully.
-  static Future<bool> openSms({
-    required String toPhone,
-    required String body,
-  }) async {
-    final phone = toPhone.trim();
-    if (phone.isEmpty) return false;
-    final encoded = Uri.encodeComponent(body);
-    final uri = Uri.parse('sms:$phone?body=$encoded');
-    try {
-      final can = await canLaunchUrl(uri);
-      if (!can) return false;
-      await launchUrl(uri);
-      return true;
-    } catch (_) {
-      return false;
-    }
+  /// Opens the device SMS composer as a last resort.
+  static bool openSms({required String toPhone, required String body}) {
+    // Not implemented — SMS composer removed in favour of API-only sending
+    return false;
   }
 }

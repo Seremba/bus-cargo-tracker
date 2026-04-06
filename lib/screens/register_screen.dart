@@ -6,6 +6,54 @@ import '../services/phone_otp_service.dart';
 import 'login_screen.dart';
 import 'otp_verification_screen.dart';
 
+// ── Country definitions ────────────────────────────────────────────────────
+class _Country {
+  final String name;
+  final String flag;
+  final String dialCode;
+  final String placeholder;
+
+  const _Country({
+    required this.name,
+    required this.flag,
+    required this.dialCode,
+    required this.placeholder,
+  });
+}
+
+const List<_Country> _countries = [
+  _Country(
+    name: 'Uganda',
+    flag: '🇺🇬',
+    dialCode: '+256',
+    placeholder: '7XXXXXXXX',
+  ),
+  _Country(
+    name: 'Kenya',
+    flag: '🇰🇪',
+    dialCode: '+254',
+    placeholder: '7XXXXXXXX',
+  ),
+  _Country(
+    name: 'South Sudan',
+    flag: '🇸🇸',
+    dialCode: '+211',
+    placeholder: '9XXXXXXXX',
+  ),
+  _Country(
+    name: 'Rwanda',
+    flag: '🇷🇼',
+    dialCode: '+250',
+    placeholder: '7XXXXXXXX',
+  ),
+  _Country(
+    name: 'DR Congo',
+    flag: '🇨🇩',
+    dialCode: '+243',
+    placeholder: '8XXXXXXXX',
+  ),
+];
+
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
 
@@ -25,6 +73,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _hidePass = true;
   bool _hideConfirmPass = true;
 
+  // Default to Uganda
+  _Country _selectedCountry = _countries.first;
+
   @override
   void dispose() {
     _name.dispose();
@@ -43,32 +94,74 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   String _digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
 
-  String _normalizePhoneUg(String raw) {
-    var d = _digitsOnly(raw.trim());
-    if (d.isEmpty) return '';
-
-    if (d.startsWith('0') && d.length == 10) {
-      d = '256${d.substring(1)}';
-    }
-
-    if (!d.startsWith('256') &&
-        d.length == 9 &&
-        (d.startsWith('7') || d.startsWith('3'))) {
-      d = '256$d';
-    }
-
-    return d;
+  /// Builds full E.164 number from selected country + entered digits.
+  /// e.g. +256 + 704811862 → +256704811862
+  String _buildE164() {
+    final digits = _digitsOnly(_phone.text.trim());
+    if (digits.isEmpty) return '';
+    // Remove leading zero if present (e.g. 0704... → 704...)
+    final cleaned = digits.startsWith('0') ? digits.substring(1) : digits;
+    return '${_selectedCountry.dialCode}$cleaned';
   }
 
-  bool _isValidUgMobileCanonical(String canonical) {
-    if (canonical.length != 12) return false;
-    if (!canonical.startsWith('256')) return false;
+  bool _isValidPhone() {
+    final e164 = _buildE164();
+    // E.164 format: + followed by 7-15 digits
+    return RegExp(r'^\+\d{7,15}$').hasMatch(e164);
+  }
 
-    final after = canonical.substring(3);
-    if (after.length != 9) return false;
-    if (!(after.startsWith('7') || after.startsWith('3'))) return false;
+  Future<void> _showCountryPicker() async {
+    final selected = await showModalBottomSheet<_Country>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 12),
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Select Country',
+              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            ...List.generate(_countries.length, (i) {
+              final c = _countries[i];
+              return ListTile(
+                leading: Text(c.flag, style: const TextStyle(fontSize: 24)),
+                title: Text(c.name),
+                trailing: Text(
+                  c.dialCode,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: Colors.grey,
+                  ),
+                ),
+                onTap: () => Navigator.pop(context, c),
+              );
+            }),
+            const SizedBox(height: 16),
+          ],
+        );
+      },
+    );
 
-    return true;
+    if (selected != null) {
+      setState(() {
+        _selectedCountry = selected;
+        _phone.clear();
+      });
+    }
   }
 
   @override
@@ -152,6 +245,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 14),
 
+                    // Full Name
                     TextFormField(
                       controller: _name,
                       enabled: !_loading,
@@ -170,33 +264,82 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    TextFormField(
-                      controller: _phone,
-                      enabled: !_loading,
-                      keyboardType: TextInputType.phone,
-                      textInputAction: TextInputAction.next,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(15),
+                    // ── Phone with country code picker ──────────────────────
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Country code button
+                        GestureDetector(
+                          onTap: _loading ? null : _showCountryPicker,
+                          child: Container(
+                            height: 56,
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
+                            decoration: BoxDecoration(
+                              border: Border.all(
+                                color: cs.outline.withValues(alpha: 0.6),
+                              ),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  _selectedCountry.flag,
+                                  style: const TextStyle(fontSize: 20),
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _selectedCountry.dialCode,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 14,
+                                  ),
+                                ),
+                                const SizedBox(width: 2),
+                                Icon(
+                                  Icons.arrow_drop_down,
+                                  color: cs.onSurface.withValues(alpha: 0.5),
+                                  size: 18,
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        // Phone number input
+                        Expanded(
+                          child: TextFormField(
+                            controller: _phone,
+                            enabled: !_loading,
+                            keyboardType: TextInputType.phone,
+                            textInputAction: TextInputAction.next,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                              LengthLimitingTextInputFormatter(12),
+                            ],
+                            decoration: InputDecoration(
+                              labelText: 'Phone Number',
+                              hintText: _selectedCountry.placeholder,
+                              helperText:
+                                  'Without leading 0 or country code',
+                              border: const OutlineInputBorder(),
+                            ),
+                            validator: (v) {
+                              if ((v ?? '').trim().isEmpty) {
+                                return 'Phone required';
+                              }
+                              if (!_isValidPhone()) {
+                                return 'Enter a valid phone number';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
                       ],
-                      decoration: const InputDecoration(
-                        labelText: 'Phone',
-                        hintText: '07XXXXXXXX or 2567XXXXXXXX',
-                        helperText: 'We will format your number automatically.',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.phone_outlined),
-                      ),
-                      validator: (v) {
-                        final canonical = _normalizePhoneUg(v ?? '');
-                        if (canonical.isEmpty) return 'Phone required';
-                        if (!_isValidUgMobileCanonical(canonical)) {
-                          return 'Enter a valid UG phone (07.. or 2567..)';
-                        }
-                        return null;
-                      },
                     ),
                     const SizedBox(height: 12),
 
+                    // Password
                     TextFormField(
                       controller: _password,
                       enabled: !_loading,
@@ -208,9 +351,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.lock_outline),
                         suffixIcon: IconButton(
-                          tooltip: _hidePass
-                              ? 'Show password'
-                              : 'Hide password',
+                          tooltip:
+                              _hidePass ? 'Show password' : 'Hide password',
                           icon: Icon(
                             _hidePass
                                 ? Icons.visibility
@@ -218,7 +360,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           ),
                           onPressed: _loading
                               ? null
-                              : () => setState(() => _hidePass = !_hidePass),
+                              : () =>
+                                    setState(() => _hidePass = !_hidePass),
                         ),
                       ),
                       validator: (v) {
@@ -230,6 +373,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 12),
 
+                    // Confirm Password
                     TextFormField(
                       controller: _confirmPassword,
                       enabled: !_loading,
@@ -252,9 +396,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           onPressed: _loading
                               ? null
                               : () => setState(
-                                  () =>
-                                      _hideConfirmPass = !_hideConfirmPass,
-                                ),
+                                    () => _hideConfirmPass =
+                                        !_hideConfirmPass,
+                                  ),
                         ),
                       ),
                       validator: (v) {
@@ -308,9 +452,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
                                   ),
                                 );
                               },
-                        child: const Text(
-                          'Already have an account? Login',
-                        ),
+                        child: const Text('Already have an account? Login'),
                       ),
                     ),
                   ],
@@ -329,9 +471,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
     setState(() => _loading = true);
 
     try {
+      // Build full E.164 phone number with country code
+      final fullPhone = _buildE164();
+
       final user = await AuthService.registerSender(
         fullName: _name.text,
-        phone: _phone.text,
+        phone: fullPhone,
         password: _password.text,
       );
 
@@ -342,16 +487,12 @@ class _RegisterScreenState extends State<RegisterScreen> {
         return;
       }
 
-      // S3: generate OTP and send via AT SMS before navigating.
-      // If SMS fails (e.g. AT sandbox not configured), we still
-      // navigate to the verification screen — the sender can tap Resend.
       try {
         await PhoneOtpService.generateAndSend(
           userId: user.id,
           phone: user.phone,
         );
       } catch (e) {
-        // SMS send failed — navigate anyway, resend available on next screen.
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -366,8 +507,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
       if (!mounted) return;
 
-      // Navigate to OTP verification screen.
-      // Use pushReplacement so back button doesn't return to registration.
       Navigator.pushReplacement(
         context,
         MaterialPageRoute(

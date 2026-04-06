@@ -164,14 +164,10 @@ class PasswordResetService {
       'lastSentAtMs': now.millisecondsSinceEpoch,
     });
 
-    final body = '''
-UNEX LOGISTICS
-
-Your password reset OTP is: $otp
-
-Do not share this code with anyone.
-This code expires in ${otpExpiry.inMinutes} minutes.
-''';
+    final body =
+        'UNEX LOGISTICS Your password reset OTP is: $otp. '
+        'Valid for ${otpExpiry.inMinutes} minutes. '
+        'Do not share this code.';
 
     await OutboundMessageService.queue(
       toPhone: msgPhone,

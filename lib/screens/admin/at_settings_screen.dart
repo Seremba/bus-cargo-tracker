@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../../../services/at_settings_service.dart';
+import '../../../../models/twilio_settings.dart';
 import '../../../../services/africas_talking_service.dart';
+import '../../../../services/at_settings_service.dart';
+import '../../../../services/twilio_service.dart';
+import '../../../../services/twilio_settings_service.dart';
 import '../../../../ui/app_colors.dart';
 
 class AtSettingsScreen extends StatefulWidget {
@@ -12,41 +15,69 @@ class AtSettingsScreen extends StatefulWidget {
 }
 
 class _AtSettingsScreenState extends State<AtSettingsScreen> {
-  late final TextEditingController _apiKey;
-  late final TextEditingController _username;
-  late final TextEditingController _senderId;
+  // ── AT controllers ──
+  late final TextEditingController _atApiKey;
+  late final TextEditingController _atUsername;
+  late final TextEditingController _atSenderId;
   late bool _isSandbox;
+
+  // ── Twilio controllers ──
+  late final TextEditingController _twilioSid;
+  late final TextEditingController _twilioToken;
+  late final TextEditingController _twilioFrom;
+
   bool _saving = false;
-  bool _testing = false;
-  String? _testResult;
+  bool _testingAt = false;
+  bool _testingTwilio = false;
+  String? _atTestResult;
+  String? _twilioTestResult;
 
   @override
   void initState() {
     super.initState();
-    final s = AtSettingsService.getOrCreate();
-    _apiKey    = TextEditingController(text: s.apiKey);
-    _username  = TextEditingController(text: s.username);
-    _senderId  = TextEditingController(text: s.senderId);
-    _isSandbox = s.isSandbox;
+    final at = AtSettingsService.getOrCreate();
+    _atApiKey   = TextEditingController(text: at.apiKey);
+    _atUsername = TextEditingController(text: at.username);
+    _atSenderId = TextEditingController(text: at.senderId);
+    _isSandbox  = at.isSandbox;
+
+    final tw = TwilioSettingsService.getOrCreate();
+    _twilioSid   = TextEditingController(text: tw.accountSid);
+    _twilioToken = TextEditingController(text: tw.authToken);
+    _twilioFrom  = TextEditingController(text: tw.from);
   }
 
   @override
   void dispose() {
-    _apiKey.dispose();
-    _username.dispose();
-    _senderId.dispose();
+    _atApiKey.dispose();
+    _atUsername.dispose();
+    _atSenderId.dispose();
+    _twilioSid.dispose();
+    _twilioToken.dispose();
+    _twilioFrom.dispose();
     super.dispose();
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final s = AtSettingsService.getOrCreate();
-      s.apiKey   = _apiKey.text.trim();
-      s.username = _username.text.trim();
-      s.senderId = _senderId.text.trim();
-      s.isSandbox = _isSandbox;
-      await AtSettingsService.save(s);
+      // Save AT settings
+      final at = AtSettingsService.getOrCreate();
+      at.apiKey   = _atApiKey.text.trim();
+      at.username = _atUsername.text.trim();
+      at.senderId = _atSenderId.text.trim();
+      at.isSandbox = _isSandbox;
+      await AtSettingsService.save(at);
+
+      // Save Twilio settings
+      await TwilioSettingsService.save(
+        TwilioSettings(
+          accountSid: _twilioSid.text.trim(),
+          authToken:  _twilioToken.text.trim(),
+          from:       _twilioFrom.text.trim(),
+        ),
+      );
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Settings saved ✅')),
@@ -56,8 +87,8 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
     }
   }
 
-  Future<void> _testSms() async {
-    final phone = await showDialog<String>(
+  Future<String?> _askPhone() async {
+    return showDialog<String>(
       context: context,
       builder: (_) {
         final c = TextEditingController();
@@ -67,7 +98,7 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
             controller: c,
             keyboardType: TextInputType.phone,
             decoration: const InputDecoration(
-              labelText: 'Phone number (e.g. 0700123456)',
+              labelText: 'Phone (e.g. +256704811862)',
               border: OutlineInputBorder(),
             ),
           ),
@@ -84,17 +115,35 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
         );
       },
     );
+  }
 
+  Future<void> _testAt() async {
+    final phone = await _askPhone();
     if (phone == null || phone.isEmpty) return;
-    setState(() { _testing = true; _testResult = null; });
+    setState(() { _testingAt = true; _atTestResult = null; });
     try {
       final err = await AfricasTalkingService.sendSms(
         toPhone: phone,
-        body: 'UNEx Logistics test message. If you receive this, SMS is working ✅',
+        body: 'UNEx Logistics test message via Africa\'s Talking. SMS is working.',
       );
-      setState(() => _testResult = err == null ? 'Sent ✅' : 'Failed: $err');
+      setState(() => _atTestResult = err == null ? 'Sent ✅' : 'Failed: $err');
     } finally {
-      if (mounted) setState(() => _testing = false);
+      if (mounted) setState(() => _testingAt = false);
+    }
+  }
+
+  Future<void> _testTwilio() async {
+    final phone = await _askPhone();
+    if (phone == null || phone.isEmpty) return;
+    setState(() { _testingTwilio = true; _twilioTestResult = null; });
+    try {
+      final err = await TwilioService.sendSms(
+        toPhone: phone,
+        body: 'UNEx Logistics test message via Twilio. SMS is working.',
+      );
+      setState(() => _twilioTestResult = err == null ? 'Sent ✅' : 'Failed: $err');
+    } finally {
+      if (mounted) setState(() => _testingTwilio = false);
     }
   }
 
@@ -106,12 +155,44 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
     return Scaffold(
       appBar: AppBar(
         centerTitle: true,
-        title: const Text('SMS Settings (Africa\'s Talking)'),
+        title: const Text('SMS Settings'),
       ),
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          // ── Mode toggle ──
+
+          // ── Routing info ──────────────────────────────────────────────
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: cs.primary.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: cs.primary.withValues(alpha: 0.18)),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(Icons.alt_route_outlined, size: 18, color: cs.primary),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Smart routing: Uganda numbers (+256) use Africa\'s Talking. '
+                    'International numbers (Kenya, South Sudan, Rwanda, DRC) use Twilio. '
+                    'Each provider falls back to the other if the primary fails.',
+                    style: TextStyle(fontSize: 12, color: cs.onSurface.withValues(alpha: 0.80)),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // ════════════════════════════════════════════════════════════════
+          // AFRICA'S TALKING
+          // ════════════════════════════════════════════════════════════════
+          _sectionHeader('Africa\'s Talking', 'Uganda numbers', Icons.sms_outlined, cs),
+          const SizedBox(height: 8),
+
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
@@ -138,12 +219,10 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
                       decoration: BoxDecoration(
                         color: Colors.orange.withValues(alpha: 0.10),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: Colors.orange.withValues(alpha: 0.30)),
+                        border: Border.all(color: Colors.orange.withValues(alpha: 0.30)),
                       ),
                       child: const Row(children: [
-                        Icon(Icons.warning_amber_outlined,
-                            size: 16, color: Colors.orange),
+                        Icon(Icons.warning_amber_outlined, size: 16, color: Colors.orange),
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
@@ -157,9 +236,8 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
-          // ── Credentials ──
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
@@ -169,36 +247,33 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
                   _sectionLabel('Credentials', cs),
                   const SizedBox(height: 12),
                   TextFormField(
-                    controller: _username,
+                    controller: _atUsername,
                     decoration: const InputDecoration(
                       labelText: 'Username',
-                      hintText: 'sandbox (for testing) or your AT username',
+                      hintText: 'unex-logistics',
                       border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
-                    controller: _apiKey,
+                    controller: _atApiKey,
                     obscureText: true,
                     decoration: const InputDecoration(
                       labelText: 'API Key',
-                      hintText: 'From Africa\'s Talking → Settings → API Key',
                       border: OutlineInputBorder(),
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'Find your API key at account.africastalking.com → '
-                    'Settings → API Key',
+                    'Find your API key at account.africastalking.com → Settings → API Key',
                     style: TextStyle(fontSize: 11, color: muted),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 8),
 
-          // ── Sender ID ──
           Card(
             child: Padding(
               padding: const EdgeInsets.all(14),
@@ -208,35 +283,127 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
                   _sectionLabel('Sender ID', cs),
                   const SizedBox(height: 12),
                   TextFormField(
-                    controller: _senderId,
+                    controller: _atSenderId,
                     maxLength: 11,
                     decoration: const InputDecoration(
                       labelText: 'Sender name (max 11 chars)',
-                      hintText: 'e.g. UNExLogstx',
+                      hintText: 'e.g. ATInfo',
                       border: OutlineInputBorder(),
                       counterText: '',
                     ),
                   ),
                   const SizedBox(height: 6),
                   Text(
-                    'This is what receivers see as the SMS sender. '
                     'Leave empty to use Africa\'s Talking default shortcode. '
-                    'Alphanumeric sender IDs require approval from AT for production.',
+                    'Alphanumeric sender IDs require approval from AT.',
                     style: TextStyle(fontSize: 11, color: muted),
                   ),
                 ],
               ),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
-          // ── Save button ──
+          // AT test button
+          OutlinedButton.icon(
+            icon: _testingAt
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.sms_outlined),
+            label: const Text('Test Africa\'s Talking SMS'),
+            onPressed: _testingAt ? null : _testAt,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              foregroundColor: AppColors.primary,
+              side: BorderSide(color: AppColors.primary),
+            ),
+          ),
+
+          if (_atTestResult != null) ...[
+            const SizedBox(height: 8),
+            _resultBox(_atTestResult!),
+          ],
+
+          const SizedBox(height: 24),
+          const Divider(),
+          const SizedBox(height: 16),
+
+          // ════════════════════════════════════════════════════════════════
+          // TWILIO
+          // ════════════════════════════════════════════════════════════════
+          _sectionHeader('Twilio', 'International numbers', Icons.public_outlined, cs),
+          const SizedBox(height: 8),
+
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _sectionLabel('Credentials', cs),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _twilioSid,
+                    decoration: const InputDecoration(
+                      labelText: 'Account SID',
+                      hintText: 'ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _twilioToken,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Auth Token',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: _twilioFrom,
+                    decoration: const InputDecoration(
+                      labelText: 'From Number',
+                      hintText: '+16416145221',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Find these at console.twilio.com. '
+                    'Trial accounts can only send to verified numbers.',
+                    style: TextStyle(fontSize: 11, color: muted),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+
+          // Twilio test button
+          OutlinedButton.icon(
+            icon: _testingTwilio
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                : const Icon(Icons.public_outlined),
+            label: const Text('Test Twilio SMS'),
+            onPressed: _testingTwilio ? null : _testTwilio,
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size(double.infinity, 48),
+              foregroundColor: Colors.blue.shade700,
+              side: BorderSide(color: Colors.blue.shade700),
+            ),
+          ),
+
+          if (_twilioTestResult != null) ...[
+            const SizedBox(height: 8),
+            _resultBox(_twilioTestResult!),
+          ],
+
+          const SizedBox(height: 24),
+
+          // ── Save button ──────────────────────────────────────────────
           ElevatedButton.icon(
             icon: _saving
-                ? const SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: Colors.white))
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Icon(Icons.save_outlined),
             label: const Text('Save Settings'),
             onPressed: _saving ? null : _save,
@@ -246,52 +413,31 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
               foregroundColor: Colors.white,
             ),
           ),
-          const SizedBox(height: 12),
-
-          // ── Test SMS button ──
-          OutlinedButton.icon(
-            icon: _testing
-                ? const SizedBox(
-                    width: 18, height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2))
-                : const Icon(Icons.sms_outlined),
-            label: const Text('Send Test SMS'),
-            onPressed: _testing ? null : _testSms,
-            style: OutlinedButton.styleFrom(
-              minimumSize: const Size(double.infinity, 50),
-              foregroundColor: AppColors.primary,
-              side: BorderSide(color: AppColors.primary),
-            ),
-          ),
-
-          if (_testResult != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: _testResult!.contains('✅')
-                    ? Colors.green.withValues(alpha: 0.08)
-                    : Colors.red.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: _testResult!.contains('✅')
-                      ? Colors.green.withValues(alpha: 0.30)
-                      : Colors.red.withValues(alpha: 0.30),
-                ),
-              ),
-              child: Text(
-                _testResult!,
-                style: TextStyle(
-                  fontSize: 13,
-                  color: _testResult!.contains('✅')
-                      ? Colors.green.shade700
-                      : Colors.red.shade700,
-                ),
-              ),
-            ),
-          ],
         ],
       ),
+    );
+  }
+
+  Widget _sectionHeader(String title, String subtitle, IconData icon, ColorScheme cs) {
+    return Row(
+      children: [
+        Container(
+          width: 36, height: 36,
+          decoration: BoxDecoration(
+            color: cs.primary.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(icon, size: 18, color: cs.primary),
+        ),
+        const SizedBox(width: 10),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(title, style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 15)),
+            Text(subtitle, style: TextStyle(fontSize: 11, color: cs.onSurface.withValues(alpha: 0.55))),
+          ],
+        ),
+      ],
     );
   }
 
@@ -299,12 +445,28 @@ class _AtSettingsScreenState extends State<AtSettingsScreen> {
     return Row(children: [
       Container(
         width: 3, height: 16,
-        decoration: BoxDecoration(
-            color: cs.primary, borderRadius: BorderRadius.circular(2)),
+        decoration: BoxDecoration(color: cs.primary, borderRadius: BorderRadius.circular(2)),
       ),
       const SizedBox(width: 8),
-      Text(text,
-          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+      Text(text, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
     ]);
+  }
+
+  Widget _resultBox(String result) {
+    final ok = result.contains('✅');
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: ok ? Colors.green.withValues(alpha: 0.08) : Colors.red.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: ok ? Colors.green.withValues(alpha: 0.30) : Colors.red.withValues(alpha: 0.30),
+        ),
+      ),
+      child: Text(
+        result,
+        style: TextStyle(fontSize: 13, color: ok ? Colors.green.shade700 : Colors.red.shade700),
+      ),
+    );
   }
 }

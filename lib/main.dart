@@ -94,7 +94,6 @@ void main() async {
   if (!Hive.isAdapterRegistered(AtSettingsAdapter().typeId)) {
     Hive.registerAdapter(AtSettingsAdapter());
   }
-  // Twilio settings adapter
   if (!Hive.isAdapterRegistered(TwilioSettingsAdapter().typeId)) {
     Hive.registerAdapter(TwilioSettingsAdapter());
   }
@@ -109,8 +108,6 @@ void main() async {
   }
 
   // ── Seed admin BEFORE sync starts ─────────────────────────────────────────
-  // Must run before AutoSyncService.start() to prevent a remote admin shell
-  // from being pulled and causing hasAdmin=true with an empty password hash.
   final hasAdmin = HiveService.userBox().values.any(
     (u) => u.role == UserRole.admin,
   );
@@ -122,9 +119,35 @@ void main() async {
     );
   }
 
-  // ── Fetch SMS config (AT + Twilio) BEFORE starting the app ────────────────
-  // Awaited so credentials are ready before the first OTP is triggered.
-  // Falls through silently if offline — OutboundQueueRunner retries every 20s.
+  // ── TEMPORARY: Seed Twilio credentials via --dart-define ──────────────────
+  // Credentials are injected at build time so they never appear in source code.
+  // Used for debug testing since the Cloudflare config fetch is blocked by the
+  // Flutter debug network proxy. In release builds, _fetchAndStoreSmsConfig()
+  // fetches credentials from Cloudflare automatically.
+  //
+  // Usage:
+  //   flutter run \
+  //     --dart-define=SYNC_API_KEY=... \
+  //     --dart-define=TWILIO_SID=AC... \
+  //     --dart-define=TWILIO_TOKEN=... \
+  //     --dart-define=TWILIO_FROM=+1...
+  const twilioSid   = String.fromEnvironment('TWILIO_SID',   defaultValue: '');
+  const twilioToken = String.fromEnvironment('TWILIO_TOKEN', defaultValue: '');
+  const twilioFrom  = String.fromEnvironment('TWILIO_FROM',  defaultValue: '');
+
+  final existingTw = TwilioSettingsService.getOrCreate();
+  if (!existingTw.isConfigured && twilioSid.isNotEmpty) {
+    await TwilioSettingsService.save(
+      TwilioSettings(
+        accountSid: twilioSid,
+        authToken:  twilioToken,
+        from:       twilioFrom,
+      ),
+    );
+  }
+
+  // ── Fetch SMS config (AT + Twilio) from Cloudflare Worker ─────────────────
+  // Works in release builds. Falls through silently in debug due to proxy.
   await _fetchAndStoreSmsConfig();
 
   // ── Start sync AFTER seed ──────────────────────────────────────────────────
@@ -144,14 +167,6 @@ void main() async {
   runApp(const MyApp());
 }
 
-/// Fetches AT + Twilio SMS configuration from the Cloudflare Worker /config
-/// endpoint. Awaited on startup so both providers are ready before the first
-/// sender registers and triggers an OTP SMS.
-///
-/// Smart routing in SmsService:
-///   Uganda numbers (+256) → Africa's Talking (cheaper, local)
-///   International numbers → Twilio (reliable global coverage)
-///   If primary fails → fallback to other provider automatically
 Future<void> _fetchAndStoreSmsConfig() async {
   try {
     final existingAt = AtSettingsService.getOrCreate();
@@ -160,7 +175,6 @@ Future<void> _fetchAndStoreSmsConfig() async {
     final atConfigured = existingAt.apiKey.trim().isNotEmpty;
     final twilioConfigured = existingTwilio.isConfigured;
 
-    // Both already configured — nothing to fetch
     if (atConfigured && twilioConfigured) return;
 
     if (!SyncService.hasApiKey()) return;
@@ -182,11 +196,10 @@ Future<void> _fetchAndStoreSmsConfig() async {
     final sms = data['sms'] as Map<String, dynamic>?;
     if (sms == null) return;
 
-    // ── Save AT credentials ────────────────────────────────────────────────
     if (!atConfigured) {
       final at = sms['at'] as Map<String, dynamic>?;
       if (at != null) {
-        final apiKey = (at['apiKey'] as String? ?? '').trim();
+        final apiKey  = (at['apiKey']   as String? ?? '').trim();
         final username = (at['username'] as String? ?? '').trim();
         final senderId = (at['senderId'] as String? ?? '').trim();
         if (apiKey.isNotEmpty && username.isNotEmpty) {
@@ -202,19 +215,18 @@ Future<void> _fetchAndStoreSmsConfig() async {
       }
     }
 
-    // ── Save Twilio credentials ────────────────────────────────────────────
     if (!twilioConfigured) {
       final twilio = sms['twilio'] as Map<String, dynamic>?;
       if (twilio != null) {
         final accountSid = (twilio['accountSid'] as String? ?? '').trim();
-        final authToken = (twilio['authToken'] as String? ?? '').trim();
-        final from = (twilio['from'] as String? ?? '').trim();
+        final authToken  = (twilio['authToken']  as String? ?? '').trim();
+        final from       = (twilio['from']        as String? ?? '').trim();
         if (accountSid.isNotEmpty && authToken.isNotEmpty && from.isNotEmpty) {
           await TwilioSettingsService.save(
             TwilioSettings(
               accountSid: accountSid,
-              authToken: authToken,
-              from: from,
+              authToken:  authToken,
+              from:       from,
             ),
           );
         }

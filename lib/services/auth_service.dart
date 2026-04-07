@@ -11,14 +11,6 @@ import 'role_guard.dart';
 import 'sync_service.dart';
 
 class AuthService {
-  //
-  // 100,000 rounds makes brute-force ~100,000x more expensive than plain
-  // SHA-256 while adding only ~15 ms on a low-end Android device at login.
-  //
-  // Salt is a 16-byte hex string stored on the User model (field 10).
-  // Format stored in passwordHash: "v2:<base64(hash)>"
-  // Legacy hashes (no prefix) are detected and migrated on next login.
-
   static const int _hashRounds = 100000;
   static const String _hashVersion = 'v2';
 
@@ -56,10 +48,28 @@ class AuthService {
     ).map((b) => b.toRadixString(16).padLeft(2, '0')).join();
   }
 
+  // ── Phone suffix matching ──────────────────────────────────────────────────
+  // Matches on last 9 digits to handle all phone formats:
+  //   0704811862    → suffix: 704811862
+  //   256704811862  → suffix: 704811862
+  //   +256704811862 → suffix: 704811862
+  // This ensures login works regardless of whether the stored phone has a
+  // country code prefix or not.
+  static String _phoneSuffix(String phone) {
+    final digits = PhoneNormalizer.digitsOnly(phone);
+    if (digits.length <= 9) return digits;
+    return digits.substring(digits.length - 9);
+  }
+
+  static bool _phonesMatch(String phoneA, String phoneB) {
+    final a = _phoneSuffix(phoneA);
+    final b = _phoneSuffix(phoneB);
+    if (a.isEmpty || b.isEmpty) return false;
+    return a == b;
+  }
+
   // ── Sync payload helper ────────────────────────────────────────────────────
 
-  /// Builds the sync payload for a user. Intentionally excludes
-  /// passwordHash and passwordSalt — credentials never leave the device.
   static Map<String, dynamic> _userSyncPayload(User user) {
     return {
       'userId': user.id,
@@ -99,11 +109,7 @@ class AuthService {
     if (cleanName.isEmpty) return;
     if (cleanPhone.isEmpty) return;
 
-    final phoneTaken = box.values.any(
-      (u) =>
-          PhoneNormalizer.digitsOnly(u.phone) ==
-          PhoneNormalizer.digitsOnly(cleanPhone),
-    );
+    final phoneTaken = box.values.any((u) => _phonesMatch(u.phone, cleanPhone));
     if (phoneTaken) return;
 
     final id = _generateUserId();
@@ -125,8 +131,6 @@ class AuthService {
 
     await box.put(id, admin);
 
-    // Phase 6: sync seeded admin so other devices know this user exists.
-    // Credentials are never included in the payload.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userCreated,
@@ -136,9 +140,7 @@ class AuthService {
         payload: _userSyncPayload(admin),
         aggregateVersion: 1,
       );
-    } catch (_) {
-      // Local-first: user exists locally even if sync queueing fails.
-    }
+    } catch (_) {}
   }
 
   // ── Role helpers ───────────────────────────────────────────────────────────
@@ -244,11 +246,9 @@ class AuthService {
       }
     }
 
-    final exists = box.values.any(
-      (u) =>
-          PhoneNormalizer.digitsOnly(u.phone) ==
-          PhoneNormalizer.digitsOnly(cleanPhone),
-    );
+    // Use suffix matching to prevent duplicate phone registrations
+    // regardless of how the country code is formatted
+    final exists = box.values.any((u) => _phonesMatch(u.phone, cleanPhone));
     if (exists) return null;
 
     final id = _generateUserId();
@@ -274,8 +274,6 @@ class AuthService {
 
     await box.put(id, user);
 
-    // Phase 6: sync new user so other devices can authenticate them.
-    // Credentials (passwordHash, passwordSalt) are never included.
     try {
       await SyncService.enqueue(
         type: SyncEventType.userCreated,
@@ -285,9 +283,7 @@ class AuthService {
         payload: _userSyncPayload(user),
         aggregateVersion: 1,
       );
-    } catch (_) {
-      // Local-first: user exists locally even if sync queueing fails.
-    }
+    } catch (_) {}
 
     return user;
   }
@@ -334,16 +330,12 @@ class AuthService {
     required UserRole role,
   }) async {
     final box = HiveService.userBox();
-
-    final inputDigits = PhoneNormalizer.digitsOnly(phone);
-    if (inputDigits.isEmpty) return null;
+    if (PhoneNormalizer.digitsOnly(phone).isEmpty) return null;
 
     try {
-      final user = box.values.firstWhere((u) {
-        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
-        return storedDigits == inputDigits && u.role == role;
-      });
-
+      final user = box.values.firstWhere(
+        (u) => _phonesMatch(u.phone, phone) && u.role == role,
+      );
       if (!await _verifyAndMigrate(user, password)) return null;
       return user;
     } catch (_) {
@@ -351,26 +343,35 @@ class AuthService {
     }
   }
 
+  // ── Login by phone + password (role-agnostic) ─────────────────────────────
+  // Uses last-9-digit suffix matching so phones stored with or without
+  // country code prefix all resolve to the same account.
   static Future<User?> loginByPhonePassword({
     required String phone,
     required String password,
   }) async {
     final box = HiveService.userBox();
 
-    final inputDigits = PhoneNormalizer.digitsOnly(phone);
-    if (inputDigits.isEmpty) return null;
+    if (PhoneNormalizer.digitsOnly(phone).isEmpty) return null;
 
-    try {
-      final user = box.values.firstWhere((u) {
-        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
-        return storedDigits == inputDigits;
-      });
+    final candidates = box.values
+        .where((u) => _phonesMatch(u.phone, phone))
+        .toList();
 
-      if (!await _verifyAndMigrate(user, password)) return null;
-      return user;
-    } catch (_) {
-      return null;
+    if (candidates.isEmpty) return null;
+
+    // Admin first so admin login is never shadowed by another role
+    candidates.sort((a, b) {
+      if (a.role == UserRole.admin) return -1;
+      if (b.role == UserRole.admin) return 1;
+      return 0;
+    });
+
+    for (final user in candidates) {
+      if (await _verifyAndMigrate(user, password)) return user;
     }
+
+    return null;
   }
 
   // ── Admin password reset ───────────────────────────────────────────────────
@@ -588,25 +589,17 @@ class AuthService {
     }
 
     // ── Admin guard ────────────────────────────────────────────────────────
-    // Never create or overwrite an admin from a sync event.
-    // Admin credentials must always be seeded locally via seedAdminIfMissing.
-    // A remote sync event for an admin only updates non-credential metadata
-    // if the admin already exists locally with a real password.
     if (role == UserRole.admin) {
       final existing = box.get(userId);
-      if (existing == null) {
-        // No local admin — do NOT create a shell. Seed handles this.
-        return;
-      }
-      // Admin exists locally — only update safe profile fields, never credentials.
+      if (existing == null) return;
       final hasRealPassword = existing.passwordHash.trim().isNotEmpty;
-      if (!hasRealPassword) return; // shell admin — don't touch it
+      if (!hasRealPassword) return;
       final updated = User(
         id: existing.id,
         fullName: fullName,
         phone: phone,
-        passwordHash: existing.passwordHash, // never overwrite
-        passwordSalt: existing.passwordSalt, // never overwrite
+        passwordHash: existing.passwordHash,
+        passwordSalt: existing.passwordSalt,
         role: existing.role,
         stationName: existing.stationName,
         createdAt: existing.createdAt,
@@ -622,15 +615,12 @@ class AuthService {
     final existing = box.get(userId);
 
     if (existing != null) {
-      // User exists locally — never overwrite a real password with a shell.
-      final hasRealPassword = existing.passwordHash.trim().isNotEmpty;
-
       final updated = User(
         id: existing.id,
         fullName: fullName,
         phone: phone,
-        passwordHash: existing.passwordHash, // never overwrite
-        passwordSalt: existing.passwordSalt, // never overwrite
+        passwordHash: existing.passwordHash,
+        passwordSalt: existing.passwordSalt,
         role: role,
         stationName: stationName.isEmpty ? existing.stationName : stationName,
         createdAt: existing.createdAt,
@@ -644,21 +634,17 @@ class AuthService {
         phoneVerified: phoneVerified,
       );
       await box.put(userId, updated);
-
-      // Suppress unused variable warning
-      assert(hasRealPassword || true);
       return;
     }
 
     // New non-admin user from remote — create a shell with no password.
-    // They cannot log in until admin resets their password locally.
     final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
 
     final shell = User(
       id: userId,
       fullName: fullName,
       phone: phone,
-      passwordHash: '', // no credentials until set locally
+      passwordHash: '',
       passwordSalt: null,
       role: role,
       stationName: stationName.isEmpty ? null : stationName,

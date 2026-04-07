@@ -1,58 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 
 import '../services/auth_service.dart';
 import '../services/phone_otp_service.dart';
 import 'login_screen.dart';
 import 'otp_verification_screen.dart';
-
-// ── Country definitions ────────────────────────────────────────────────────
-class _Country {
-  final String name;
-  final String flag;
-  final String dialCode;
-  final String placeholder;
-
-  const _Country({
-    required this.name,
-    required this.flag,
-    required this.dialCode,
-    required this.placeholder,
-  });
-}
-
-const List<_Country> _countries = [
-  _Country(
-    name: 'Uganda',
-    flag: '🇺🇬',
-    dialCode: '+256',
-    placeholder: '7XXXXXXXX',
-  ),
-  _Country(
-    name: 'Kenya',
-    flag: '🇰🇪',
-    dialCode: '+254',
-    placeholder: '7XXXXXXXX',
-  ),
-  _Country(
-    name: 'South Sudan',
-    flag: '🇸🇸',
-    dialCode: '+211',
-    placeholder: '9XXXXXXXX',
-  ),
-  _Country(
-    name: 'Rwanda',
-    flag: '🇷🇼',
-    dialCode: '+250',
-    placeholder: '7XXXXXXXX',
-  ),
-  _Country(
-    name: 'DR Congo',
-    flag: '🇨🇩',
-    dialCode: '+243',
-    placeholder: '8XXXXXXXX',
-  ),
-];
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -65,7 +17,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _name = TextEditingController();
-  final _phone = TextEditingController();
   final _password = TextEditingController();
   final _confirmPassword = TextEditingController();
 
@@ -73,13 +24,13 @@ class _RegisterScreenState extends State<RegisterScreen> {
   bool _hidePass = true;
   bool _hideConfirmPass = true;
 
-  // Default to Uganda
-  _Country _selectedCountry = _countries.first;
+  // Full E.164 phone number built by IntlPhoneField
+  String _fullPhone = '';
+  bool _phoneValid = false;
 
   @override
   void dispose() {
     _name.dispose();
-    _phone.dispose();
     _password.dispose();
     _confirmPassword.dispose();
     super.dispose();
@@ -90,78 +41,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
     m.clearSnackBars();
     m.hideCurrentSnackBar();
     m.showSnackBar(SnackBar(content: Text(msg)));
-  }
-
-  String _digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
-
-  /// Builds full E.164 number from selected country + entered digits.
-  /// e.g. +256 + 704811862 → +256704811862
-  String _buildE164() {
-    final digits = _digitsOnly(_phone.text.trim());
-    if (digits.isEmpty) return '';
-    // Remove leading zero if present (e.g. 0704... → 704...)
-    final cleaned = digits.startsWith('0') ? digits.substring(1) : digits;
-    return '${_selectedCountry.dialCode}$cleaned';
-  }
-
-  bool _isValidPhone() {
-    final e164 = _buildE164();
-    // E.164 format: + followed by 7-15 digits
-    return RegExp(r'^\+\d{7,15}$').hasMatch(e164);
-  }
-
-  Future<void> _showCountryPicker() async {
-    final selected = await showModalBottomSheet<_Country>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Select Country',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            ...List.generate(_countries.length, (i) {
-              final c = _countries[i];
-              return ListTile(
-                leading: Text(c.flag, style: const TextStyle(fontSize: 24)),
-                title: Text(c.name),
-                trailing: Text(
-                  c.dialCode,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey,
-                  ),
-                ),
-                onTap: () => Navigator.pop(context, c),
-              );
-            }),
-            const SizedBox(height: 16),
-          ],
-        );
-      },
-    );
-
-    if (selected != null) {
-      setState(() {
-        _selectedCountry = selected;
-        _phone.clear();
-      });
-    }
   }
 
   @override
@@ -264,78 +143,28 @@ class _RegisterScreenState extends State<RegisterScreen> {
                     ),
                     const SizedBox(height: 12),
 
-                    // ── Phone with country code picker ──────────────────────
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        // Country code button
-                        GestureDetector(
-                          onTap: _loading ? null : _showCountryPicker,
-                          child: Container(
-                            height: 56,
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                            decoration: BoxDecoration(
-                              border: Border.all(
-                                color: cs.outline.withValues(alpha: 0.6),
-                              ),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _selectedCountry.flag,
-                                  style: const TextStyle(fontSize: 20),
-                                ),
-                                const SizedBox(width: 4),
-                                Text(
-                                  _selectedCountry.dialCode,
-                                  style: const TextStyle(
-                                    fontWeight: FontWeight.w600,
-                                    fontSize: 14,
-                                  ),
-                                ),
-                                const SizedBox(width: 2),
-                                Icon(
-                                  Icons.arrow_drop_down,
-                                  color: cs.onSurface.withValues(alpha: 0.5),
-                                  size: 18,
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        // Phone number input
-                        Expanded(
-                          child: TextFormField(
-                            controller: _phone,
-                            enabled: !_loading,
-                            keyboardType: TextInputType.phone,
-                            textInputAction: TextInputAction.next,
-                            inputFormatters: [
-                              FilteringTextInputFormatter.digitsOnly,
-                              LengthLimitingTextInputFormatter(12),
-                            ],
-                            decoration: InputDecoration(
-                              labelText: 'Phone Number',
-                              hintText: _selectedCountry.placeholder,
-                              helperText:
-                                  'Without leading 0 or country code',
-                              border: const OutlineInputBorder(),
-                            ),
-                            validator: (v) {
-                              if ((v ?? '').trim().isEmpty) {
-                                return 'Phone required';
-                              }
-                              if (!_isValidPhone()) {
-                                return 'Enter a valid phone number';
-                              }
-                              return null;
-                            },
-                          ),
-                        ),
-                      ],
+                    // ── International phone field ────────────────────────────
+                    IntlPhoneField(
+                      enabled: !_loading,
+                      initialCountryCode: 'UG',
+                      decoration: const InputDecoration(
+                        labelText: 'Phone Number',
+                        border: OutlineInputBorder(),
+                      ),
+                      onChanged: (phone) {
+                        _fullPhone = phone.completeNumber;
+                        _phoneValid = true;
+                      },
+                      onCountryChanged: (country) {
+                        _fullPhone = '';
+                        _phoneValid = false;
+                      },
+                      validator: (phone) {
+                        if (phone == null || phone.number.trim().isEmpty) {
+                          return 'Phone number required';
+                        }
+                        return null;
+                      },
                     ),
                     const SizedBox(height: 12),
 
@@ -396,8 +225,8 @@ class _RegisterScreenState extends State<RegisterScreen> {
                           onPressed: _loading
                               ? null
                               : () => setState(
-                                    () => _hideConfirmPass =
-                                        !_hideConfirmPass,
+                                    () =>
+                                        _hideConfirmPass = !_hideConfirmPass,
                                   ),
                         ),
                       ),
@@ -468,15 +297,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_fullPhone.isEmpty) {
+      _toast('Please enter a valid phone number');
+      return;
+    }
+
     setState(() => _loading = true);
 
     try {
-      // Build full E.164 phone number with country code
-      final fullPhone = _buildE164();
-
       final user = await AuthService.registerSender(
         fullName: _name.text,
-        phone: fullPhone,
+        phone: _fullPhone,
         password: _password.text,
       );
 

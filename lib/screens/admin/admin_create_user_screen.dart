@@ -1,33 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 
 import '../../data/routes.dart';
 import '../../models/user_role.dart';
 import '../../services/auth_service.dart';
 import '../../services/role_guard.dart';
-
-// ── Country definitions ────────────────────────────────────────────────────
-class _Country {
-  final String name;
-  final String flag;
-  final String dialCode;
-  final String placeholder;
-
-  const _Country({
-    required this.name,
-    required this.flag,
-    required this.dialCode,
-    required this.placeholder,
-  });
-}
-
-const List<_Country> _countries = [
-  _Country(name: 'Uganda', flag: '🇺🇬', dialCode: '+256', placeholder: '7XXXXXXXX'),
-  _Country(name: 'Kenya', flag: '🇰🇪', dialCode: '+254', placeholder: '7XXXXXXXX'),
-  _Country(name: 'South Sudan', flag: '🇸🇸', dialCode: '+211', placeholder: '9XXXXXXXX'),
-  _Country(name: 'Rwanda', flag: '🇷🇼', dialCode: '+250', placeholder: '7XXXXXXXX'),
-  _Country(name: 'DR Congo', flag: '🇨🇩', dialCode: '+243', placeholder: '8XXXXXXXX'),
-];
 
 class AdminCreateUserScreen extends StatefulWidget {
   const AdminCreateUserScreen({super.key});
@@ -40,7 +17,6 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final _name = TextEditingController();
-  final _phone = TextEditingController();
   final _password = TextEditingController();
   final _station = TextEditingController();
 
@@ -48,12 +24,13 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
   bool _hidePass = true;
   UserRole _role = UserRole.staff;
   AppRoute? _selectedRoute;
-  _Country _selectedCountry = _countries.first;
+
+  // Full E.164 phone number built by IntlPhoneField
+  String _fullPhone = '';
 
   @override
   void dispose() {
     _name.dispose();
-    _phone.dispose();
     _password.dispose();
     _station.dispose();
     super.dispose();
@@ -76,74 +53,6 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
         return 'Can mark cargo as loaded at the station. Station optional.';
       default:
         return '';
-    }
-  }
-
-  String _digitsOnly(String s) => s.replaceAll(RegExp(r'[^0-9]'), '');
-
-  String _buildE164() {
-    final digits = _digitsOnly(_phone.text.trim());
-    if (digits.isEmpty) return '';
-    final cleaned = digits.startsWith('0') ? digits.substring(1) : digits;
-    return '${_selectedCountry.dialCode}$cleaned';
-  }
-
-  bool _isValidPhone() {
-    final e164 = _buildE164();
-    return RegExp(r'^\+\d{7,15}$').hasMatch(e164);
-  }
-
-  Future<void> _showCountryPicker() async {
-    final selected = await showModalBottomSheet<_Country>(
-      context: context,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      builder: (context) {
-        return Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const SizedBox(height: 12),
-            Container(
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey.shade300,
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
-            const SizedBox(height: 16),
-            const Text(
-              'Select Country',
-              style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            ...List.generate(_countries.length, (i) {
-              final c = _countries[i];
-              return ListTile(
-                leading: Text(c.flag, style: const TextStyle(fontSize: 24)),
-                title: Text(c.name),
-                trailing: Text(
-                  c.dialCode,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w600,
-                    color: Colors.grey,
-                  ),
-                ),
-                onTap: () => Navigator.pop(context, c),
-              );
-            }),
-            const SizedBox(height: 16),
-          ],
-        );
-      },
-    );
-
-    if (selected != null) {
-      setState(() {
-        _selectedCountry = selected;
-        _phone.clear();
-      });
     }
   }
 
@@ -181,7 +90,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                 : const Icon(Icons.person_add_outlined),
             label: Text(
               _loading ? 'Creating...' : 'Create user',
-              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+              style:
+                  const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
           ),
         ),
@@ -215,7 +125,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.person_outline),
                   filled: true,
-                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                 ),
                 validator: (v) {
                   final t = v?.trim() ?? '';
@@ -226,77 +137,29 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
               ),
               const SizedBox(height: 12),
 
-              // ── Phone with country code picker ──────────────────────────
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Country code button
-                  GestureDetector(
-                    onTap: _loading ? null : _showCountryPicker,
-                    child: Container(
-                      height: 56,
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      decoration: BoxDecoration(
-                        border: Border.all(
-                          color: cs.outline.withValues(alpha: 0.6),
-                        ),
-                        borderRadius: BorderRadius.circular(4),
-                        color: cs.surfaceContainerHighest.withValues(alpha: 0.30),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            _selectedCountry.flag,
-                            style: const TextStyle(fontSize: 20),
-                          ),
-                          const SizedBox(width: 4),
-                          Text(
-                            _selectedCountry.dialCode,
-                            style: const TextStyle(
-                              fontWeight: FontWeight.w600,
-                              fontSize: 14,
-                            ),
-                          ),
-                          const SizedBox(width: 2),
-                          Icon(
-                            Icons.arrow_drop_down,
-                            color: cs.onSurface.withValues(alpha: 0.5),
-                            size: 18,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  // Phone number input
-                  Expanded(
-                    child: TextFormField(
-                      controller: _phone,
-                      enabled: !_loading,
-                      keyboardType: TextInputType.phone,
-                      textInputAction: TextInputAction.next,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(12),
-                      ],
-                      decoration: InputDecoration(
-                        labelText: 'Phone Number',
-                        hintText: _selectedCountry.placeholder,
-                        helperText: 'Without leading 0 or country code',
-                        border: const OutlineInputBorder(),
-                        filled: true,
-                        fillColor:
-                            cs.surfaceContainerHighest.withValues(alpha: 0.30),
-                      ),
-                      validator: (v) {
-                        if ((v ?? '').trim().isEmpty) return 'Phone required';
-                        if (!_isValidPhone()) return 'Enter a valid phone number';
-                        return null;
-                      },
-                    ),
-                  ),
-                ],
+              // ── International phone field ──────────────────────────────
+              IntlPhoneField(
+                enabled: !_loading,
+                initialCountryCode: 'UG',
+                decoration: InputDecoration(
+                  labelText: 'Phone Number',
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                ),
+                onChanged: (phone) {
+                  _fullPhone = phone.completeNumber;
+                },
+                onCountryChanged: (_) {
+                  _fullPhone = '';
+                },
+                validator: (phone) {
+                  if (phone == null || phone.number.trim().isEmpty) {
+                    return 'Phone number required';
+                  }
+                  return null;
+                },
               ),
               const SizedBox(height: 12),
 
@@ -307,20 +170,24 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                 textInputAction: TextInputAction.next,
                 decoration: InputDecoration(
                   labelText: 'Temporary Password',
-                  helperText: 'Share this with the user — they can change it later.',
+                  helperText:
+                      'Share this with the user — they can change it later.',
                   helperMaxLines: 2,
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.lock_outline),
                   filled: true,
-                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                   suffixIcon: IconButton(
-                    tooltip: _hidePass ? 'Show password' : 'Hide password',
+                    tooltip:
+                        _hidePass ? 'Show password' : 'Hide password',
                     icon: Icon(
                       _hidePass
                           ? Icons.visibility_outlined
                           : Icons.visibility_off_outlined,
                     ),
-                    onPressed: () => setState(() => _hidePass = !_hidePass),
+                    onPressed: () =>
+                        setState(() => _hidePass = !_hidePass),
                   ),
                 ),
                 validator: (v) {
@@ -344,20 +211,24 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   border: const OutlineInputBorder(),
                   prefixIcon: const Icon(Icons.badge_outlined),
                   filled: true,
-                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  fillColor:
+                      cs.surfaceContainerHighest.withValues(alpha: 0.30),
                 ),
                 items: const [
                   DropdownMenuItem(
                     value: UserRole.staff,
-                    child: Text('Staff', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text('Staff',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   DropdownMenuItem(
                     value: UserRole.driver,
-                    child: Text('Driver', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text('Driver',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                   DropdownMenuItem(
                     value: UserRole.deskCargoOfficer,
-                    child: Text('Desk Cargo Officer', maxLines: 1, overflow: TextOverflow.ellipsis),
+                    child: Text('Desk Cargo Officer',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
                 ],
                 onChanged: (v) {
@@ -377,12 +248,14 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   child: Row(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(Icons.info_outline, size: 14, color: cs.primary),
+                      Icon(Icons.info_outline,
+                          size: 14, color: cs.primary),
                       const SizedBox(width: 6),
                       Expanded(
                         child: Text(
                           _roleHelperText,
-                          style: TextStyle(fontSize: 12, color: cs.primary),
+                          style: TextStyle(
+                              fontSize: 12, color: cs.primary),
                         ),
                       ),
                     ],
@@ -405,8 +278,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.location_on_outlined),
                     filled: true,
-                    fillColor:
-                        cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                    fillColor: cs.surfaceContainerHighest
+                        .withValues(alpha: 0.30),
                   ),
                   validator: (v) {
                     if (!_stationRequired) return null;
@@ -428,8 +301,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                     border: const OutlineInputBorder(),
                     prefixIcon: const Icon(Icons.route_outlined),
                     filled: true,
-                    fillColor:
-                        cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                    fillColor: cs.surfaceContainerHighest
+                        .withValues(alpha: 0.30),
                   ),
                   items: routes
                       .map(
@@ -446,7 +319,9 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                   onChanged: (v) => setState(() => _selectedRoute = v),
                   validator: (v) {
                     if (_role != UserRole.driver) return null;
-                    return v == null ? 'Route is required for drivers' : null;
+                    return v == null
+                        ? 'Route is required for drivers'
+                        : null;
                   },
                 ),
                 const SizedBox(height: 12),
@@ -491,20 +366,25 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) return;
 
+    if (_fullPhone.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter a valid phone number')),
+      );
+      return;
+    }
+
     setState(() => _loading = true);
     try {
-      // Build full E.164 phone number with selected country code
-      final fullPhone = _buildE164();
-
       final user = await AuthService.adminCreateUser(
         fullName: _name.text.trim(),
-        phone: fullPhone,
+        phone: _fullPhone,
         password: _password.text.trim(),
         role: _role,
         stationName: _stationEnabled && _station.text.trim().isNotEmpty
             ? _station.text.trim()
             : null,
-        assignedRouteId: _role == UserRole.driver ? _selectedRoute?.id : null,
+        assignedRouteId:
+            _role == UserRole.driver ? _selectedRoute?.id : null,
         assignedRouteName:
             _role == UserRole.driver ? _selectedRoute?.name : null,
       );
@@ -514,7 +394,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
       if (user == null) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Failed ❌ Phone already exists or not allowed.'),
+            content: Text(
+                'Failed ❌ Phone already exists or not allowed.'),
           ),
         );
         return;
@@ -522,7 +403,8 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('User created ✅ ${user.fullName} (${user.role.name})'),
+          content: Text(
+              'User created ✅ ${user.fullName} (${user.role.name})'),
         ),
       );
 

@@ -62,9 +62,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final returnedPhone = await Navigator.push<String>(
       context,
       MaterialPageRoute(
-        builder: (_) => ForgotPasswordScreen(
-          initialPhone: prefilledPhone,
-        ),
+        builder: (_) => ForgotPasswordScreen(initialPhone: prefilledPhone),
       ),
     );
     if (!mounted) return;
@@ -104,14 +102,26 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   /// Checks if a phone number belongs to a shell account (empty password).
-  /// Shell accounts are created by sync when admin creates a user on another device.
-  /// These users need to set their password via OTP before they can login.
+  ///
+  /// Matches on the last 9 digits to handle all phone formats:
+  ///   0704811862    → last 9: 704811862
+  ///   256704811862  → last 9: 704811862
+  ///   +256704811862 → last 9: 704811862
+  /// This ensures shell detection works regardless of whether the stored
+  /// phone has a country code prefix or not.
   bool _isShellAccount(String phone) {
-    final digits = PhoneNormalizer.digitsOnly(phone);
-    if (digits.isEmpty) return false;
+    final inputDigits = PhoneNormalizer.digitsOnly(phone);
+    if (inputDigits.length < 9) return false;
+
+    final inputSuffix = inputDigits.substring(inputDigits.length - 9);
+
     final user = HiveService.userBox().values.where((u) {
-      return PhoneNormalizer.digitsOnly(u.phone) == digits;
+      final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
+      if (storedDigits.length < 9) return false;
+      final storedSuffix = storedDigits.substring(storedDigits.length - 9);
+      return storedSuffix == inputSuffix;
     }).firstOrNull;
+
     if (user == null) return false;
     return user.passwordHash.trim().isEmpty;
   }
@@ -315,7 +325,9 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                               textStyle: const TextStyle(fontSize: 13),
                             ),
-                            onPressed: _loading ? null : () => _openForgotPassword(),
+                            onPressed: _loading
+                                ? null
+                                : () => _openForgotPassword(),
                             child: const Text('Forgot password?'),
                           ),
                         ),
@@ -524,11 +536,27 @@ class _LoginScreenState extends State<LoginScreen> {
       final phone = phoneController.text.trim();
       final password = passwordController.text.trim();
 
+      // TEMPORARY DEBUG
+      final inputDigits = PhoneNormalizer.digitsOnly(phone);
+      final inputSuffix = inputDigits.length >= 9
+          ? inputDigits.substring(inputDigits.length - 9)
+          : inputDigits;
+      debugPrint(
+        '>>> Shell check: input=$phone inputDigits=$inputDigits inputSuffix=$inputSuffix',
+      );
+      for (final u in HiveService.userBox().values) {
+        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
+        final storedSuffix = storedDigits.length >= 9
+            ? storedDigits.substring(storedDigits.length - 9)
+            : storedDigits;
+        debugPrint(
+          '>>> Hive user: phone=${u.phone} storedSuffix=$storedSuffix hashEmpty=${u.passwordHash.trim().isEmpty} role=${u.role.name} suffixMatch=${storedSuffix == inputSuffix}',
+        );
+      }
+
       // ── Shell account detection ──────────────────────────────────────────
-      // If the account exists but has no password hash, it was created as a
-      // sync shell when admin registered this user on another device.
-      // Redirect to ForgotPasswordScreen so they can set their password
-      // via OTP before logging in for the first time.
+      // Matches on last 9 digits so 0704811862, 256704811862, +256704811862
+      // all resolve to the same account regardless of how the phone was stored.
       if (_isShellAccount(phone)) {
         if (!mounted) return;
         _toast('First login detected. Please set your password via OTP.');

@@ -69,6 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final t = (returnedPhone ?? '').trim();
     if (t.isNotEmpty) {
       phoneController.text = PhoneNormalizer.displayUg(t);
+      passwordController.clear();
       _passwordFocus.requestFocus();
     }
   }
@@ -107,8 +108,6 @@ class _LoginScreenState extends State<LoginScreen> {
   ///   0704811862    → last 9: 704811862
   ///   256704811862  → last 9: 704811862
   ///   +256704811862 → last 9: 704811862
-  /// This ensures shell detection works regardless of whether the stored
-  /// phone has a country code prefix or not.
   bool _isShellAccount(String phone) {
     final inputDigits = PhoneNormalizer.digitsOnly(phone);
     if (inputDigits.length < 9) return false;
@@ -536,29 +535,12 @@ class _LoginScreenState extends State<LoginScreen> {
       final phone = phoneController.text.trim();
       final password = passwordController.text.trim();
 
-      // TEMPORARY DEBUG
-      final inputDigits = PhoneNormalizer.digitsOnly(phone);
-      final inputSuffix = inputDigits.length >= 9
-          ? inputDigits.substring(inputDigits.length - 9)
-          : inputDigits;
-      debugPrint(
-        '>>> Shell check: input=$phone inputDigits=$inputDigits inputSuffix=$inputSuffix',
-      );
-      for (final u in HiveService.userBox().values) {
-        final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
-        final storedSuffix = storedDigits.length >= 9
-            ? storedDigits.substring(storedDigits.length - 9)
-            : storedDigits;
-        debugPrint(
-          '>>> Hive user: phone=${u.phone} storedSuffix=$storedSuffix hashEmpty=${u.passwordHash.trim().isEmpty} role=${u.role.name} suffixMatch=${storedSuffix == inputSuffix}',
-        );
-      }
-
       // ── Shell account detection ──────────────────────────────────────────
       // Matches on last 9 digits so 0704811862, 256704811862, +256704811862
       // all resolve to the same account regardless of how the phone was stored.
       if (_isShellAccount(phone)) {
         if (!mounted) return;
+        setState(() => _loading = false); // reset before navigating
         _toast('First login detected. Please set your password via OTP.');
         await _openForgotPassword(prefilledPhone: phone);
         return;

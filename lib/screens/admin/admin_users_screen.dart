@@ -7,6 +7,8 @@ import '../../models/user_role.dart';
 import '../../services/auth_service.dart';
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
+import '../../services/sync_service.dart';
+import '../../models/sync_event_type.dart';
 
 class AdminUsersScreen extends StatefulWidget {
   const AdminUsersScreen({super.key});
@@ -17,7 +19,7 @@ class AdminUsersScreen extends StatefulWidget {
 
 class _AdminUsersScreenState extends State<AdminUsersScreen> {
   final _search = TextEditingController();
-  UserRole? _roleFilter; // null = all roles
+  UserRole? _roleFilter;
 
   @override
   void dispose() {
@@ -25,7 +27,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     super.dispose();
   }
 
-  // Initials from full name e.g. "Mbaziira Godfrey" → "MG"
   static String _initials(String name) {
     final parts = name.trim().split(RegExp(r'\s+'));
     if (parts.isEmpty) return '?';
@@ -33,7 +34,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
   }
 
-  // Role chip style
   static ({String label, Color bg, Color fg}) _roleStyle(UserRole role) {
     switch (role) {
       case UserRole.admin:
@@ -127,7 +127,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
               Row(
                 children: [
-                  // Scrollable role filter chips
                   Expanded(
                     child: SingleChildScrollView(
                       scrollDirection: Axis.horizontal,
@@ -153,7 +152,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  // User count badge
                   Text(
                     '${filtered.length}',
                     style: TextStyle(
@@ -216,15 +214,12 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
   Widget _userCard(User u, ColorScheme cs, Color muted) {
     final style = _roleStyle(u.role);
     final initials = _initials(u.fullName);
-
     final station = u.stationName?.trim() ?? '';
     final route = u.assignedRouteName?.trim() ?? '';
-
     final canSetStation =
         u.role == UserRole.staff || u.role == UserRole.deskCargoOfficer;
     final canEditDriverRoute = u.role == UserRole.driver;
-
-    // De-emphasise sender cards slightly
+    final canDelete = u.role != UserRole.admin;
     final isSender = u.role == UserRole.sender;
 
     return Card(
@@ -260,7 +255,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Row: name + role chip
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -279,7 +273,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      // Role chip
                       Container(
                         padding: const EdgeInsets.symmetric(
                           horizontal: 8,
@@ -303,19 +296,13 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
                   const SizedBox(height: 3),
 
-                  // Phone
                   Text(u.phone, style: TextStyle(fontSize: 12, color: muted)),
 
-                  // Station — only shown when present
                   if (station.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Row(
                       children: [
-                        Icon(
-                          Icons.location_on_outlined,
-                          size: 12,
-                          color: muted,
-                        ),
+                        Icon(Icons.location_on_outlined, size: 12, color: muted),
                         const SizedBox(width: 4),
                         Text(
                           station,
@@ -325,7 +312,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     ),
                   ],
 
-                  // Route — only shown for drivers when present
                   if (u.role == UserRole.driver && route.isNotEmpty) ...[
                     const SizedBox(height: 2),
                     Row(
@@ -346,7 +332,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
                   const SizedBox(height: 2),
 
-                  // Created date
                   Text(
                     'Joined ${u.createdAt.toLocal().toString().substring(0, 10)}',
                     style: TextStyle(fontSize: 11, color: muted),
@@ -364,6 +349,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                 if (v == 'reset_pw') _resetPasswordFlow(u);
                 if (v == 'set_station') _setStationFlow(u);
                 if (v == 'edit_route') _editDriverRoute(u);
+                if (v == 'delete') _deleteUserFlow(u);
               },
               itemBuilder: (_) => [
                 const PopupMenuItem(
@@ -398,6 +384,27 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       ],
                     ),
                   ),
+                // ── Delete option — only for non-admin roles ──────────────
+                if (canDelete) ...[
+                  const PopupMenuDivider(),
+                  PopupMenuItem(
+                    value: 'delete',
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_outline,
+                          size: 18,
+                          color: Colors.red.shade700,
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Delete user',
+                          style: TextStyle(color: Colors.red.shade700),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
               ],
             ),
           ],
@@ -405,6 +412,113 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
       ),
     );
   }
+
+  // ── Delete user flow ───────────────────────────────────────────────────────
+
+  Future<void> _deleteUserFlow(User u) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+    if (u.role == UserRole.admin) return; // never delete admin
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete user?'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            RichText(
+              text: TextSpan(
+                style: DefaultTextStyle.of(context).style,
+                children: [
+                  const TextSpan(text: 'Are you sure you want to delete '),
+                  TextSpan(
+                    text: u.fullName,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  const TextSpan(text: '? This action cannot be undone.'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: Colors.red.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.red.withValues(alpha: 0.20)),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber_outlined,
+                      size: 16, color: Colors.red.shade700),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'The user will be removed from all devices on next sync.',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.red.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red.shade700,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted || confirmed != true) return;
+
+    try {
+      // Remove from local Hive
+      await HiveService.userBox().delete(u.id);
+
+      // Sync deletion to other devices
+      await SyncService.enqueue(
+        type: SyncEventType.userDeleted,
+        aggregateType: 'user',
+        aggregateId: u.id,
+        actorUserId: u.id,
+        payload: {'userId': u.id},
+        aggregateVersion: 1,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${u.fullName} deleted ✅'),
+          backgroundColor: Colors.green.shade700,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Failed to delete user: $e'),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    }
+  }
+
+  // ── Reset password flow ────────────────────────────────────────────────────
 
   Future<void> _resetPasswordFlow(User u) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
@@ -475,6 +589,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     }
   }
 
+  // ── Set station flow ───────────────────────────────────────────────────────
+
   Future<void> _setStationFlow(User u) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
     if (u.role != UserRole.staff && u.role != UserRole.deskCargoOfficer) return;
@@ -527,12 +643,16 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(success ? 'Station updated ✅' : 'Failed ❌')),
+        SnackBar(
+          content: Text(success ? 'Station updated ✅' : 'Failed ❌'),
+        ),
       );
     } finally {
       c.dispose();
     }
   }
+
+  // ── Edit driver route flow ─────────────────────────────────────────────────
 
   Future<void> _editDriverRoute(User user) async {
     if (user.role != UserRole.driver) return;
@@ -590,7 +710,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          ok ? 'Driver route updated ✅' : 'Failed to update driver route ❌',
+          ok
+              ? 'Driver route updated ✅'
+              : 'Failed to update driver route ❌',
         ),
       ),
     );

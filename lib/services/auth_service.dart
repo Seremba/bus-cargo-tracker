@@ -656,4 +656,20 @@ class AuthService {
 
     await box.put(userId, shell);
   }
+
+static Future<void> applyUserDeletedSyncEvent(
+  Map<String, dynamic> payload,
+) async {
+  final userId = (payload['userId'] ?? '').toString().trim();
+  if (userId.isEmpty) return;
+
+  final box = HiveService.userBox();
+  final user = box.get(userId);
+  if (user == null) return;
+
+  // Never delete admin from a sync event
+  if (user.role == UserRole.admin) return;
+
+  await box.delete(userId);
+}
 }

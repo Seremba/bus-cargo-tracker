@@ -26,15 +26,9 @@ class PasswordResetService {
 
   static const String _deviceRateKey = 'PWDRESET_DEVICE_RATE';
 
-  // ─── OTP hashing ─────────────────────────────────────────────────────────
-  // Reset OTPs are short-lived (10 min), stored in a temporary record that
-  // is deleted on success or expiry, and already protected by attempt
-  // limiting. Plain SHA-256 is sufficient here — no salt needed.
   static String _hashOtp(String otp) {
     return sha256.convert(utf8.encode(otp.trim())).toString();
   }
-
-  // ─────────────────────────────────────────────────────────────────────────
 
   static Map<String, dynamic> _readDeviceRate() {
     final box = HiveService.appSettingsBox();
@@ -58,12 +52,19 @@ class PasswordResetService {
   static String _digitsKey(String rawPhone) =>
       PhoneNormalizer.digitsOnly(rawPhone);
 
+  /// Finds a user by phone using last-9-digit suffix matching.
+  /// Handles all formats: 0704811862, 256704811862, +256704811862.
   static User? _findUserByPhoneDigits(String phoneDigits) {
+    if (phoneDigits.length < 9) return null;
+    final inputSuffix = phoneDigits.substring(phoneDigits.length - 9);
+
     final box = HiveService.userBox();
     for (final u in box.values) {
       if (u is! User) continue;
       final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
-      if (storedDigits == phoneDigits) return u;
+      if (storedDigits.length < 9) continue;
+      final storedSuffix = storedDigits.substring(storedDigits.length - 9);
+      if (storedSuffix == inputSuffix) return u;
     }
     return null;
   }
@@ -162,6 +163,7 @@ class PasswordResetService {
       'attempts': 0,
       'lockedUntilMs': 0,
       'lastSentAtMs': now.millisecondsSinceEpoch,
+      'otpVerified': false,
     });
 
     final body =
@@ -194,11 +196,12 @@ class PasswordResetService {
     return const ResetResult(true, 'OTP sent. Check your SMS.');
   }
 
-  /// Step 2: Verify OTP and set new password.
-  static Future<ResetResult> verifyOtpAndResetPassword({
+  /// Step 2a: Verify OTP only — does NOT set the password yet.
+  /// On success, marks the reset record as verified so setNewPassword
+  /// can proceed on the next screen.
+  static Future<ResetResult> verifyOtpOnly({
     required String rawPhone,
     required String otp,
-    required String newPassword,
   }) async {
     final phoneDigits = _digitsKey(rawPhone);
     if (phoneDigits.isEmpty) {
@@ -207,14 +210,6 @@ class PasswordResetService {
 
     final cleanOtp = otp.trim();
     if (cleanOtp.length < 4) return const ResetResult(false, 'Enter the OTP.');
-
-    final cleanPass = newPassword.trim();
-    if (cleanPass.length < 6) {
-      return const ResetResult(
-        false,
-        'Password must be at least 6 characters.',
-      );
-    }
 
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
@@ -228,7 +223,6 @@ class PasswordResetService {
     final key = _k(phoneDigits);
     final rec = box.get(key);
 
-    // rec is stored as a Map — check it exists and is a Map
     if (rec == null) {
       return const ResetResult(
         false,
@@ -237,8 +231,8 @@ class PasswordResetService {
     }
 
     final recMap = Map<String, dynamic>.from(rec as Map);
-
     final now = DateTime.now();
+
     final lockedUntilMs = (recMap['lockedUntilMs'] as int?) ?? 0;
     if (lockedUntilMs > 0 && now.millisecondsSinceEpoch < lockedUntilMs) {
       return const ResetResult(false, 'Too many attempts. Try again later.');
@@ -268,12 +262,12 @@ class PasswordResetService {
 
     if (_hashOtp(cleanOtp) != expectedHash) {
       attempts += 1;
-
       final updated = Map<String, dynamic>.from(recMap);
       updated['attempts'] = attempts;
 
       if (attempts >= maxAttempts) {
-        updated['lockedUntilMs'] = now.add(lockDuration).millisecondsSinceEpoch;
+        updated['lockedUntilMs'] =
+            now.add(lockDuration).millisecondsSinceEpoch;
       }
 
       await box.put(key, updated);
@@ -291,7 +285,69 @@ class PasswordResetService {
       return const ResetResult(false, 'Incorrect OTP. Try again.');
     }
 
-    // OTP ok — update password using the new salted hash path
+    // OTP correct — mark as verified so setNewPassword can proceed
+    final verified = Map<String, dynamic>.from(recMap);
+    verified['otpVerified'] = true;
+    await box.put(key, verified);
+
+    await AuditService.log(
+      action: 'PWD_RESET_OTP_VERIFIED',
+      propertyKey: key,
+      details: 'OTP verified userId=${user.id}',
+    );
+
+    return const ResetResult(true, 'OTP verified.');
+  }
+
+  /// Step 2b: Set new password after OTP has been verified.
+  /// Must be called after a successful verifyOtpOnly().
+  static Future<ResetResult> setNewPassword({
+    required String rawPhone,
+    required String newPassword,
+  }) async {
+    final phoneDigits = _digitsKey(rawPhone);
+    if (phoneDigits.isEmpty) {
+      return const ResetResult(false, 'Phone number is required.');
+    }
+
+    final cleanPass = newPassword.trim();
+    if (cleanPass.length < 6) {
+      return const ResetResult(
+        false,
+        'Password must be at least 6 characters.',
+      );
+    }
+
+    final user = _findUserByPhoneDigits(phoneDigits);
+    if (user == null) {
+      return const ResetResult(
+        false,
+        'No account found for that phone number.',
+      );
+    }
+
+    final box = HiveService.passwordResetBox();
+    final key = _k(phoneDigits);
+    final rec = box.get(key);
+
+    if (rec == null) {
+      return const ResetResult(
+        false,
+        'Session expired. Please start again.',
+      );
+    }
+
+    final recMap = Map<String, dynamic>.from(rec as Map);
+    final isVerified = (recMap['otpVerified'] as bool?) ?? false;
+
+    if (!isVerified) {
+      return const ResetResult(
+        false,
+        'OTP not verified. Please verify first.',
+      );
+    }
+
+    // Set new password with salted hash
     final (:hash, :salt) = AuthService.hashPasswordWithSalt(cleanPass);
 
     final updatedUser = User(
@@ -310,7 +366,7 @@ class PasswordResetService {
     );
 
     await HiveService.userBox().put(user.id, updatedUser);
-    await box.delete(key);
+    await box.delete(key); // clean up reset record
 
     await AuditService.log(
       action: 'PWD_RESET_SUCCESS',
@@ -318,7 +374,19 @@ class PasswordResetService {
       details: 'Password reset success userId=${user.id}',
     );
 
-    return const ResetResult(true, 'Password updated. Please login.');
+    return const ResetResult(true, 'Password updated successfully.');
+  }
+
+  /// Legacy method — kept for backwards compatibility.
+  /// New flow uses verifyOtpOnly() + setNewPassword() separately.
+  static Future<ResetResult> verifyOtpAndResetPassword({
+    required String rawPhone,
+    required String otp,
+    required String newPassword,
+  }) async {
+    final verifyResult = await verifyOtpOnly(rawPhone: rawPhone, otp: otp);
+    if (!verifyResult.ok) return verifyResult;
+    return setNewPassword(rawPhone: rawPhone, newPassword: newPassword);
   }
 }
 

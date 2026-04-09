@@ -22,28 +22,20 @@ class SyncService {
   static const String _eventsPullPath = '/events';
   static final _uuid = const Uuid();
 
-  // ── Settings keys ──────────────────────────────────────────────────────────
-
   static const String _cursorKey = 'lastSyncCursor';
   static const String _deviceIdKey = 'deviceId';
   static const String _apiKeySettingsKey = 'syncApiKey';
 
-  // Backoff ladder (seconds): 10s, 30s, 1m, 3m, 8m, 15m
   static const List<int> _backoffSeconds = [10, 30, 60, 180, 480, 900];
   static int _consecutiveFailures = 0;
   static DateTime? _nextAllowedSyncAt;
-
-  /// Fires a non-blocking background sync after every enqueue() call.
 
   static void _triggerBackgroundSync() {
     // ignore: discarded_futures
     Future.microtask(() async {
       try {
         await syncNow();
-      } catch (_) {
-        // Failures here are handled by the backoff ladder in syncNow().
-        // AutoSyncService ticker acts as the retry safety net.
-      }
+      } catch (_) {}
     });
   }
 
@@ -67,15 +59,11 @@ class SyncService {
     };
   }
 
-  /// Returns true if the device has any non-none connectivity.
-  /// Requires connectivity_plus: ^6.0.0 in pubspec.yaml.
   static Future<bool> _isOnline() async {
     try {
       final results = await Connectivity().checkConnectivity();
       return results.any((r) => r != ConnectivityResult.none);
     } catch (_) {
-      // If the connectivity API misbehaves, assume online and let the
-      // HTTP call fail naturally.
       return true;
     }
   }
@@ -125,7 +113,6 @@ class SyncService {
 
   static Future<String> ensureDeviceId() async {
     final box = HiveService.appSettingsBox();
-
     final existing = (box.get(_deviceIdKey) as String?)?.trim();
     if (existing != null && existing.isNotEmpty) return existing;
 
@@ -182,16 +169,11 @@ class SyncService {
     );
 
     await box.put(event.eventId, event);
-
-    // Phase 5: fire-and-forget sync immediately after every local write.
     _triggerBackgroundSync();
-
     return event;
   }
 
   // ── Typed enqueue helpers ──────────────────────────────────────────────────
-
-  // Property
 
   static Future<SyncEvent> enqueuePropertyCreated({
     required String propertyId,
@@ -305,8 +287,6 @@ class SyncService {
     );
   }
 
-  // Payment
-
   static Future<SyncEvent> enqueuePaymentRecorded({
     required String paymentId,
     required String actorUserId,
@@ -370,8 +350,6 @@ class SyncService {
     );
   }
 
-  // Pickup / security
-
   static Future<SyncEvent> enqueuePickupOtpGenerated({
     required String propertyId,
     required String actorUserId,
@@ -431,7 +409,6 @@ class SyncService {
       aggregateId: propertyId,
       actorUserId: actorUserId,
       payload: payload,
-      // Observational — does not advance aggregateVersion
       aggregateVersion: 1,
     );
   }
@@ -465,8 +442,6 @@ class SyncService {
       aggregateVersion: 1,
     );
   }
-
-  // Items
 
   static Future<void> enqueueItemsLoadedPartial({
     required String propertyId,
@@ -552,8 +527,6 @@ class SyncService {
     );
   }
 
-  // Trip
-
   static Future<SyncEvent> enqueueTripStarted({
     required String tripId,
     required String actorUserId,
@@ -586,8 +559,6 @@ class SyncService {
     );
   }
 
-  /// Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted.
-  /// Update all call sites in trip_service.dart accordingly.
   static Future<SyncEvent> enqueueTripCompleted({
     required String tripId,
     required String actorUserId,
@@ -619,8 +590,6 @@ class SyncService {
       aggregateVersion: aggregateVersion,
     );
   }
-
-  // Receiver / tracking
 
   static Future<SyncEvent> enqueueTrackingCodeGenerated({
     required String propertyId,
@@ -697,8 +666,6 @@ class SyncService {
     );
   }
 
-  // Misc
-
   static Future<SyncEvent> enqueueExceptionLogged({
     required String aggregateType,
     required String aggregateId,
@@ -751,7 +718,8 @@ class SyncService {
 
   // ── State mutators ─────────────────────────────────────────────────────────
 
-  static Future<void> markPushed(String eventId, {String? remoteCursor}) async {
+  static Future<void> markPushed(String eventId,
+      {String? remoteCursor}) async {
     final event = getById(eventId);
     if (event == null) return;
 
@@ -808,7 +776,7 @@ class SyncService {
         break;
 
       case SyncEventType.tripCheckpointReached:
-      case SyncEventType.checkpointReached: // legacy alias — same handler
+      case SyncEventType.checkpointReached: // legacy alias
         await TripService.applyTripCheckpointReachedFromSync(event);
         break;
 
@@ -852,8 +820,17 @@ class SyncService {
         await PropertyItemService.applyPropertyItemPickedUpFromSync(event);
         break;
 
-      // Observational / audit-only events — recorded for the remote event
-      // store but require no local Hive state mutation on other devices.
+      // ── User sync events ─────────────────────────────────────────────────
+      case SyncEventType.userCreated:
+      case SyncEventType.userUpdated:
+        await AuthService.applyUserSyncEvent(event.payload);
+        break;
+
+      case SyncEventType.userDeleted:
+        await AuthService.applyUserDeletedSyncEvent(event.payload);
+        break;
+
+      // Observational / audit-only events — no local Hive mutation needed
       case SyncEventType.exceptionLogged:
       case SyncEventType.adminOverrideApplied:
       case SyncEventType.propertyCommitted:
@@ -875,9 +852,6 @@ class SyncService {
       case SyncEventType.receiverNotificationQueued:
       case SyncEventType.receiverNotificationSent:
       case SyncEventType.receiverNotificationFailed:
-      case SyncEventType.userCreated:
-      case SyncEventType.userUpdated:
-        await AuthService.applyUserSyncEvent(event.payload);
         break;
 
       case SyncEventType.senderNotifyRequested:
@@ -893,8 +867,6 @@ class SyncService {
 
   // ── Phase 4: pruning ───────────────────────────────────────────────────────
 
-  /// Deletes stale local data to prevent Hive boxes growing indefinitely.
-  /// Called weekly from AutoSyncService.
   static Future<PruneResult> pruneStaleData() async {
     int syncEventsDeleted = 0;
     int auditEventsDeleted = 0;
@@ -902,7 +874,6 @@ class SyncService {
 
     final now = DateTime.now();
 
-    // SyncEvents
     final syncBox = HiveService.syncEventBox();
     final syncKeysToDelete = <dynamic>[];
 
@@ -925,7 +896,6 @@ class SyncService {
       syncEventsDeleted++;
     }
 
-    // AuditEvents
     final auditBox = HiveService.auditBox();
     final auditKeysToDelete = <dynamic>[];
 
@@ -940,7 +910,6 @@ class SyncService {
       auditEventsDeleted++;
     }
 
-    // OutboundMessages
     final msgBox = HiveService.outboundMessageBox();
     final msgKeysToDelete = <dynamic>[];
 
@@ -975,14 +944,10 @@ class SyncService {
     if (pending.isEmpty) return 0;
 
     if (!hasApiKey()) {
-      throw StateError(
-        'Sync API key not configured. '
-        'Call SyncService.setApiKey() during app init.',
-      );
+      throw StateError('Sync API key not configured.');
     }
 
     final uri = Uri.parse('$_baseUrl$_eventsBatchPath');
-
     final body = jsonEncode({
       'events': pending.map((e) => e.toJson()).toList(),
     });
@@ -990,10 +955,7 @@ class SyncService {
     final response = await http.post(uri, headers: _headers(), body: body);
 
     if (response.statusCode == 401) {
-      throw StateError(
-        'Sync push rejected: invalid API key (HTTP 401). '
-        'Check syncApiKey in app settings.',
-      );
+      throw StateError('Sync push rejected: invalid API key (HTTP 401).');
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -1023,14 +985,10 @@ class SyncService {
 
   static Future<Map<String, int>> pullRemoteEvents() async {
     if (!hasApiKey()) {
-      throw StateError(
-        'Sync API key not configured. '
-        'Call SyncService.setApiKey() during app init.',
-      );
+      throw StateError('Sync API key not configured.');
     }
 
     final after = getLastCursor();
-
     final uri = Uri.parse(
       after == null || after.isEmpty
           ? '$_baseUrl$_eventsPullPath'
@@ -1040,10 +998,7 @@ class SyncService {
     final response = await http.get(uri, headers: _headers());
 
     if (response.statusCode == 401) {
-      throw StateError(
-        'Sync pull rejected: invalid API key (HTTP 401). '
-        'Check syncApiKey in app settings.',
-      );
+      throw StateError('Sync pull rejected: invalid API key (HTTP 401).');
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
@@ -1096,7 +1051,7 @@ class SyncService {
     return {'pulled': pulled, 'applied': applied, 'failed': failed};
   }
 
-  // ── syncNow (Phase 5: connectivity + backoff guards) ──────────────────────
+  // ── syncNow ────────────────────────────────────────────────────────────────
 
   static Future<SyncRunResult> syncNow() async {
     if (_isInBackoff()) {

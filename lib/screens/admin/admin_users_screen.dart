@@ -302,7 +302,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     const SizedBox(height: 2),
                     Row(
                       children: [
-                        Icon(Icons.location_on_outlined, size: 12, color: muted),
+                        Icon(
+                          Icons.location_on_outlined,
+                          size: 12,
+                          color: muted,
+                        ),
                         const SizedBox(width: 4),
                         Text(
                           station,
@@ -429,7 +433,13 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           children: [
             RichText(
               text: TextSpan(
-                style: DefaultTextStyle.of(context).style,
+                style: TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w400,
+                  color: Theme.of(context).colorScheme.onSurface,
+                  decoration: TextDecoration.none,
+                  fontFamily: null, // resets any inherited monospace
+                ),
                 children: [
                   const TextSpan(text: 'Are you sure you want to delete '),
                   TextSpan(
@@ -450,8 +460,11 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               ),
               child: Row(
                 children: [
-                  Icon(Icons.warning_amber_outlined,
-                      size: 16, color: Colors.red.shade700),
+                  Icon(
+                    Icons.warning_amber_outlined,
+                    size: 16,
+                    color: Colors.red.shade700,
+                  ),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
@@ -643,9 +656,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(success ? 'Station updated ✅' : 'Failed ❌'),
-        ),
+        SnackBar(content: Text(success ? 'Station updated ✅' : 'Failed ❌')),
       );
     } finally {
       c.dispose();
@@ -671,7 +682,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
             style: const TextStyle(fontSize: 15),
           ),
           content: DropdownButtonFormField<AppRoute>(
-            value: selectedRoute,
+            initialValue: selectedRoute,
             decoration: const InputDecoration(
               labelText: 'Assigned Route',
               border: OutlineInputBorder(),
@@ -710,9 +721,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
-          ok
-              ? 'Driver route updated ✅'
-              : 'Failed to update driver route ❌',
+          ok ? 'Driver route updated ✅' : 'Failed to update driver route ❌',
         ),
       ),
     );

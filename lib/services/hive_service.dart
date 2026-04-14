@@ -11,7 +11,6 @@ import '../models/property_item.dart';
 import '../models/trip.dart';
 import '../models/user.dart';
 
-import 'at_settings_service.dart';
 import 'twilio_settings_service.dart';
 import 'outbound_message_service.dart';
 import '../models/sync_event.dart';
@@ -36,8 +35,7 @@ class HiveService {
 
   static Future<void> openAllBoxes() async {
     await openAppSettingsBox();
-    await AtSettingsService.init();       // AT SMS credentials
-    TwilioSettingsService.getOrCreate();  // Twilio credentials (reads from appSettingsBox)
+    TwilioSettingsService.getOrCreate(); // Twilio credentials
 
     await openPropertyBox();
     await openPropertyItemBox();
@@ -54,7 +52,7 @@ class HiveService {
     await OutboundMessageService.requeueOpenedMessages();
   }
 
-  // ── App settings ────────────────────────────────────────────────────────
+  // ── App settings ─────────────────────────────────────────────────────────
   static Future<void> openAppSettingsBox() async {
     if (!Hive.isBoxOpen(_appSettingsBoxName)) {
       await Hive.openBox(_appSettingsBoxName);

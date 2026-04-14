@@ -279,7 +279,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
                       ),
                       const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
-                        value: _stationFilter.isEmpty ? '' : _stationFilter,
+                        initialValue: _stationFilter.isEmpty ? '' : _stationFilter,
                         decoration: const InputDecoration(
                           labelText: 'Station',
                           border: OutlineInputBorder(),

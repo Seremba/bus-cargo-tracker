@@ -1,8 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:bus_cargo_tracker/models/at_settings.dart';
 import 'package:bus_cargo_tracker/models/twilio_settings.dart';
-import 'package:bus_cargo_tracker/services/at_settings_service.dart';
 import 'package:bus_cargo_tracker/services/twilio_settings_service.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
@@ -91,9 +89,6 @@ void main() async {
   if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
     Hive.registerAdapter(SyncEventAdapter());
   }
-  if (!Hive.isAdapterRegistered(AtSettingsAdapter().typeId)) {
-    Hive.registerAdapter(AtSettingsAdapter());
-  }
   if (!Hive.isAdapterRegistered(TwilioSettingsAdapter().typeId)) {
     Hive.registerAdapter(TwilioSettingsAdapter());
   }
@@ -119,18 +114,9 @@ void main() async {
     );
   }
 
-  // ── TEMPORARY: Seed Twilio credentials via --dart-define ──────────────────
-  // Credentials are injected at build time so they never appear in source code.
-  // Used for debug testing since the Cloudflare config fetch is blocked by the
-  // Flutter debug network proxy. In release builds, _fetchAndStoreSmsConfig()
-  // fetches credentials from Cloudflare automatically.
-  //
-  // Usage:
-  //   flutter run \
-  //     --dart-define=SYNC_API_KEY=... \
-  //     --dart-define=TWILIO_SID=AC... \
-  //     --dart-define=TWILIO_TOKEN=... \
-  //     --dart-define=TWILIO_FROM=+1...
+  // ── Seed Twilio credentials via --dart-define ──────────────────────────────
+  // Injected at build time — never appears in source code.
+  // In release builds, _fetchAndStoreSmsConfig() fetches from Cloudflare.
   const twilioSid   = String.fromEnvironment('TWILIO_SID',   defaultValue: '');
   const twilioToken = String.fromEnvironment('TWILIO_TOKEN', defaultValue: '');
   const twilioFrom  = String.fromEnvironment('TWILIO_FROM',  defaultValue: '');
@@ -146,14 +132,14 @@ void main() async {
     );
   }
 
-  // ── Fetch SMS config (AT + Twilio) from Cloudflare Worker ─────────────────
+  // ── Fetch Twilio config from Cloudflare Worker ─────────────────────────────
   // Works in release builds. Falls through silently in debug due to proxy.
   await _fetchAndStoreSmsConfig();
 
   // ── Start sync AFTER seed ──────────────────────────────────────────────────
   await AutoSyncService.instance.start();
 
-  // Phase 5: sync immediately when connectivity is restored.
+  // Sync immediately when connectivity is restored.
   Connectivity().onConnectivityChanged.listen((results) {
     final isOnline = results.any((r) => r != ConnectivityResult.none);
     if (isOnline) {
@@ -161,21 +147,18 @@ void main() async {
     }
   });
 
-  // F5: TTL checks on startup.
+  // TTL checks on startup.
   await PropertyTtlService.runChecks();
 
   runApp(const MyApp());
 }
 
+/// Fetches Twilio credentials from the Cloudflare Worker /config endpoint.
+/// Awaited on startup so SMS works before the first OTP is triggered.
 Future<void> _fetchAndStoreSmsConfig() async {
   try {
-    final existingAt = AtSettingsService.getOrCreate();
     final existingTwilio = TwilioSettingsService.getOrCreate();
-
-    final atConfigured = existingAt.apiKey.trim().isNotEmpty;
-    final twilioConfigured = existingTwilio.isConfigured;
-
-    if (atConfigured && twilioConfigured) return;
+    if (existingTwilio.isConfigured) return;
 
     if (!SyncService.hasApiKey()) return;
     final syncKey =
@@ -196,40 +179,19 @@ Future<void> _fetchAndStoreSmsConfig() async {
     final sms = data['sms'] as Map<String, dynamic>?;
     if (sms == null) return;
 
-    if (!atConfigured) {
-      final at = sms['at'] as Map<String, dynamic>?;
-      if (at != null) {
-        final apiKey  = (at['apiKey']   as String? ?? '').trim();
-        final username = (at['username'] as String? ?? '').trim();
-        final senderId = (at['senderId'] as String? ?? '').trim();
-        if (apiKey.isNotEmpty && username.isNotEmpty) {
-          await AtSettingsService.save(
-            AtSettings(
-              apiKey: apiKey,
-              username: username,
-              senderId: senderId,
-              isSandbox: false,
-            ),
-          );
-        }
-      }
-    }
-
-    if (!twilioConfigured) {
-      final twilio = sms['twilio'] as Map<String, dynamic>?;
-      if (twilio != null) {
-        final accountSid = (twilio['accountSid'] as String? ?? '').trim();
-        final authToken  = (twilio['authToken']  as String? ?? '').trim();
-        final from       = (twilio['from']        as String? ?? '').trim();
-        if (accountSid.isNotEmpty && authToken.isNotEmpty && from.isNotEmpty) {
-          await TwilioSettingsService.save(
-            TwilioSettings(
-              accountSid: accountSid,
-              authToken:  authToken,
-              from:       from,
-            ),
-          );
-        }
+    final twilio = sms['twilio'] as Map<String, dynamic>?;
+    if (twilio != null) {
+      final accountSid = (twilio['accountSid'] as String? ?? '').trim();
+      final authToken  = (twilio['authToken']  as String? ?? '').trim();
+      final from       = (twilio['from']        as String? ?? '').trim();
+      if (accountSid.isNotEmpty && authToken.isNotEmpty && from.isNotEmpty) {
+        await TwilioSettingsService.save(
+          TwilioSettings(
+            accountSid: accountSid,
+            authToken:  authToken,
+            from:       from,
+          ),
+        );
       }
     }
   } catch (_) {

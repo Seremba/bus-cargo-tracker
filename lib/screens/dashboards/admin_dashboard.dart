@@ -30,7 +30,7 @@ import '../admin/admin_reports_screen.dart';
 import '../admin/admin_trips_screen.dart';
 import '../admin/admin_users_screen.dart';
 import '../admin/admin_outbound_messages_screen.dart';
-import '../admin/at_settings_screen.dart';
+import '../admin/sms_settings_screen.dart';
 
 import '../common/outbound_messages_screen.dart';
 import '../common/notifications_screen.dart';
@@ -773,11 +773,11 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     actionTile(
                       icon: Icons.settings_outlined,
                       title: 'SMS Settings',
-                      subtitle: 'Africa\'s Talking API key and sender ID',
+                      subtitle: 'Twilio credentials and configuration',
                       onTap: () => Navigator.push(
                         context,
                         MaterialPageRoute(
-                          builder: (_) => const AtSettingsScreen(),
+                          builder: (_) => const SmsSettingsScreen(),
                         ),
                       ),
                     ),
@@ -1035,10 +1035,12 @@ class _SyncStatusStrip extends StatelessWidget {
       valueListenable: HiveService.syncEventBox().listenable(),
       builder: (context, box, _) {
         final events = box.values.toList();
-        final pendingCount =
-            events.where((e) => e.pendingPush && !e.pushed).length;
-        final failedCount =
-            events.where((e) => e.pushAttempts > 0 && !e.pushed).length;
+        final pendingCount = events
+            .where((e) => e.pendingPush && !e.pushed)
+            .length;
+        final failedCount = events
+            .where((e) => e.pushAttempts > 0 && !e.pushed)
+            .length;
 
         final hasFailures = failedCount > 0;
         final hasPending = pendingCount > 0;
@@ -1060,9 +1062,7 @@ class _SyncStatusStrip extends StatelessWidget {
           decoration: BoxDecoration(
             color: statusColor.withValues(alpha: 0.06),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: statusColor.withValues(alpha: 0.20),
-            ),
+            border: Border.all(color: statusColor.withValues(alpha: 0.20)),
           ),
           child: Row(
             children: [

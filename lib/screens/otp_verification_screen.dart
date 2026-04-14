@@ -12,7 +12,7 @@ import 'login_screen.dart';
 /// The OTP has already been sent by [RegisterScreen] before navigation here.
 ///
 /// [userId]    — the newly registered user's ID
-/// [phone]     — normalized phone number (for display and resend)
+/// [phone]     — normalised phone number (for display, resend, and Verify check)
 class OtpVerificationScreen extends StatefulWidget {
   final String userId;
   final String phone;
@@ -39,7 +39,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   int _resendCooldown = 0;
   Timer? _cooldownTimer;
 
-  // OTP expiry countdown
+  // OTP expiry countdown (display only — real expiry is enforced by Twilio)
   int _expirySeconds = PhoneOtpService.otpTtlSeconds;
   Timer? _expiryTimer;
 
@@ -110,7 +110,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   void _onDigitInput(int index, String value) {
     if (value.length == 6) {
-      // Handle paste of full OTP
       for (int i = 0; i < 6; i++) {
         _controllers[i].text = value[i];
       }
@@ -127,7 +126,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       _focusNodes[index - 1].requestFocus();
     }
 
-    // Auto-submit when all 6 digits entered
     if (_enteredOtp.length == 6) {
       _verify();
     }
@@ -151,8 +149,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     });
 
     try {
+      // phone is now required — Twilio Verify needs it to look up the verification
       final result = await PhoneOtpService.verifyOtp(
         userId: widget.userId,
+        phone: widget.phone,
         otp: otp,
       );
 
@@ -241,7 +241,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     final cs = Theme.of(context).colorScheme;
     final muted = cs.onSurface.withValues(alpha: 0.60);
 
-    // Show last 4 digits of phone for privacy
     final displayPhone = widget.phone.length >= 4
         ? '••••${widget.phone.substring(widget.phone.length - 4)}'
         : widget.phone;
@@ -257,7 +256,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            // Header
             Row(
               children: [
                 Container(
@@ -322,7 +320,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   ),
                   const SizedBox(height: 6),
 
-                  // Expiry countdown
                   AnimatedSwitcher(
                     duration: const Duration(milliseconds: 300),
                     child: Text(
@@ -344,7 +341,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
                   const SizedBox(height: 24),
 
-                  // 6-digit OTP input boxes
                   Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: List.generate(6, (i) {
@@ -359,7 +355,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.center,
                           maxLength: i == 0 ? 6 : 1,
-                          // allow paste on first box
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
                           ],
@@ -389,7 +384,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
                   const SizedBox(height: 12),
 
-                  // Error message
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 8),
@@ -406,7 +400,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
                   const SizedBox(height: 8),
 
-                  // Verify button
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
@@ -430,7 +423,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
                   const SizedBox(height: 12),
 
-                  // Resend button
                   TextButton.icon(
                     onPressed:
                         (_resendCooldown > 0 || _resending) ? null : _resend,
@@ -455,7 +447,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
                   const SizedBox(height: 4),
 
-                  // Skip for now (rare case — AT sandbox not working)
                   TextButton(
                     onPressed: _loading
                         ? null
@@ -470,10 +461,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                           },
                     child: Text(
                       'Skip for now',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: muted,
-                      ),
+                      style: TextStyle(fontSize: 12, color: muted),
                     ),
                   ),
                 ],

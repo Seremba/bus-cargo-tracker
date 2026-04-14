@@ -841,7 +841,7 @@ class StaffStationScreen extends StatelessWidget {
                     if (!context.mounted) return;
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content: Text(ok ? 'Pickup via QR ✅' : err!),
+                        content: Text(ok ? 'Pickup via QR ✅' : err),
                       ),
                     );
                   },

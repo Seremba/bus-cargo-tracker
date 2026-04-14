@@ -1,146 +1,73 @@
-import 'dart:convert';
-import 'dart:math';
-import 'package:crypto/crypto.dart';
-
+import 'twilio_verify_service.dart';
 import 'auth_service.dart';
-import 'hive_service.dart';
-import 'outbound_message_service.dart';
-import 'phone_normalizer.dart';
 
+/// Handles phone verification OTP for newly registered sender accounts.
+///
+/// OTP generation, delivery, expiry, and attempt-counting are all managed
+/// by Twilio Verify. No OTP is stored locally in Hive.
 class PhoneOtpService {
   PhoneOtpService._();
 
-  static const int otpTtlSeconds = 600; // 10 minutes
-  static const int maxAttempts = 3;
+  /// Exposed so OtpVerificationScreen can show a countdown timer.
+  /// Twilio Verify OTPs expire after 10 minutes by default.
+  static const int otpTtlSeconds = 600;
 
-  static String _storageKey(String userId) => 'phone_otp:$userId';
-
-  static String _generateOtp() {
-    final rng = Random.secure();
-    return (100000 + rng.nextInt(900000)).toString();
-  }
-
-  static String _hashOtp(String userId, String otp) {
-    final salted = '$userId:$otp';
-    return sha256.convert(utf8.encode(salted)).toString();
-  }
-
-  // FIX: Removed \n newline characters — they trigger UCS-2 encoding which
-  // causes AT to reject the message on the shared AFRICASTKNG sender.
-  // All content is now on a single line using plain GSM-7 characters only.
-  static String _buildMessage(String otp, String phone) {
-    return 'UNEX LOGISTICS Your verification code is: $otp. '
-        'Valid for ${otpTtlSeconds ~/ 60} minutes. '
-        'Do not share this code.';
-  }
-
-  /// Generates a new OTP, stores it, and sends via AT SMS.
-  /// Safe to call on both first send and resend.
+  /// Sends a verification OTP to [phone] via Twilio Verify.
+  ///
+  /// Safe to call on both first send and resend — Twilio cancels
+  /// any previous pending verification for the same number automatically.
+  ///
+  /// Throws [StateError] if the phone cannot be normalised to E.164.
   static Future<void> generateAndSend({
     required String userId,
     required String phone,
   }) async {
-    final otp = _generateOtp();
-    final hash = _hashOtp(userId, otp);
-    final expiresAt = DateTime.now().add(Duration(seconds: otpTtlSeconds));
-
-    final entry = jsonEncode({
-      'hash': hash,
-      'expiresAt': expiresAt.toIso8601String(),
-      'attempts': 0,
-    });
-
-    final box = HiveService.appSettingsBox();
-    await box.put(_storageKey(userId), entry);
-
-    // Normalize phone for SMS delivery
-    final normalizedPhone = PhoneNormalizer.normalizeForMessaging(phone);
-    if (normalizedPhone.isEmpty) {
-      throw StateError(
-        'Cannot send OTP: phone number is not message-ready. raw="$phone"',
-      );
+    final err = await TwilioVerifyService.sendOtp(phone);
+    if (err != null) {
+      throw StateError('PhoneOtpService: Verify send failed — $err');
     }
-
-    await OutboundMessageService.queue(
-      toPhone: normalizedPhone,
-      channel: 'sms',
-      body: _buildMessage(otp, normalizedPhone),
-      propertyKey: userId, // userId as audit reference — no property involved
-    );
   }
 
-  /// Verifies the entered OTP against the stored hash.
+  /// Verifies the OTP entered by the user.
+  ///
+  /// On success, marks the user's phone as verified in Hive and returns
+  /// [OtpVerifyResult.success].
   static Future<OtpVerifyResult> verifyOtp({
     required String userId,
+    required String phone,
     required String otp,
   }) async {
-    final box = HiveService.appSettingsBox();
-    final raw = box.get(_storageKey(userId)) as String?;
+    final result = await TwilioVerifyService.checkOtp(
+      phone: phone,
+      code: otp.trim(),
+    );
 
-    if (raw == null || raw.trim().isEmpty) {
-      return OtpVerifyResult.notFound;
-    }
+    switch (result) {
+      case VerifyCheckResult.approved:
+        await AuthService.markPhoneVerified(userId);
+        return OtpVerifyResult.success;
 
-    Map<String, dynamic> entry;
-    try {
-      entry = jsonDecode(raw) as Map<String, dynamic>;
-    } catch (_) {
-      return OtpVerifyResult.notFound;
-    }
+      case VerifyCheckResult.pending:
+        // Wrong code — Twilio tracks attempt count server-side.
+        // After too many wrong attempts Twilio returns 'pending' until
+        // the verification expires; we surface this as wrongOtp.
+        return OtpVerifyResult.wrongOtp;
 
-    final storedHash = (entry['hash'] ?? '').toString();
-    final expiresAtRaw = (entry['expiresAt'] ?? '').toString();
-    final attempts = (entry['attempts'] as num?)?.toInt() ?? 0;
+      case VerifyCheckResult.notFound:
+        // Expired (>10 min) or already used.
+        return OtpVerifyResult.expired;
 
-    // Check expiry
-    final expiresAt = DateTime.tryParse(expiresAtRaw);
-    if (expiresAt == null || DateTime.now().isAfter(expiresAt)) {
-      await _clearOtp(userId);
-      return OtpVerifyResult.expired;
-    }
-
-    // Check attempts
-    if (attempts >= maxAttempts) {
-      return OtpVerifyResult.tooManyAttempts;
-    }
-
-    // Verify hash
-    final inputHash = _hashOtp(userId, otp.trim());
-    if (inputHash != storedHash) {
-      // Increment attempts
-      entry['attempts'] = attempts + 1;
-      await box.put(_storageKey(userId), jsonEncode(entry));
-      return OtpVerifyResult.wrongOtp;
-    }
-
-    // Success — clear OTP and mark phone verified
-    await _clearOtp(userId);
-    await AuthService.markPhoneVerified(userId);
-
-    return OtpVerifyResult.success;
-  }
-
-  /// Checks whether a valid (non-expired) OTP exists for this user.
-  static bool hasValidOtp(String userId) {
-    final box = HiveService.appSettingsBox();
-    final raw = box.get(_storageKey(userId)) as String?;
-    if (raw == null) return false;
-
-    try {
-      final entry = jsonDecode(raw) as Map<String, dynamic>;
-      final expiresAtRaw = (entry['expiresAt'] ?? '').toString();
-      final expiresAt = DateTime.tryParse(expiresAtRaw);
-      if (expiresAt == null) return false;
-      return DateTime.now().isBefore(expiresAt);
-    } catch (_) {
-      return false;
+      case VerifyCheckResult.error:
+        // Network / server failure — treat as notFound so the UI
+        // prompts the user to resend.
+        return OtpVerifyResult.notFound;
     }
   }
 
-  static Future<void> _clearOtp(String userId) async {
-    final box = HiveService.appSettingsBox();
-    await box.delete(_storageKey(userId));
-  }
+  /// Always returns true — Twilio Verify manages expiry server-side.
+  /// Kept for UI compatibility (OtpVerificationScreen checks this before
+  /// showing the resend button).
+  static bool hasValidOtp(String userId) => true;
 }
 
 /// Result of an OTP verification attempt.

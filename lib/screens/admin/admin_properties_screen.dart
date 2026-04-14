@@ -148,8 +148,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           final items = propertyBox.values.toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          if (items.isEmpty)
+          if (items.isEmpty) {
             return const Center(child: Text('No properties yet.'));
+          }
 
           _scheduleAutoRepairOnce(items);
 

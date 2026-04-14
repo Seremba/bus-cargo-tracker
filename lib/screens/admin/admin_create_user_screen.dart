@@ -204,7 +204,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
 
               // Role dropdown
               DropdownButtonFormField<UserRole>(
-                value: _role,
+                initialValue: _role,
                 isExpanded: true,
                 decoration: InputDecoration(
                   labelText: 'Role',
@@ -294,7 +294,7 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
               // Route dropdown
               if (_routeEnabled) ...[
                 DropdownButtonFormField<AppRoute>(
-                  value: _selectedRoute,
+                  initialValue: _selectedRoute,
                   isExpanded: true,
                   decoration: InputDecoration(
                     labelText: 'Assigned Route',

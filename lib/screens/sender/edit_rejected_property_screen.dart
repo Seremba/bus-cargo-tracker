@@ -348,7 +348,7 @@ class _EditRejectedPropertyScreenState
             // Route picker — isExpanded prevents right overflow on device
             DropdownButtonFormField<String>(
               isExpanded: true,
-              value: _routeId.isEmpty ? null : _routeId,
+              initialValue: _routeId.isEmpty ? null : _routeId,
               decoration: const InputDecoration(
                 labelText: 'Route',
                 prefixIcon: Icon(Icons.route_outlined),

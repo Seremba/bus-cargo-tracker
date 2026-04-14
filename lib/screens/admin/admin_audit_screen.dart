@@ -341,7 +341,7 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
     final cs = Theme.of(context).colorScheme;
     return DropdownButtonFormField<String>(
       isExpanded: true,
-      value: value,
+      initialValue: value,
       decoration: InputDecoration(
         labelText: label,
         labelStyle: const TextStyle(fontSize: 12),

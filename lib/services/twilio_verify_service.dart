@@ -114,16 +114,37 @@ class TwilioVerifyService {
     }
   }
 
-  /// Converts any supported format to E.164.
-  /// Mirrors TwilioService._toE164 — kept local to avoid coupling.
+  /// Converts any supported format to E.164 (+XXXXXXXXXXX).
+  ///
+  /// PhoneNormalizer.normalizeForMessaging returns digits only (no + prefix).
+  /// Twilio Verify requires E.164 with the + prefix, so we add it here.
   static String? _toE164(String raw) {
-    // First try PhoneNormalizer (handles UG/KE/SS/RW/CD formats)
+    // PhoneNormalizer returns digits only — prepend + to make valid E.164
     final normalized = PhoneNormalizer.normalizeForMessaging(raw);
-    if (normalized.isNotEmpty) return normalized;
+    if (normalized.isNotEmpty) return '+$normalized';
 
-    // Fallback: strip whitespace/dashes, check if already E.164
-    final p = raw.replaceAll(RegExp(r'[\s\-()]'), '');
+    // Fallback for formats PhoneNormalizer doesn't handle
+    var p = raw.replaceAll(RegExp(r'[\s\-()]'), '');
+    if (p.isEmpty) return null;
+
+    // Already E.164
     if (p.startsWith('+') && p.length >= 10) return p;
+
+    // Uganda: 07XXXXXXXX → +2567XXXXXXXX
+    if (p.startsWith('07') && p.length == 10) return '+256${p.substring(1)}';
+
+    // Uganda: 0XXXXXXXXX → +256XXXXXXXXX
+    if (p.startsWith('0') && p.length == 10) return '+256${p.substring(1)}';
+
+    // Uganda short: 7XXXXXXXX or 3XXXXXXXX → +2567XXXXXXXX
+    if (p.length == 9 && (p.startsWith('7') || p.startsWith('3'))) {
+      return '+256$p';
+    }
+
+    // Has country code digits but no + 
+    if (p.length >= 10 && p.length <= 15 && !p.startsWith('0')) {
+      return '+$p';
+    }
 
     return null;
   }

@@ -11,13 +11,15 @@ class TwilioVerifyService {
   static const String _workerBase =
       'https://bus-cargo-sync.pserembae.workers.dev';
 
-  static const String _syncApiKey =
-      String.fromEnvironment('SYNC_API_KEY', defaultValue: '');
+  static const String _syncApiKey = String.fromEnvironment(
+    'SYNC_API_KEY',
+    defaultValue: '',
+  );
 
   static Map<String, String> get _headers => {
-        'Content-Type': 'application/json',
-        'X-Api-Key': _syncApiKey,
-      };
+    'Content-Type': 'application/json',
+    'X-Api-Key': _syncApiKey,
+  };
 
   // ── Send OTP ──────────────────────────────────────────────────────────────
 
@@ -27,10 +29,11 @@ class TwilioVerifyService {
   /// Returns null on success, or an error string on failure.
   static Future<String?> sendOtp(String phone) async {
     final e164 = _toE164(phone);
+    // ignore: avoid_print
+    print('[TwilioVerify] raw="$phone" e164="$e164"');
     if (e164 == null) {
       return 'Invalid phone number: $phone';
     }
-
     try {
       final response = await http
           .post(
@@ -39,15 +42,16 @@ class TwilioVerifyService {
             body: jsonEncode({'to': e164}),
           )
           .timeout(const Duration(seconds: 20));
-
+      // ignore: avoid_print
+      print(
+        '[TwilioVerify] status=${response.statusCode} body=${response.body}',
+      );
       final json = _parseJson(response.body);
-
       if (response.statusCode == 200) {
         final status = (json['status'] ?? '').toString();
         if (status == 'pending') return null; // success
         return 'Unexpected Verify status: $status';
       }
-
       final errCode = (json['code'] ?? '').toString();
       final errMsg = (json['error'] ?? 'Unknown error').toString();
       final twilioMsg = (json['twilioMessage'] ?? '').toString();
@@ -141,7 +145,7 @@ class TwilioVerifyService {
       return '+256$p';
     }
 
-    // Has country code digits but no + 
+    // Has country code digits but no +
     if (p.length >= 10 && p.length <= 15 && !p.startsWith('0')) {
       return '+$p';
     }

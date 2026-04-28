@@ -5,20 +5,9 @@ import 'hive_service.dart';
 import 'phone_normalizer.dart';
 import 'twilio_verify_service.dart';
 
-/// Handles password reset and first-login password setup via Twilio Verify OTP.
-///
-/// OTP generation, delivery, expiry (10 min), and attempt-counting are all
-/// managed by Twilio Verify. Only the verified/unverified flag and the new
-/// password are stored locally.
 class PasswordResetService {
   PasswordResetService._();
 
-  // ── Policy ────────────────────────────────────────────────────────────────
-
-  /// How long the verified flag is trusted before requiring a re-verify.
-  /// Twilio Verify itself expires in 10 min — this is a belt-and-suspenders
-  /// guard on the client side in case the user takes a long time on the
-  /// set-password screen.
   static const Duration _verifiedSessionTtl = Duration(minutes: 15);
 
   static String _k(String phoneDigits) => 'PWDRESET:$phoneDigits';
@@ -26,9 +15,6 @@ class PasswordResetService {
   static String _digitsKey(String rawPhone) =>
       PhoneNormalizer.digitsOnly(rawPhone);
 
-  // ── User lookup ───────────────────────────────────────────────────────────
-
-  /// Finds a user by phone using last-9-digit suffix matching.
   static User? _findUserByPhoneDigits(String phoneDigits) {
     if (phoneDigits.length < 9) return null;
     final inputSuffix = phoneDigits.substring(phoneDigits.length - 9);
@@ -44,12 +30,6 @@ class PasswordResetService {
     return null;
   }
 
-  // ── Step 1: Request OTP ───────────────────────────────────────────────────
-
-  /// Sends a 6-digit OTP to [rawPhone] via Twilio Verify.
-  ///
-  /// Validates the phone, looks up the user account, then delegates
-  /// delivery entirely to Twilio. No OTP is stored locally.
   static Future<ResetResult> requestOtp({required String rawPhone}) async {
     final phoneDigits = _digitsKey(rawPhone);
     if (phoneDigits.isEmpty) {
@@ -72,7 +52,7 @@ class PasswordResetService {
       return const ResetResult(false, 'No account found for that phone number.');
     }
 
-    final err = await TwilioVerifyService.sendOtp(msgPhone);
+    final err = await TwilioVerifyService.sendOtp('+$msgPhone');
     if (err != null) {
       await AuditService.log(
         action: 'PWD_RESET_OTP_SEND_FAILED',
@@ -82,8 +62,6 @@ class PasswordResetService {
       return ResetResult(false, 'Could not send OTP: $err');
     }
 
-    // Store a minimal record: just tracks that a send was requested and
-    // when, so setNewPassword can enforce the session TTL.
     final box = HiveService.passwordResetBox();
     await box.put(_k(phoneDigits), <String, dynamic>{
       'phoneDigits': phoneDigits,
@@ -95,18 +73,12 @@ class PasswordResetService {
     await AuditService.log(
       action: 'PWD_RESET_OTP_SENT',
       propertyKey: _k(phoneDigits),
-      details: 'Twilio Verify OTP sent to=$msgPhone userId=${user.id}',
+      details: 'Twilio Verify OTP sent to=+$msgPhone userId=${user.id}',
     );
 
     return const ResetResult(true, 'OTP sent. Check your SMS.');
   }
 
-  // ── Step 2a: Verify OTP ───────────────────────────────────────────────────
-
-  /// Checks the [otp] entered by the user against Twilio Verify.
-  ///
-  /// On success, marks the local reset record as verified so
-  /// [setNewPassword] can proceed on the next screen.
   static Future<ResetResult> verifyOtpOnly({
     required String rawPhone,
     required String otp,
@@ -132,13 +104,15 @@ class PasswordResetService {
     }
 
     final result = await TwilioVerifyService.checkOtp(
-      phone: msgPhone,
+      phone: '+$msgPhone',
       code: cleanOtp,
     );
 
     switch (result) {
       case VerifyCheckResult.approved:
-        // Mark verified in local record with timestamp
+        // Mark phone as verified in Hive — updates the badge in admin UI
+        await AuthService.markPhoneVerified(user.id);
+
         final box = HiveService.passwordResetBox();
         final key = _k(phoneDigits);
         final existing = box.get(key);
@@ -160,7 +134,6 @@ class PasswordResetService {
         return const ResetResult(true, 'OTP verified.');
 
       case VerifyCheckResult.pending:
-        // Wrong code — Twilio tracks attempts and locks after 5 wrong tries.
         await AuditService.log(
           action: 'PWD_RESET_OTP_BAD',
           propertyKey: _k(phoneDigits),
@@ -169,7 +142,6 @@ class PasswordResetService {
         return const ResetResult(false, 'Incorrect OTP. Try again.');
 
       case VerifyCheckResult.notFound:
-        // Expired (>10 min) or already used.
         return const ResetResult(false, 'OTP expired. Tap "Send OTP" again.');
 
       case VerifyCheckResult.error:
@@ -177,12 +149,6 @@ class PasswordResetService {
     }
   }
 
-  // ── Step 2b: Set new password ─────────────────────────────────────────────
-
-  /// Sets [newPassword] for the account associated with [rawPhone].
-  ///
-  /// Must be called after a successful [verifyOtpOnly]. The verified flag
-  /// in the local record must be present and within [_verifiedSessionTtl].
   static Future<ResetResult> setNewPassword({
     required String rawPhone,
     required String newPassword,
@@ -217,7 +183,6 @@ class PasswordResetService {
       return const ResetResult(false, 'OTP not verified. Please verify first.');
     }
 
-    // Belt-and-suspenders: enforce client-side session TTL
     final verifiedAtMs = (recMap['verifiedAtMs'] as int?) ?? 0;
     if (verifiedAtMs > 0) {
       final verifiedAt = DateTime.fromMillisecondsSinceEpoch(verifiedAtMs);
@@ -256,9 +221,6 @@ class PasswordResetService {
     return const ResetResult(true, 'Password updated successfully.');
   }
 
-  // ── Legacy compat ─────────────────────────────────────────────────────────
-
-  /// Legacy method — kept for backwards compatibility.
   static Future<ResetResult> verifyOtpAndResetPassword({
     required String rawPhone,
     required String otp,

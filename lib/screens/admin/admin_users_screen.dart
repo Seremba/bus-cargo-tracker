@@ -69,6 +69,60 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     }
   }
 
+  /// Verification badge — shown for senders and staff/drivers who use OTP login.
+  /// Admins are always verified and don't need a badge.
+  Widget _verifiedBadge(bool phoneVerified) {
+    if (phoneVerified) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+        decoration: BoxDecoration(
+          color: const Color(0xFFE8F5E9),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: const Color(0xFF2E7D32).withValues(alpha: 0.30)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: const [
+            Icon(Icons.verified_outlined, size: 10, color: Color(0xFF2E7D32)),
+            SizedBox(width: 3),
+            Text(
+              'Verified',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF2E7D32),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFFF3E0),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: const Color(0xFFE65100).withValues(alpha: 0.30)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: const [
+          Icon(Icons.warning_amber_outlined, size: 10, color: Color(0xFFE65100)),
+          SizedBox(width: 3),
+          Text(
+            'Unverified',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFE65100),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (!RoleGuard.hasRole(UserRole.admin)) {
@@ -221,6 +275,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     final canEditDriverRoute = u.role == UserRole.driver;
     final canDelete = u.role != UserRole.admin;
     final isSender = u.role == UserRole.sender;
+    // Admins are implicitly always verified — no badge needed
+    final showVerifiedBadge = u.role != UserRole.admin;
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
@@ -255,6 +311,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // ── Name + role chip ──────────────────────────────────
                   Row(
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
@@ -294,7 +351,13 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     ],
                   ),
 
-                  const SizedBox(height: 3),
+                  const SizedBox(height: 4),
+
+                  // ── Verified / Unverified badge ───────────────────────
+                  if (showVerifiedBadge) ...[
+                    _verifiedBadge(u.phoneVerified),
+                    const SizedBox(height: 3),
+                  ],
 
                   Text(u.phone, style: TextStyle(fontSize: 12, color: muted)),
 
@@ -388,7 +451,6 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                       ],
                     ),
                   ),
-                // ── Delete option — only for non-admin roles ──────────────
                 if (canDelete) ...[
                   const PopupMenuDivider(),
                   PopupMenuItem(
@@ -421,7 +483,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
   Future<void> _deleteUserFlow(User u) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
-    if (u.role == UserRole.admin) return; // never delete admin
+    if (u.role == UserRole.admin) return;
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -438,7 +500,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                   fontWeight: FontWeight.w400,
                   color: Theme.of(context).colorScheme.onSurface,
                   decoration: TextDecoration.none,
-                  fontFamily: null, // resets any inherited monospace
+                  fontFamily: null,
                 ),
                 children: [
                   const TextSpan(text: 'Are you sure you want to delete '),
@@ -500,10 +562,8 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
     if (!mounted || confirmed != true) return;
 
     try {
-      // Remove from local Hive
       await HiveService.userBox().delete(u.id);
 
-      // Sync deletion to other devices
       await SyncService.enqueue(
         type: SyncEventType.userDeleted,
         aggregateType: 'user',

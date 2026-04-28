@@ -49,12 +49,6 @@ class AuthService {
   }
 
   // ── Phone suffix matching ──────────────────────────────────────────────────
-  // Matches on last 9 digits to handle all phone formats:
-  //   0704811862    → suffix: 704811862
-  //   256704811862  → suffix: 704811862
-  //   +256704811862 → suffix: 704811862
-  // This ensures login works regardless of whether the stored phone has a
-  // country code prefix or not.
   static String _phoneSuffix(String phone) {
     final digits = PhoneNormalizer.digitsOnly(phone);
     if (digits.length <= 9) return digits;
@@ -198,7 +192,9 @@ class AuthService {
       assignedRouteName: assignedRouteName,
       requireAdminForNonSender: false,
       allowAdminCreation: false,
-      phoneVerified: true,
+      // phoneVerified is false — user must complete OTP on first login
+      // to set their own password before being marked verified.
+      phoneVerified: false,
     );
   }
 
@@ -246,8 +242,6 @@ class AuthService {
       }
     }
 
-    // Use suffix matching to prevent duplicate phone registrations
-    // regardless of how the country code is formatted
     final exists = box.values.any((u) => _phonesMatch(u.phone, cleanPhone));
     if (exists) return null;
 
@@ -343,9 +337,6 @@ class AuthService {
     }
   }
 
-  // ── Login by phone + password (role-agnostic) ─────────────────────────────
-  // Uses last-9-digit suffix matching so phones stored with or without
-  // country code prefix all resolve to the same account.
   static Future<User?> loginByPhonePassword({
     required String phone,
     required String password,
@@ -360,7 +351,6 @@ class AuthService {
 
     if (candidates.isEmpty) return null;
 
-    // Admin first so admin login is never shadowed by another role
     candidates.sort((a, b) {
       if (a.role == UserRole.admin) return -1;
       if (b.role == UserRole.admin) return 1;
@@ -521,7 +511,7 @@ class AuthService {
     return true;
   }
 
-  // ── S3 groundwork — mark phone verified ───────────────────────────────────
+  // ── Mark phone verified ────────────────────────────────────────────────────
 
   static Future<void> markPhoneVerified(String userId) async {
     final box = HiveService.userBox();
@@ -570,12 +560,8 @@ class AuthService {
     final phone = (payload['phone'] ?? '').toString().trim();
     final roleRaw = (payload['role'] ?? '').toString().trim();
     final stationName = (payload['stationName'] ?? '').toString().trim();
-    final assignedRouteId = (payload['assignedRouteId'] ?? '')
-        .toString()
-        .trim();
-    final assignedRouteName = (payload['assignedRouteName'] ?? '')
-        .toString()
-        .trim();
+    final assignedRouteId = (payload['assignedRouteId'] ?? '').toString().trim();
+    final assignedRouteName = (payload['assignedRouteName'] ?? '').toString().trim();
     final phoneVerified = (payload['phoneVerified'] as bool?) ?? false;
     final createdAtRaw = (payload['createdAt'] ?? '').toString().trim();
 
@@ -637,7 +623,6 @@ class AuthService {
       return;
     }
 
-    // New non-admin user from remote — create a shell with no password.
     final createdAt = DateTime.tryParse(createdAtRaw) ?? DateTime.now();
 
     final shell = User(
@@ -657,19 +642,18 @@ class AuthService {
     await box.put(userId, shell);
   }
 
-static Future<void> applyUserDeletedSyncEvent(
-  Map<String, dynamic> payload,
-) async {
-  final userId = (payload['userId'] ?? '').toString().trim();
-  if (userId.isEmpty) return;
+  static Future<void> applyUserDeletedSyncEvent(
+    Map<String, dynamic> payload,
+  ) async {
+    final userId = (payload['userId'] ?? '').toString().trim();
+    if (userId.isEmpty) return;
 
-  final box = HiveService.userBox();
-  final user = box.get(userId);
-  if (user == null) return;
+    final box = HiveService.userBox();
+    final user = box.get(userId);
+    if (user == null) return;
 
-  // Never delete admin from a sync event
-  if (user.role == UserRole.admin) return;
+    if (user.role == UserRole.admin) return;
 
-  await box.delete(userId);
-}
+    await box.delete(userId);
+  }
 }

@@ -21,7 +21,6 @@ class PasswordResetService {
 
     final box = HiveService.userBox();
     for (final u in box.values) {
-      if (u is! User) continue;
       final storedDigits = PhoneNormalizer.digitsOnly(u.phone);
       if (storedDigits.length < 9) continue;
       final storedSuffix = storedDigits.substring(storedDigits.length - 9);
@@ -49,7 +48,10 @@ class PasswordResetService {
 
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
-      return const ResetResult(false, 'No account found for that phone number.');
+      return const ResetResult(
+        false,
+        'No account found for that phone number.',
+      );
     }
 
     final err = await TwilioVerifyService.sendOtp('+$msgPhone');
@@ -57,7 +59,8 @@ class PasswordResetService {
       await AuditService.log(
         action: 'PWD_RESET_OTP_SEND_FAILED',
         propertyKey: _k(phoneDigits),
-        details: 'Twilio Verify send failed: $err — phone=$msgPhone userId=${user.id}',
+        details:
+            'Twilio Verify send failed: $err — phone=$msgPhone userId=${user.id}',
       );
       return ResetResult(false, 'Could not send OTP: $err');
     }
@@ -95,7 +98,10 @@ class PasswordResetService {
 
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
-      return const ResetResult(false, 'No account found for that phone number.');
+      return const ResetResult(
+        false,
+        'No account found for that phone number.',
+      );
     }
 
     final msgPhone = PhoneNormalizer.normalizeForMessaging(rawPhone);
@@ -118,10 +124,7 @@ class PasswordResetService {
         final existing = box.get(key);
         final rec = existing != null
             ? Map<String, dynamic>.from(existing as Map)
-            : <String, dynamic>{
-                'phoneDigits': phoneDigits,
-                'sentAtMs': 0,
-              };
+            : <String, dynamic>{'phoneDigits': phoneDigits, 'sentAtMs': 0};
         rec['otpVerified'] = true;
         rec['verifiedAtMs'] = DateTime.now().millisecondsSinceEpoch;
         await box.put(key, rec);
@@ -145,7 +148,10 @@ class PasswordResetService {
         return const ResetResult(false, 'OTP expired. Tap "Send OTP" again.');
 
       case VerifyCheckResult.error:
-        return const ResetResult(false, 'Could not verify OTP. Check your connection and try again.');
+        return const ResetResult(
+          false,
+          'Could not verify OTP. Check your connection and try again.',
+        );
     }
   }
 
@@ -160,12 +166,18 @@ class PasswordResetService {
 
     final cleanPass = newPassword.trim();
     if (cleanPass.length < 6) {
-      return const ResetResult(false, 'Password must be at least 6 characters.');
+      return const ResetResult(
+        false,
+        'Password must be at least 6 characters.',
+      );
     }
 
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
-      return const ResetResult(false, 'No account found for that phone number.');
+      return const ResetResult(
+        false,
+        'No account found for that phone number.',
+      );
     }
 
     final box = HiveService.passwordResetBox();

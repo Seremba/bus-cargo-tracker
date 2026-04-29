@@ -14,13 +14,13 @@ class AutoSyncService with WidgetsBindingObserver {
   bool _started = false;
   bool _syncing = false;
 
-  // Phase 5: reduced from 30s → 5 minutes.
+  // Reduced from 5 minutes → 1 minute for faster cross-device property sync.
   // Write-triggered sync (SyncService.enqueue) handles immediate pushes.
-  // This ticker is now a safety net for:
+  // This ticker is a safety net for:
   //   • Failed pushes that need retry after backoff clears
   //   • Pull (receiving events written by other devices)
   //   • Devices returning from offline/background
-  static const Duration _interval = Duration(minutes: 5);
+  static const Duration _interval = Duration(minutes: 1);
 
   // Phase 4: prune once per week
   static const Duration _pruneInterval = Duration(days: 7);
@@ -58,7 +58,7 @@ class AutoSyncService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_started) return;
 
-    // Phase 5: sync on app resume — catches up from background/offline period
+    // Sync on app resume — catches up from background/offline period
     if (state == AppLifecycleState.resumed) {
       _safeSync();
     }
@@ -80,20 +80,17 @@ class AutoSyncService with WidgetsBindingObserver {
     try {
       await SyncService.syncNow();
 
-      // F5: TTL checks — internally rate-limited to once per calendar day
+      // TTL checks — internally rate-limited to once per calendar day
       await PropertyTtlService.runChecks();
 
       // Phase 4: weekly pruning
       await _maybePrune();
     } on StateError catch (e) {
-      // Phase 1: surface API key config errors in debug builds.
-      // These are configuration problems, not transient failures.
+      // Surface API key config errors in debug builds.
       final msg = e.message;
       if (msg.contains('API key') || msg.contains('SYNC_API_KEY')) {
         assert(false, '[AutoSyncService] $msg');
-        // In release: silently stop until key is configured.
       }
-      // All other StateErrors (HTTP 5xx, upstream timeouts) stay silent.
     } catch (_) {
       // Never crash the app due to background sync work.
     } finally {
@@ -131,6 +128,6 @@ class AutoSyncService with WidgetsBindingObserver {
   }
 
   /// Triggers an immediate sync when connectivity is restored.
-  /// Already wired in main.dart via Connectivity().onConnectivityChanged.```
+  /// Already wired in main.dart via Connectivity().onConnectivityChanged.
   Future<void> triggerNow() => _safeSync();
 }

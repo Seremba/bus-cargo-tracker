@@ -7,6 +7,7 @@ import '../../models/property.dart';
 import '../../models/property_item_status.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
+import '../../services/auto_sync_service.dart';
 import '../../services/exports/payment_export_service.dart';
 import '../../services/file_share_service.dart';
 import '../../services/hive_service.dart';
@@ -32,6 +33,7 @@ class DeskCargoOfficerDashboard extends StatefulWidget {
 
 class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   bool _openingOutbound = false;
+  bool _refreshing = false;
 
   final _payCodeCtrl = TextEditingController();
   final _loadCodeCtrl = TextEditingController();
@@ -57,6 +59,18 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
       buffer.write(s[i]);
     }
     return buffer.toString();
+  }
+
+  /// Pull-to-refresh handler — triggers an immediate sync so newly
+  /// registered properties appear without waiting for the 1-minute tick.
+  Future<void> _onRefresh() async {
+    if (_refreshing) return;
+    setState(() => _refreshing = true);
+    try {
+      await AutoSyncService.instance.triggerNow();
+    } finally {
+      if (mounted) setState(() => _refreshing = false);
+    }
   }
 
   Future<void> _openOutboundMessagesSms() async {
@@ -141,8 +155,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
     for (final p in propBox.values) {
       if (p.status != PropertyStatus.pending &&
-          p.status != PropertyStatus.loaded)
-        continue;
+          p.status != PropertyStatus.loaded) continue;
 
       final loadedAt = p.loadedAtStation.trim().toLowerCase();
       if (loadedAt != station.toLowerCase()) continue;
@@ -288,8 +301,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     );
   }
 
-  /// Navigates to DeskRecordPaymentScreen for new payments.
-  /// If already paid, routes to DeskPropertyDetailsScreen instead.
   Future<void> _openForPayment(String code) async {
     final clean = code.trim();
     if (clean.isEmpty) return;
@@ -318,7 +329,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     );
 
     if (alreadyPaid) {
-      // Payment already recorded — go to details screen instead
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text('Payment already recorded — opening property details'),
@@ -340,7 +350,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
     );
   }
 
-  /// Navigates directly to DeskPropertyDetailsScreen for loading items.
   Future<void> _openForLoading(String code) async {
     final clean = code.trim();
     if (clean.isEmpty) return;
@@ -651,6 +660,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
         body: TabBarView(
           children: [
+            // ── Scan tab — with pull-to-refresh ──────────────────────────
             AnimatedBuilder(
               animation: Listenable.merge([
                 propBox.listenable(),
@@ -659,129 +669,159 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
               builder: (context, _) {
                 final partials = _getPartiallyLoadedProperties(station);
 
-                return ListView(
-                  padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
-                  children: [
-                    if (partials.isNotEmpty) ...[
-                      Row(
-                        children: [
-                          Container(
-                            width: 3,
-                            height: 20,
-                            decoration: BoxDecoration(
-                              color: Colors.amber,
-                              borderRadius: BorderRadius.circular(2),
+                return RefreshIndicator(
+                  onRefresh: _onRefresh,
+                  child: ListView(
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(14, 14, 14, 32),
+                    children: [
+                      // Pull-to-refresh hint
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.arrow_downward,
+                              size: 12,
+                              color: cs.onSurface.withValues(alpha: 0.35),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          const Icon(
-                            Icons.pending_actions_outlined,
-                            size: 17,
-                            color: Colors.amber,
-                          ),
-                          const SizedBox(width: 6),
-                          const Expanded(
-                            child: Text(
-                              'Remaining items to load',
+                            const SizedBox(width: 4),
+                            Text(
+                              'Pull down to sync latest properties',
                               style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
+                                fontSize: 11,
+                                color: cs.onSurface.withValues(alpha: 0.40),
                               ),
                             ),
-                          ),
-                          const SizedBox(width: 6),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 8,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: Colors.amber.withValues(alpha: 0.15),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Text(
-                              '${partials.length}',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700,
+                          ],
+                        ),
+                      ),
+
+                      if (partials.isNotEmpty) ...[
+                        Row(
+                          children: [
+                            Container(
+                              width: 3,
+                              height: 20,
+                              decoration: BoxDecoration(
                                 color: Colors.amber,
+                                borderRadius: BorderRadius.circular(2),
                               ),
                             ),
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            const Icon(
+                              Icons.pending_actions_outlined,
+                              size: 17,
+                              color: Colors.amber,
+                            ),
+                            const SizedBox(width: 6),
+                            const Expanded(
+                              child: Text(
+                                'Remaining items to load',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 2,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.amber.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                '${partials.length}',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                  color: Colors.amber,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        for (final entry in partials)
+                          _partialLoadCard(context, entry),
+                        const SizedBox(height: 8),
+                        const Divider(),
+                        const SizedBox(height: 8),
+                      ],
+
+                      _sectionTitle(
+                        Icons.point_of_sale_outlined,
+                        'Register & Pay',
+                      ),
+                      Text(
+                        'New cargo — scan or enter code to record payment.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.onSurface.withValues(alpha: 0.55),
+                        ),
                       ),
                       const SizedBox(height: 10),
-                      for (final entry in partials)
-                        _partialLoadCard(context, entry),
-                      const SizedBox(height: 8),
-                      const Divider(),
-                      const SizedBox(height: 8),
+                      _scanCard(
+                        context: context,
+                        scanLabel: 'Scan QR — Register & Pay',
+                        manualHint: 'Property code (e.g. P-20260318-8F3K)',
+                        controller: _payCodeCtrl,
+                        onCode: _openForPayment,
+                        onScanQr: () async {
+                          final raw = await Navigator.push<String?>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const DeskPropertyQrScannerScreen(),
+                            ),
+                          );
+                          return raw;
+                        },
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      _sectionTitle(
+                        Icons.local_shipping_outlined,
+                        'Load onto Trip',
+                      ),
+                      Text(
+                        'Paid cargo — scan or enter code to load items.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: cs.onSurface.withValues(alpha: 0.55),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _scanCard(
+                        context: context,
+                        scanLabel: 'Scan QR — Load onto Trip',
+                        manualHint: 'Property code (e.g. P-20260318-8F3K)',
+                        controller: _loadCodeCtrl,
+                        onCode: _openForLoading,
+                        onScanQr: () async {
+                          final raw = await Navigator.push<String?>(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const DeskPropertyQrScannerScreen(),
+                            ),
+                          );
+                          return raw;
+                        },
+                      ),
                     ],
-
-                    _sectionTitle(
-                      Icons.point_of_sale_outlined,
-                      'Register & Pay',
-                    ),
-                    Text(
-                      'New cargo — scan or enter code to record payment.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: cs.onSurface.withValues(alpha: 0.55),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _scanCard(
-                      context: context,
-                      scanLabel: 'Scan QR — Register & Pay',
-                      manualHint: 'Property code (e.g. P-20260318-8F3K)',
-                      controller: _payCodeCtrl,
-                      onCode: _openForPayment,
-                      onScanQr: () async {
-                        final raw = await Navigator.push<String?>(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const DeskPropertyQrScannerScreen(),
-                          ),
-                        );
-                        return raw;
-                      },
-                    ),
-
-                    const SizedBox(height: 20),
-
-                    _sectionTitle(
-                      Icons.local_shipping_outlined,
-                      'Load onto Trip',
-                    ),
-                    Text(
-                      'Paid cargo — scan or enter code to load items.',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: cs.onSurface.withValues(alpha: 0.55),
-                      ),
-                    ),
-                    const SizedBox(height: 10),
-                    _scanCard(
-                      context: context,
-                      scanLabel: 'Scan QR — Load onto Trip',
-                      manualHint: 'Property code (e.g. P-20260318-8F3K)',
-                      controller: _loadCodeCtrl,
-                      onCode: _openForLoading,
-                      onScanQr: () async {
-                        final raw = await Navigator.push<String?>(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const DeskPropertyQrScannerScreen(),
-                          ),
-                        );
-                        return raw;
-                      },
-                    ),
-                  ],
+                  ),
                 );
               },
             ),
 
+            // ── Recent tab ────────────────────────────────────────────────
             AnimatedBuilder(
               animation: Listenable.merge([
                 payBox.listenable(),

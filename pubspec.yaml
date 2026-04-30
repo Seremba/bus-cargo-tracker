@@ -25,7 +25,7 @@ dependencies:
 
   # File & sharing
   image_picker: ^1.0.7
-  path_provider: ^2.1.4
+  path_provider: ^2.1.5
   path: ^1.9.0
   share_plus: ^10.0.2
 
@@ -47,6 +47,7 @@ dependencies:
   connectivity_plus: ^6.0.0
 
   intl_phone_field: ^3.2.0
+  screenshot: ^3.0.0
 
 dev_dependencies:
   flutter_test:

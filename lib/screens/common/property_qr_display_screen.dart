@@ -1,5 +1,10 @@
+import 'dart:io';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -18,6 +23,10 @@ class PropertyQrDisplayScreen extends StatefulWidget {
 }
 
 class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
+  // Key used to capture the QR widget as an image
+  final GlobalKey _qrKey = GlobalKey();
+  bool _saving = false;
+
   @override
   void initState() {
     super.initState();
@@ -25,22 +34,14 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
 
-      // Clear any SnackBars queued during transition from previous screen
       final m = ScaffoldMessenger.of(context);
       m.clearSnackBars();
       m.hideCurrentSnackBar();
 
-      // S2: lock the property the moment the sender sees the QR.
-      // From this point on, core fields (receiver, destination, item count,
-      // route) are committed and verified by a SHA-256 hash at desk scan.
-      // We look up by code because this screen only receives a String.
       final property = PropertyLookupService.findByPropertyCode(
         widget.propertyCode.trim(),
       );
       if (property != null) {
-        // Fire-and-forget — locking is non-blocking and low-risk.
-        // If it fails (e.g. Hive write error) the property stays unlocked
-        // and the desk scan will simply skip hash verification.
         PropertyService.lockProperty(property).catchError((_) {});
       }
     });
@@ -66,6 +67,58 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
     );
   }
 
+  /// Captures the QR widget as a PNG and saves it to the device's
+  /// Downloads or Documents folder, then shares it so the user can
+  /// save it to their gallery or send it via WhatsApp/SMS.
+  Future<void> _saveQr(String code) async {
+    if (_saving) return;
+    setState(() => _saving = true);
+
+    try {
+      // Capture the QR widget as an image
+      final boundary = _qrKey.currentContext?.findRenderObject()
+          as RenderRepaintBoundary?;
+      if (boundary == null) {
+        _snack('Could not capture QR. Try again.');
+        return;
+      }
+
+      final image = await boundary.toImage(pixelRatio: 3.0);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (byteData == null) {
+        _snack('Could not generate image. Try again.');
+        return;
+      }
+
+      final pngBytes = byteData.buffer.asUint8List();
+
+      // Save to a temp file
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/unex_qr_$code.png');
+      await file.writeAsBytes(pngBytes);
+
+      if (!mounted) return;
+
+      // Share the image — user can save to gallery or send via any app
+      await Share.shareXFiles(
+        [XFile(file.path, mimeType: 'image/png')],
+        text: 'UNEx Logistics QR — Property: $code',
+        subject: 'UNEx QR Code',
+      );
+    } catch (e) {
+      if (mounted) _snack('Failed to save QR: $e');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    final m = ScaffoldMessenger.of(context);
+    m.clearSnackBars();
+    m.showSnackBar(SnackBar(content: Text(msg)));
+  }
+
   void _done() {
     final m = ScaffoldMessenger.of(context);
     m.clearSnackBars();
@@ -80,11 +133,12 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
   Widget build(BuildContext context) {
     final code = widget.propertyCode.trim();
     final payload = PropertyQrService.encodePropertyCode(code);
-    final muted = Theme.of(context).colorScheme.onSurface.withOpacity(0.70);
+    final cs = Theme.of(context).colorScheme;
+    final muted = cs.onSurface.withValues(alpha: 0.70);
 
     return PopScope(
       canPop: false,
-      onPopInvoked: (didPop) {
+      onPopInvokedWithResult: (didPop, _) {
         if (didPop) return;
         _done();
       },
@@ -106,8 +160,41 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  QrImageView(data: payload, size: 240),
+                  // Wrap QR in RepaintBoundary so we can capture it as image
+                  RepaintBoundary(
+                    key: _qrKey,
+                    child: Container(
+                      color: Colors.white,
+                      padding: const EdgeInsets.all(12),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          QrImageView(data: payload, size: 240),
+                          const SizedBox(height: 8),
+                          Text(
+                            code,
+                            style: const TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.w900,
+                              letterSpacing: 0.6,
+                              color: Colors.black,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          const Text(
+                            'UNEx Logistics',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
                   const SizedBox(height: 14),
+
                   SelectableText(
                     code,
                     style: const TextStyle(
@@ -117,13 +204,18 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
                     ),
                     textAlign: TextAlign.center,
                   ),
+
                   const SizedBox(height: 8),
+
                   Text(
-                    'Stick this QR on the cargo/receipt.\nDesk Cargo Officer scans it to record payment.',
+                    'Show this QR to the Desk Cargo Officer.\nSave or share it so you always have it ready.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: muted),
                   ),
+
                   const SizedBox(height: 14),
+
+                  // ── Copy + Share row ──────────────────────────────────
                   Row(
                     children: [
                       Expanded(
@@ -135,15 +227,43 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
                       ),
                       const SizedBox(width: 10),
                       Expanded(
-                        child: ElevatedButton.icon(
+                        child: OutlinedButton.icon(
                           icon: const Icon(Icons.share),
-                          label: const Text('Share'),
+                          label: const Text('Share code'),
                           onPressed: () => _share(code),
                         ),
                       ),
                     ],
                   ),
+
                   const SizedBox(height: 10),
+
+                  // ── Save QR image button ──────────────────────────────
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: _saving
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.download_outlined),
+                      label: Text(_saving ? 'Saving…' : 'Save QR Image'),
+                      style: ElevatedButton.styleFrom(
+                        minimumSize: const Size.fromHeight(48),
+                        backgroundColor: cs.primary,
+                        foregroundColor: Colors.white,
+                      ),
+                      onPressed: _saving ? null : () => _saveQr(code),
+                    ),
+                  ),
+
+                  const SizedBox(height: 10),
+
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton(

@@ -189,12 +189,39 @@ class PaymentService {
         ? 'Refund'
         : (cleanKind == 'adjustment' ? 'Adjustment' : 'Payment');
 
+    final propertyCode = fresh.propertyCode.trim().isEmpty
+        ? fresh.key.toString()
+        : fresh.propertyCode.trim();
+    final description = fresh.description.trim().isEmpty
+        ? 'cargo'
+        : fresh.description.trim();
+    final stationLabel =
+        cleanStation.isEmpty ? 'the desk' : cleanStation;
+    final methodLabel =
+        cleanMethod.isEmpty ? '—' : cleanMethod;
+
+    // Notify sender — enriched receipt with property and cargo details
     await NotificationService.notify(
       targetUserId: fresh.createdByUserId,
-      title: '$prettyKind recorded',
+      title: '$prettyKind received — $propertyCode',
       message:
-          '$prettyKind: $cleanCurrency ${appliedAmount.abs()} at '
-          '$cleanStation via ${cleanMethod.isEmpty ? '—' : cleanMethod}.',
+          '$prettyKind of $cleanCurrency ${appliedAmount.abs()} '
+          'recorded for your shipment of $description '
+          '(${fresh.itemCount} item${fresh.itemCount == 1 ? '' : 's'}) '
+          'to ${fresh.receiverName} in ${fresh.destination}.\n'
+          'Station: $stationLabel  •  Method: $methodLabel'
+          '${cleanTxnRef.isEmpty ? '' : '  •  Ref: $cleanTxnRef'}',
+    );
+
+    // Notify admin inbox
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: '$prettyKind recorded — $propertyCode',
+      message:
+          '$cleanCurrency ${appliedAmount.abs()} recorded at $stationLabel '
+          'for $description → ${fresh.receiverName} (${fresh.destination}).\n'
+          'Method: $methodLabel'
+          '${cleanTxnRef.isEmpty ? '' : '  •  Ref: $cleanTxnRef'}',
     );
 
     return rec;
@@ -272,5 +299,30 @@ class PaymentService {
       property.amountPaidTotal += rec.amount;
       await property.save();
     }
+
+    // Notify admin inbox on the device receiving this sync event
+    final prettyKind = rec.kind == 'refund'
+        ? 'Refund'
+        : (rec.kind == 'adjustment' ? 'Adjustment' : 'Payment');
+    final code = property.propertyCode.trim().isEmpty
+        ? property.key.toString()
+        : property.propertyCode.trim();
+    final stationLabel =
+        rec.station.trim().isEmpty ? 'the desk' : rec.station.trim();
+    final methodLabel =
+        rec.method.trim().isEmpty ? '—' : rec.method.trim();
+    final description = property.description.trim().isEmpty
+        ? 'cargo'
+        : property.description.trim();
+
+    await NotificationService.notify(
+      targetUserId: NotificationService.adminInbox,
+      title: '$prettyKind recorded — $code',
+      message:
+          '${rec.currency} ${rec.amount} recorded at $stationLabel '
+          'for $description → ${property.receiverName} (${property.destination}).\n'
+          'Method: $methodLabel'
+          '${rec.txnRef.trim().isEmpty ? '' : '  •  Ref: ${rec.txnRef.trim()}'}',
+    );
   }
 }

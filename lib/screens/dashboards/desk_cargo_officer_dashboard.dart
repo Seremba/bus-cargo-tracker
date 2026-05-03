@@ -155,13 +155,13 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
 
     for (final p in propBox.values) {
       if (p.status != PropertyStatus.pending &&
-          p.status != PropertyStatus.loaded) continue;
+          p.status != PropertyStatus.loaded) { continue; }
 
       final loadedAt = p.loadedAtStation.trim().toLowerCase();
-      if (loadedAt != station.toLowerCase()) continue;
+      if (loadedAt != station.toLowerCase()) { continue; }
 
       final items = itemSvc.getItemsForProperty(p.key.toString());
-      if (items.isEmpty) continue;
+      if (items.isEmpty) { continue; }
 
       final loadedCount = items
           .where(

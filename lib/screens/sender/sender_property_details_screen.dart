@@ -651,7 +651,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           ),
                           const SizedBox(height: 6),
                           SelectableText(
-                            pickupQrPayload as String,
+                            pickupQrPayload,
                             style: const TextStyle(fontWeight: FontWeight.w700),
                           ),
                           const SizedBox(height: 10),
@@ -661,7 +661,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                               onPressed: () => _copy(
                                 context,
                                 'Pickup QR',
-                                pickupQrPayload as String,
+                                pickupQrPayload,
                               ),
                               icon: const Icon(Icons.copy, size: 18),
                               label: const Text('Copy payload'),

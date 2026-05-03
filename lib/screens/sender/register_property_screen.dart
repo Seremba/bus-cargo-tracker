@@ -1,12 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../services/property_service.dart';
 import '../../services/session.dart';
 
 import '../../data/routes_helpers.dart';
-import '../common/property_qr_display_screen.dart';
-import '../sender/my_properties_screen.dart';
+import '../sender/register_property_confirm_screen.dart';
 
 class RegisterPropertyScreen extends StatefulWidget {
   const RegisterPropertyScreen({super.key});
@@ -26,7 +24,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
   // Item count is managed as an int directly — no text controller needed
   int _itemCount = 1;
 
-  bool _saving = false;
   AutovalidateMode _autoValidate = AutovalidateMode.disabled;
 
   // Only compute route matches when destination is non-empty
@@ -54,14 +51,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     descriptionController.dispose();
     destinationController.dispose();
     super.dispose();
-  }
-
-  void _resetForm() {
-    receiverNameController.clear();
-    receiverPhoneController.clear();
-    descriptionController.clear();
-    destinationController.clear();
-    setState(() => _itemCount = 1);
   }
 
   void _incrementCount() {
@@ -106,7 +95,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     setState(() => _autoValidate = AutovalidateMode.onUserInteraction);
 
     if (!_formKey.currentState!.validate()) return;
-    if (_saving) return;
 
     final actorUserId = (Session.currentUserId ?? '').trim();
     if (actorUserId.isEmpty) {
@@ -120,52 +108,27 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
       return;
     }
 
-    setState(() => _saving = true);
-
-    try {
-      final bool routeConfirmed = matches.length == 1;
-      final String routeId = routeConfirmed ? matches.first.route.id : '';
-      final String routeName = routeConfirmed ? matches.first.route.name : '';
-
-      final property = await PropertyService.registerProperty(
-        receiverName: receiverNameController.text,
-        receiverPhone: receiverPhoneController.text,
-        description: descriptionController.text,
-        destination: destinationController.text,
-        itemCount: _itemCount,
-        createdByUserId: actorUserId,
-        routeId: routeId,
-        routeName: routeName,
-        routeConfirmed: routeConfirmed,
-      );
-
-      if (!mounted) return;
-
-      await Navigator.push<bool>(
-        context,
-        MaterialPageRoute(
-          builder: (_) =>
-              PropertyQrDisplayScreen(propertyCode: property.propertyCode),
+    // Navigate to confirmation screen — actual save happens there.
+    if (!mounted) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => RegisterPropertyConfirmScreen(
+          receiverName: receiverNameController.text.trim(),
+          receiverPhone: receiverPhoneController.text.trim(),
+          description: descriptionController.text.trim(),
+          destination: destinationController.text.trim(),
+          itemCount: _itemCount,
+          routeMatches: matches,
+          onEditPressed: () {
+            // Called when user taps "Go Back & Edit" on the confirm screen.
+            // The pop already happened — nothing extra needed here.
+          },
         ),
-      );
+      ),
+    );
 
-      if (!mounted) return;
-
-      _resetForm();
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => const MyPropertiesScreen()),
-      );
-    } on FormatException {
-      if (!mounted) return;
-      _showSnack('Enter a valid number of items.');
-    } catch (e) {
-      if (!mounted) return;
-      _showSnack('Failed to register property: $e');
-    } finally {
-      if (mounted) setState(() => _saving = false);
-    }
+    // If we get back here it means the user hit "Go Back & Edit" — keep form.
   }
 
   void _showSnack(String message) {
@@ -206,18 +169,9 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
             style: ElevatedButton.styleFrom(
               minimumSize: const Size.fromHeight(50),
             ),
-            onPressed: _saving ? null : _submit,
-            child: _saving
-                ? const SizedBox(
-                    height: 20,
-                    width: 20,
-                    child: CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.white,
-                    ),
-                  )
-                : const Text(
-                    'Submit',
+            onPressed: _submit,
+            child: const Text(
+                    'Review & Confirm',
                     style: TextStyle(
                       fontSize: 16,
                       fontWeight: FontWeight.w700,

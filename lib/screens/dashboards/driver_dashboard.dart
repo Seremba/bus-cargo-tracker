@@ -4,6 +4,7 @@ import '../../services/session.dart';
 
 import '../../widgets/logout_button.dart';
 import 'driver_cargo_screen.dart';
+import 'driver_manifest_screen.dart';
 
 class DriverDashboard extends StatelessWidget {
   const DriverDashboard({super.key});
@@ -161,6 +162,37 @@ class DriverDashboard extends StatelessWidget {
                     context,
                     MaterialPageRoute(
                       builder: (_) => const DriverCargoScreen(),
+                    ),
+                  );
+                },
+              ),
+            ),
+
+            const SizedBox(height: 14),
+
+            // ── View Manifest button ──
+            SizedBox(
+              width: double.infinity,
+              child: OutlinedButton.icon(
+                icon: const Icon(Icons.list_alt_outlined, size: 20),
+                label: const Text(
+                  'View Cargo Manifest',
+                  style: TextStyle(
+                      fontWeight: FontWeight.w700, fontSize: 15),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: AppColors.primary,
+                  side: BorderSide(color: AppColors.primary),
+                  padding: const EdgeInsets.symmetric(vertical: 15),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14),
+                  ),
+                ),
+                onPressed: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const DriverManifestScreen(),
                     ),
                   );
                 },

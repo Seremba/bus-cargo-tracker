@@ -15,6 +15,7 @@ import '../../services/property_item_service.dart';
 import '../../services/property_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
+import '../../services/trip_issue_service.dart';
 import '../../services/trip_service.dart';
 
 import '../admin/driver_load_overview_screen.dart';
@@ -36,9 +37,12 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
   String _gpsStatus = 'GPS: not started';
   DateTime? _lastGpsAt;
+  double? _lastGpsLat;
+  double? _lastGpsLng;
 
   DateTime _lastCheckpointCheck = DateTime.fromMillisecondsSinceEpoch(0);
   bool _startingTrip = false;
+  bool _flaggingIssue = false;
 
   bool get _canUseDriverTools =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
@@ -96,6 +100,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         (Position pos) async {
           if (!mounted) return;
           _lastGpsAt = DateTime.now();
+          _lastGpsLat = pos.latitude;
+          _lastGpsLng = pos.longitude;
           final activeTrip = TripService.getActiveTripForCurrentDriver();
           if (activeTrip == null) _lastSnackCheckpointIndex = -1;
 
@@ -211,6 +217,156 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
     }
   }
 
+  Future<void> _flagIssueDialog() async {
+    if (_flaggingIssue) return;
+
+    final activeTrip = TripService.getActiveTripForCurrentDriver(
+      routeId: _assignedRouteId,
+    );
+    if (activeTrip == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No active trip to flag an issue on.'),
+        ),
+      );
+      return;
+    }
+
+    TripIssueCategory? selectedCategory;
+    final noteController = TextEditingController();
+    bool submitting = false;
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) {
+          return AlertDialog(
+            title: const Text('Flag Trip Issue'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Report an issue with your current trip. '
+                    'Your GPS location will be recorded automatically.',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Theme.of(dialogContext)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.60),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text(
+                    'Issue type',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...TripIssueCategory.values.map(
+                    (cat) => RadioListTile<TripIssueCategory>(
+                      dense: true,
+                      contentPadding: EdgeInsets.zero,
+                      title: Text(
+                        '${cat.icon}  ${cat.label}',
+                        style: const TextStyle(fontSize: 13),
+                      ),
+                      value: cat,
+                      groupValue: selectedCategory,
+                      onChanged: submitting
+                          ? null
+                          : (v) => setDialogState(
+                                () => selectedCategory = v,
+                              ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: noteController,
+                    maxLines: 3,
+                    maxLength: 200,
+                    enabled: !submitting,
+                    decoration: const InputDecoration(
+                      labelText: 'Additional details (optional)',
+                      border: OutlineInputBorder(),
+                      hintText: 'e.g. Stuck at Malaba border since 14:00',
+                    ),
+                  ),
+                  if (_lastGpsLat != null) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'GPS: ${_lastGpsLat!.toStringAsFixed(5)}, '
+                      '${_lastGpsLng!.toStringAsFixed(5)}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Theme.of(dialogContext)
+                            .colorScheme
+                            .onSurface
+                            .withValues(alpha: 0.45),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: submitting
+                    ? null
+                    : () => Navigator.pop(dialogContext),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: (submitting || selectedCategory == null)
+                    ? null
+                    : () async {
+                        setDialogState(() => submitting = true);
+                        try {
+                          await TripIssueService.flagIssue(
+                            trip: activeTrip,
+                            category: selectedCategory!,
+                            note: noteController.text,
+                            gpsLat: _lastGpsLat,
+                            gpsLng: _lastGpsLng,
+                          );
+                          if (!dialogContext.mounted) return;
+                          Navigator.pop(dialogContext);
+                          if (!mounted) return;
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Issue reported ✅ Admin notified.'),
+                            ),
+                          );
+                        } catch (e) {
+                          setDialogState(() => submitting = false);
+                          if (!dialogContext.mounted) return;
+                          ScaffoldMessenger.of(dialogContext).showSnackBar(
+                            SnackBar(content: Text('Failed: $e')),
+                          );
+                        }
+                      },
+                child: submitting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Text('Report Issue'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+
+    noteController.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     if (Session.currentUserId == null ||
@@ -244,6 +400,15 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         centerTitle: true,
         elevation: 2,
         title: const Text('Driver'),
+        actions: [
+          IconButton(
+            tooltip: 'Flag trip issue',
+            icon: const Icon(Icons.flag_outlined),
+            color: Colors.orange.shade700,
+            onPressed: _flagIssueDialog,
+          ),
+          const SizedBox(width: 4),
+        ],
       ),
       body: AnimatedBuilder(
         animation: Listenable.merge([pBox.listenable(), iBox.listenable()]),

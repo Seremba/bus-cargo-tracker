@@ -698,6 +698,21 @@ class SyncService {
     );
   }
 
+  static Future<SyncEvent> enqueueTripIssueFlagged({
+    required String tripId,
+    required String actorUserId,
+    required Map<String, dynamic> payload,
+  }) {
+    return enqueue(
+      type: SyncEventType.tripIssueFlagged,
+      aggregateType: 'trip',
+      aggregateId: tripId,
+      actorUserId: actorUserId,
+      payload: payload,
+      aggregateVersion: 1,
+    );
+  }
+
   // ── Read helpers ───────────────────────────────────────────────────────────
 
   static bool exists(String eventId) {
@@ -835,6 +850,7 @@ class SyncService {
       case SyncEventType.adminOverrideApplied:
       case SyncEventType.propertyCommitted:
       case SyncEventType.propertyLoaded:
+      case SyncEventType.tripIssueFlagged:
       case SyncEventType.propertyStatusManuallyChanged:
       case SyncEventType.receiptPrinted:
       case SyncEventType.pickupOtpGenerated:

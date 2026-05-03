@@ -111,4 +111,7 @@ enum SyncEventType {
   // User deletion (appended — never reorder above)
   @HiveField(45)
   userDeleted,
+  // Driver trip issues (Phase 4.5)
+  @HiveField(46)
+  tripIssueFlagged,
 }

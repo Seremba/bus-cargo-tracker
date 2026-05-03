@@ -56,6 +56,7 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
       'admin_unlock_otp': 'OTP Unlocked',
       'admin_reset_otp': 'OTP Reset',
       'admin_set_status': 'Status Override',
+      'TRIP_ISSUE_FLAGGED': 'Trip Issue Flagged',
       'auto_repair_missing_loadedAt': 'Auto Repair',
       'receiver_notify_failed': 'Notify Failed',
       'OTP_SMS_QUEUED': 'OTP SMS Queued',
@@ -290,6 +291,10 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
                 DropdownMenuItem(
                   value: 'admin_reset_otp',
                   child: Text('OTP Reset'),
+                ),
+                DropdownMenuItem(
+                  value: 'TRIP_ISSUE_FLAGGED',
+                  child: Text('Trip Issue'),
                 ),
               ],
               onChanged: (v) => setState(() => _actionFilter = v ?? 'ALL'),

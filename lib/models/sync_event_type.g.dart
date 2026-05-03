@@ -105,6 +105,8 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         return SyncEventType.userUpdated;
       case 45:
         return SyncEventType.userDeleted;
+      case 46:
+        return SyncEventType.tripIssueFlagged;
       default:
         return SyncEventType.propertyCreated;
     }
@@ -250,6 +252,9 @@ class SyncEventTypeAdapter extends TypeAdapter<SyncEventType> {
         break;
       case SyncEventType.userDeleted:
         writer.writeByte(45);
+        break;
+      case SyncEventType.tripIssueFlagged:
+        writer.writeByte(46);
         break;
     }
   }

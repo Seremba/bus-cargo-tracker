@@ -365,6 +365,7 @@ class ReceiverTrackingService {
         'Route: $route | Dest: ${p.destination}\n'
         'Status: $status\n'
         'Time: $when\n'
+        'Track: unex://track/$code\n'
         'Help: $_supportPhones';
   }
 
@@ -387,6 +388,7 @@ class ReceiverTrackingService {
         'Route: $route | Dest: ${p.destination}\n'
         'Time: $when'
         '$pickupHint\n'
+        'Track: unex://track/$code\n'
         'Help: $_supportPhones';
   }
 
@@ -411,6 +413,7 @@ class ReceiverTrackingService {
         'Time: $when'
         '$otpLine\n'
         'Show this SMS + OTP at ${p.destination} station to collect.\n'
+        'Track: unex://track/$code\n'
         'Help: $_supportPhones';
   }
 }

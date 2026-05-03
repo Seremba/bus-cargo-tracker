@@ -42,7 +42,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
   DateTime _lastCheckpointCheck = DateTime.fromMillisecondsSinceEpoch(0);
   bool _startingTrip = false;
-  bool _flaggingIssue = false;
 
   bool get _canUseDriverTools =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
@@ -218,8 +217,6 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   }
 
   Future<void> _flagIssueDialog() async {
-    if (_flaggingIssue) return;
-
     final activeTrip = TripService.getActiveTripForCurrentDriver(
       routeId: _assignedRouteId,
     );
@@ -269,21 +266,56 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   ),
                   const SizedBox(height: 8),
                   ...TripIssueCategory.values.map(
-                    (cat) => RadioListTile<TripIssueCategory>(
-                      dense: true,
-                      contentPadding: EdgeInsets.zero,
-                      title: Text(
-                        '${cat.icon}  ${cat.label}',
-                        style: const TextStyle(fontSize: 13),
-                      ),
-                      value: cat,
-                      groupValue: selectedCategory,
-                      onChanged: submitting
-                          ? null
-                          : (v) => setDialogState(
-                                () => selectedCategory = v,
+                    (cat) {
+                      final isSelected = selectedCategory == cat;
+                      final cs = Theme.of(dialogContext).colorScheme;
+                      return InkWell(
+                        onTap: submitting
+                            ? null
+                            : () => setDialogState(
+                                  () => selectedCategory = cat,
+                                ),
+                        borderRadius: BorderRadius.circular(8),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 6, horizontal: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 20,
+                                height: 20,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? cs.primary
+                                        : cs.onSurface
+                                            .withValues(alpha: 0.35),
+                                    width: isSelected ? 6 : 1.5,
+                                  ),
+                                ),
                               ),
-                    ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Text(
+                                  '${cat.icon}  ${cat.label}',
+                                  style: TextStyle(
+                                    fontSize: 13,
+                                    color: isSelected
+                                        ? cs.onSurface
+                                        : cs.onSurface
+                                            .withValues(alpha: 0.75),
+                                    fontWeight: isSelected
+                                        ? FontWeight.w600
+                                        : FontWeight.normal,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextField(

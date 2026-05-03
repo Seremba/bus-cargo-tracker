@@ -48,6 +48,7 @@ dependencies:
 
   intl_phone_field: ^3.2.0
   screenshot: ^3.0.0
+  app_links: ^6.3.4
 
 dev_dependencies:
   flutter_test:

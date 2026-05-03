@@ -71,7 +71,7 @@ class DriverManifestScreen extends StatelessWidget {
           // Properties currently on board
           final onBoard = pBox.values.where((p) {
             if (assignedRouteId.isNotEmpty &&
-                p.routeId != assignedRouteId) return false;
+                p.routeId != assignedRouteId) { return false; }
             // On active trip
             if (activeTripId != null && activeTripId.isNotEmpty) {
               if ((p.tripId ?? '').trim() == activeTripId.trim()) {

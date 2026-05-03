@@ -7,7 +7,8 @@ import '../../services/tracking_lookup_service.dart';
 import '../desk/desk_property_qr_scanner_screen.dart';
 
 class TrackingLookupScreen extends StatefulWidget {
-  const TrackingLookupScreen({super.key});
+  final String? initialCode;
+  const TrackingLookupScreen({super.key, this.initialCode});
 
   @override
   State<TrackingLookupScreen> createState() => _TrackingLookupScreenState();
@@ -18,6 +19,17 @@ class _TrackingLookupScreenState extends State<TrackingLookupScreen> {
   TrackingLookupResult? _result;
   String? _error;
   bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final initial = (widget.initialCode ?? '').trim();
+    if (initial.isNotEmpty) {
+      _code.text = initial;
+      // Auto-lookup when opened via deep link
+      WidgetsBinding.instance.addPostFrameCallback((_) => _lookup(initial));
+    }
+  }
 
   @override
   void dispose() {

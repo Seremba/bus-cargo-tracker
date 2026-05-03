@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:app_links/app_links.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -19,6 +22,7 @@ import 'models/sync_event.dart';
 import 'models/sync_event_type.dart';
 
 import 'screens/splash/splash_screen.dart';
+import 'screens/common/tracking_lookup_screen.dart';
 
 import 'services/auth_service.dart';
 import 'services/auto_sync_service.dart';
@@ -123,8 +127,66 @@ void main() async {
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+// Global navigator key used for deep link navigation outside widget tree
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  late final AppLinks _appLinks;
+  StreamSubscription<Uri>? _linkSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _initDeepLinks();
+  }
+
+  @override
+  void dispose() {
+    _linkSub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _initDeepLinks() async {
+    _appLinks = AppLinks();
+
+    // Handle link that launched the app from cold start
+    try {
+      final initial = await _appLinks.getInitialLink();
+      if (initial != null) _handleLink(initial);
+    } catch (_) {}
+
+    // Handle links while app is running
+    _linkSub = _appLinks.uriLinkStream.listen(
+      _handleLink,
+      onError: (_) {},
+    );
+  }
+
+  void _handleLink(Uri uri) {
+    // unex://track/<trackingCode>
+    if (uri.scheme == 'unex' && uri.host == 'track') {
+      final code = uri.pathSegments.isNotEmpty
+          ? uri.pathSegments.first.trim().toUpperCase()
+          : '';
+      if (code.isEmpty) return;
+
+      // Wait for navigator to be ready
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        navigatorKey.currentState?.push(
+          MaterialPageRoute(
+            builder: (_) => TrackingLookupScreen(initialCode: code),
+          ),
+        );
+      });
+    }
+  }
 
   ThemeData _theme() {
     final scheme = ColorScheme.fromSeed(
@@ -175,6 +237,7 @@ class MyApp extends StatelessWidget {
       title: 'UNEx Logistics',
       debugShowCheckedModeBanner: false,
       theme: _theme(),
+      navigatorKey: navigatorKey,
       builder: (context, child) {
         return SessionGuard(child: child ?? const SizedBox.shrink());
       },

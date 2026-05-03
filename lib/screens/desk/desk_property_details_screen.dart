@@ -693,7 +693,7 @@ class _DeskPropertyDetailsScreenState
 
                               if (!ctx.mounted) return;
                               if (selectedNos == null ||
-                                  selectedNos.isEmpty) return;
+                                  selectedNos.isEmpty) { return; }
 
                               final ok = await PropertyService.markLoaded(
                                 p,

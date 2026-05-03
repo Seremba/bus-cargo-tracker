@@ -27,7 +27,7 @@ class TwilioService {
     required String toPhone,
     required String body,
   }) async {
-    final e164 = _toE164(toPhone);
+    final e164 = PhoneNormalizer.toE164(toPhone);
     if (e164 == null) return 'Invalid phone number: $toPhone';
 
     if (_syncApiKey.isEmpty) return 'Sync API key not configured.';
@@ -63,27 +63,8 @@ class TwilioService {
 
   /// Returns true if the phone number is a Uganda number (+256).
   static bool isUgandaNumber(String phone) {
-    final e164 = _toE164(phone);
+    final e164 = PhoneNormalizer.toE164(phone);
     if (e164 == null) return false;
     return e164.startsWith('+256');
-  }
-
-  /// Converts any supported phone format to E.164.
-  /// Delegates to PhoneNormalizer then adds the + prefix.
-  static String? _toE164(String raw) {
-    // PhoneNormalizer returns digits only — prepend + for E.164
-    final normalized = PhoneNormalizer.normalizeForMessaging(raw);
-    if (normalized.isNotEmpty) return '+$normalized';
-
-    // Fallback for formats PhoneNormalizer doesn't handle
-    var p = raw.replaceAll(RegExp(r'[\s\-()]'), '');
-    if (p.isEmpty) return null;
-    if (p.startsWith('+') && p.length >= 10) return p;
-    if (p.startsWith('0') && p.length == 10) return '+256${p.substring(1)}';
-    if (p.length == 9 && (p.startsWith('7') || p.startsWith('3'))) {
-      return '+256$p';
-    }
-    if (p.length >= 10 && p.length <= 15 && !p.startsWith('0')) return '+$p';
-    return null;
   }
 }

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../../models/user_role.dart';
-import '../../services/hive_service.dart';
+import '../../services/user_resolver.dart';
 import '../../services/metrics_service.dart';
 import '../../services/role_guard.dart';
 
@@ -33,18 +33,7 @@ class _AdminPerformanceScreenState extends State<AdminPerformanceScreen> {
   }
 
   // Resolve driverId → full name
-  String _resolveUser(String userId) {
-    final raw = userId.trim();
-    if (raw.isEmpty) return '—';
-    try {
-      final user =
-          HiveService.userBox().values.firstWhere((u) => u.id == raw);
-      final name = user.fullName.trim();
-      return name.isEmpty ? raw : name;
-    } catch (_) {
-      return raw;
-    }
-  }
+  String _resolveUser(String userId) => UserResolver.nameFor(userId);
 
   static String _roleLabel(String? role) {
     if (role == null || role.trim().isEmpty) return '—';

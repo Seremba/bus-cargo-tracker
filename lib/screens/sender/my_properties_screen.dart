@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
 import '../../models/property_status.dart';
+import '../../theme/status_colors.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../services/hive_service.dart';
@@ -18,69 +19,6 @@ class MyPropertiesScreen extends StatelessWidget {
   }
 
   static String _money(String currency, int amount) => '$currency $amount';
-
-  static ({String emoji, String label, Color bg, Color fg}) _statusStyle(
-    PropertyStatus status,
-  ) {
-    switch (status) {
-      case PropertyStatus.pending:
-        return (
-          emoji: '🟡',
-          label: 'Pending',
-          bg: const Color(0xFFFFF8E1),
-          fg: const Color(0xFFF57F17),
-        );
-      case PropertyStatus.loaded:
-        return (
-          emoji: '🟠',
-          label: 'Loaded',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFE65100),
-        );
-      case PropertyStatus.inTransit:
-        return (
-          emoji: '🔵',
-          label: 'In Transit',
-          bg: const Color(0xFFE3F2FD),
-          fg: const Color(0xFF1565C0),
-        );
-      case PropertyStatus.delivered:
-        return (
-          emoji: '🟢',
-          label: 'Delivered',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF2E7D32),
-        );
-      case PropertyStatus.pickedUp:
-        return (
-          emoji: '✅',
-          label: 'Picked Up',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF1B5E20),
-        );
-      case PropertyStatus.rejected:
-        return (
-          emoji: '🔴',
-          label: 'Rejected',
-          bg: const Color(0xFFFFEBEE),
-          fg: const Color(0xFFC62828),
-        );
-      case PropertyStatus.expired:
-        return (
-          emoji: '⏳',
-          label: 'Expired',
-          bg: const Color(0xFFEFEBE9),
-          fg: const Color(0xFF4E342E),
-        );
-      case PropertyStatus.underReview:
-        return (
-          emoji: '🔎',
-          label: 'Under Review',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFFF8F00),
-        );
-    }
-  }
 
   static String _tripLine(Property property, Trip? trip) {
     final tripId = property.tripId;
@@ -142,7 +80,7 @@ class MyPropertiesScreen extends StatelessWidget {
             itemCount: myItems.length,
             itemBuilder: (context, index) {
               final property = myItems[index];
-              final style = _statusStyle(property.status);
+              final style = PropertyStatusChipEx.style(property.status);
 
               Trip? trip;
               final tripId = property.tripId;

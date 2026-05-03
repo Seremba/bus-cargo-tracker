@@ -583,7 +583,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                   final csv = PaymentExportService.buildTodayCsv(
                     stationLabel: stationLabel,
                     todayItems: todayItems,
-                    propBox: propBox,
                   );
                   try {
                     final file = await FileShareService.writeTempText(
@@ -616,7 +615,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                     todayStart: todayStart,
                     todayItems: todayItems,
                     todayTotal: todayTotal,
-                    propBox: propBox,
                   );
                   try {
                     final bytes = await doc.save();
@@ -985,7 +983,7 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   }
 
   Widget _paymentTile(dynamic x, dynamic propBox) {
-    final prop = propBox.get(int.tryParse(x.propertyKey));
+    final prop = PaymentService.findPropertyForPayment(x);
     final code = (prop?.propertyCode.trim().isNotEmpty ?? false)
         ? prop!.propertyCode.trim()
         : '—';

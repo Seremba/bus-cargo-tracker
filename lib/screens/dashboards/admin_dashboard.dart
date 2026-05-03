@@ -5,9 +5,7 @@ import '../../models/notification_item.dart';
 import '../../models/outbound_message.dart';
 import '../../models/property_status.dart';
 import '../../models/sync_event.dart';
-import '../../models/trip.dart';
 import '../../models/trip_status.dart';
-import '../../models/user.dart';
 import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';

@@ -1,3 +1,4 @@
+import '../ui/status_labels.dart';
 import 'package:flutter/material.dart';
 import '../models/property_status.dart';
 import '../models/property_item_status.dart';
@@ -67,4 +68,41 @@ class TripStatusColors {
   static Color background(TripStatus status) =>
       color(status).withValues(alpha: 0.12);
   static Color foreground(TripStatus status) => color(status);
+}
+/// Combined chip style (label + bg + fg) for a PropertyStatus.
+/// Replaces the _statusStyle() copies in sender_dashboard,
+/// admin_properties_screen, and my_properties_screen.
+class PropertyStatusChip {
+  static ({String label, Color bg, Color fg}) style(PropertyStatus status) {
+    final fg = PropertyStatusColors.foreground(status);
+    final bg = PropertyStatusColors.background(status);
+    final label = PropertyStatusLabels.text(status);
+    return (label: label, bg: bg, fg: fg);
+  }
+}
+
+/// Extended chip style including emoji indicator.
+/// Used by my_properties_screen for the sender's property list.
+class PropertyStatusChipEx {
+  static ({String emoji, String label, Color bg, Color fg}) style(
+    PropertyStatus status,
+  ) {
+    const emojis = {
+      PropertyStatus.pending: '🟡',
+      PropertyStatus.loaded: '🟠',
+      PropertyStatus.inTransit: '🔵',
+      PropertyStatus.delivered: '🟢',
+      PropertyStatus.pickedUp: '✅',
+      PropertyStatus.rejected: '🔴',
+      PropertyStatus.expired: '⏳',
+      PropertyStatus.underReview: '🔎',
+    };
+    final base = PropertyStatusChip.style(status);
+    return (
+      emoji: emojis[status] ?? '⬜',
+      label: base.label,
+      bg: base.bg,
+      fg: base.fg,
+    );
+  }
 }

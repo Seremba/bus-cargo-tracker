@@ -8,6 +8,7 @@ import '../../models/property_status.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../services/hive_service.dart';
+import '../../services/user_resolver.dart';
 import '../../services/property_service.dart';
 import '../../services/property_ttl_service.dart';
 
@@ -124,31 +125,9 @@ class AdminPropertyDetailScreen extends StatelessWidget {
             .toList()
           ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-        // Resolve sender name
-        final senderRaw = p.createdByUserId.trim();
-        String senderLabel = senderRaw.isEmpty ? '—' : senderRaw;
-        try {
-          final senderUser = HiveService.userBox().values
-              .firstWhere((u) => u.id == senderRaw);
-          if (senderUser.fullName.trim().isNotEmpty) {
-            senderLabel = senderUser.fullName.trim();
-          }
-        } catch (_) {
-          // User not on this device yet — show ID as fallback
-        }
-
-        // Resolve loaded-by user
-        final loadedByRaw = p.loadedByUserId.trim();
-        String loadedByLabel = loadedByRaw.isEmpty ? '—' : loadedByRaw;
-        try {
-          final loadedByUser = HiveService.userBox().values
-              .firstWhere((u) => u.id == loadedByRaw);
-          if (loadedByUser.fullName.trim().isNotEmpty) {
-            loadedByLabel = loadedByUser.fullName.trim();
-          }
-        } catch (_) {
-          // User not on this device yet
-        }
+        // Resolve sender and loaded-by names via shared UserResolver
+        final senderLabel = UserResolver.senderName(p.createdByUserId);
+        final loadedByLabel = UserResolver.nameFor(p.loadedByUserId);
 
         final bool loadedDone = p.loadedAt != null ||
             p.status == PropertyStatus.inTransit ||

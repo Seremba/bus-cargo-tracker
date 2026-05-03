@@ -1,6 +1,7 @@
-import 'package:hive/hive.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+
+import '../payment_service.dart';
 
 class PaymentExportService {
   static String fmt16(DateTime d) => d.toLocal().toString().substring(0, 16);
@@ -10,7 +11,6 @@ class PaymentExportService {
   static String buildTodayCsv({
     required String stationLabel,
     required List todayItems,
-    required Box propBox,
   }) {
     final b = StringBuffer();
     b.writeln(
@@ -18,7 +18,7 @@ class PaymentExportService {
     );
 
     for (final x in todayItems) {
-      final prop = propBox.get(int.tryParse(x.propertyKey));
+      final prop = PaymentService.findPropertyForPayment(x);
       final code = (prop?.propertyCode.trim().isNotEmpty ?? false)
           ? prop!.propertyCode.trim()
           : '—';
@@ -46,7 +46,6 @@ class PaymentExportService {
     required DateTime todayStart,
     required List todayItems,
     required int todayTotal,
-    required Box propBox,
   }) {
     final doc = pw.Document();
 
@@ -107,7 +106,7 @@ class PaymentExportService {
                   row([
                     fmt16(x.createdAt),
                     () {
-                      final prop = propBox.get(int.tryParse(x.propertyKey));
+                      final prop = PaymentService.findPropertyForPayment(x);
                       final code = (prop?.propertyCode.trim().isNotEmpty ?? false)
                           ? prop!.propertyCode.trim()
                           : '—';

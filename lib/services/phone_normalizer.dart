@@ -29,6 +29,23 @@ class PhoneNormalizer {
     return '';
   }
 
+  /// Converts any supported phone format to E.164 (+XXXXXXXXXXX).
+  ///
+  /// Returns null if the number cannot be safely converted.
+  /// Used by TwilioService and TwilioVerifyService instead of
+  /// maintaining their own private _toE164 methods.
+  static String? toE164(String raw) {
+    // normalizeForMessaging returns digits only — prepend + for E.164
+    final normalized = normalizeForMessaging(raw);
+    if (normalized.isNotEmpty) return '+$normalized';
+
+    // Fallback for already-formatted E.164 strings with + prefix
+    final p = raw.replaceAll(RegExp(r'[\s\-()]'), '');
+    if (p.startsWith('+') && p.length >= 10 && p.length <= 16) return p;
+
+    return null;
+  }
+
   /// Friendly display (Uganda): show 07... if stored as 256...
   static String displayUg(String storedOrRaw) {
     final d = digitsOnly(storedOrRaw);

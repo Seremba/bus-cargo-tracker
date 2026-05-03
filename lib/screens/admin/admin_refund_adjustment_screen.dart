@@ -3,7 +3,6 @@ import 'package:flutter/services.dart';
 
 import '../../models/payment_record.dart';
 import '../../models/user_role.dart';
-import '../../services/hive_service.dart';
 import '../../services/payment_service.dart';
 import '../../services/role_guard.dart';
 
@@ -42,8 +41,9 @@ class _AdminRefundAdjustmentScreenState
     }
 
     final pay = widget.payment;
-    final propBox = HiveService.propertyBox();
-    final prop = propBox.get(int.tryParse(pay.propertyKey));
+    final prop = PaymentService.findPropertyForPayment(pay);
+
+
 
     final propLabel =
         (prop?.propertyCode.trim().isNotEmpty == true) ? prop!.propertyCode.trim() : pay.propertyKey;
@@ -203,8 +203,9 @@ class _AdminRefundAdjustmentScreenState
     if (_saving) return;
 
     final pay = widget.payment;
-    final propBox = HiveService.propertyBox();
-    final prop = propBox.get(int.tryParse(pay.propertyKey));
+    final prop = PaymentService.findPropertyForPayment(pay);
+
+
 
     // ✅ Capture these BEFORE any await (avoids async-gap warnings)
     final messenger = ScaffoldMessenger.of(context);

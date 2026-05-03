@@ -3,6 +3,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/audit_event.dart';
 import '../../services/hive_service.dart';
+import '../../services/user_resolver.dart';
 import '../../services/role_guard.dart';
 import '../../models/user_role.dart';
 
@@ -80,18 +81,7 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
   }
 
   // Resolve userId → full name
-  String _resolveUser(String? userId) {
-    final raw = (userId ?? '').trim();
-    if (raw.isEmpty) return '—';
-    try {
-      final user =
-          HiveService.userBox().values.firstWhere((u) => u.id == raw);
-      final name = user.fullName.trim();
-      return name.isEmpty ? raw : name;
-    } catch (_) {
-      return raw;
-    }
-  }
+  String _resolveUser(String? userId) => UserResolver.nameFor(userId);
 
   // Resolve propertyKey → property code
   String _resolveProperty(String? propertyKey) {

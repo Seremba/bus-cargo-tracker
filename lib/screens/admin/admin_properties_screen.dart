@@ -7,6 +7,8 @@ import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
+import '../../services/user_resolver.dart';
+import '../../theme/status_colors.dart';
 import '../../services/property_service.dart';
 import '../../services/property_ttl_service.dart';
 import '../../services/role_guard.dart';
@@ -45,73 +47,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     return impliesLoaded && p.loadedAt == null;
   }
 
-  String _resolveSender(String userId) {
-    final raw = userId.trim();
-    if (raw.isEmpty) return '—';
-    try {
-      final user =
-          HiveService.userBox().values.firstWhere((u) => u.id == raw);
-      final name = user.fullName.trim();
-      return name.isEmpty ? 'Unknown sender' : name;
-    } catch (_) {
-      return 'Sender (not synced)';
-    }
-  }
-
-  static ({String label, Color bg, Color fg}) _statusStyle(
-    PropertyStatus status,
-  ) {
-    switch (status) {
-      case PropertyStatus.pending:
-        return (
-          label: 'Pending',
-          bg: const Color(0xFFFFF8E1),
-          fg: const Color(0xFFF57F17),
-        );
-      case PropertyStatus.loaded:
-        return (
-          label: 'Loaded',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFE65100),
-        );
-      case PropertyStatus.inTransit:
-        return (
-          label: 'In Transit',
-          bg: const Color(0xFFE3F2FD),
-          fg: const Color(0xFF1565C0),
-        );
-      case PropertyStatus.delivered:
-        return (
-          label: 'Delivered',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF2E7D32),
-        );
-      case PropertyStatus.pickedUp:
-        return (
-          label: 'Picked Up',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF1B5E20),
-        );
-      case PropertyStatus.rejected:
-        return (
-          label: 'Rejected',
-          bg: const Color(0xFFFFEBEE),
-          fg: const Color(0xFFC62828),
-        );
-      case PropertyStatus.expired:
-        return (
-          label: 'Expired',
-          bg: const Color(0xFFEFEBE9),
-          fg: const Color(0xFF4E342E),
-        );
-      case PropertyStatus.underReview:
-        return (
-          label: 'Under Review',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFFF8F00),
-        );
-    }
-  }
+  String _resolveSender(String userId) => UserResolver.senderName(userId);
 
   @override
   Widget build(BuildContext context) {
@@ -258,7 +194,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     ColorScheme cs,
     Color muted,
   ) {
-    final style = _statusStyle(p.status);
+    final style = PropertyStatusChip.style(p.status);
     final legacyBroken = _isLegacyBrokenLoaded(p);
     final routeText = p.routeName.trim().isEmpty ? '—' : p.routeName.trim();
     final senderName = _resolveSender(p.createdByUserId);

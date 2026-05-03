@@ -5,6 +5,7 @@ import 'package:hive_flutter/hive_flutter.dart';
 import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/notification_item.dart';
+import '../../theme/status_colors.dart';
 
 import '../../services/hive_service.dart';
 import '../../services/session.dart';
@@ -29,61 +30,6 @@ class SenderDashboard extends StatelessWidget {
     if (parts.isEmpty) return '?';
     if (parts.length == 1) return parts[0][0].toUpperCase();
     return '${parts[0][0]}${parts[parts.length - 1][0]}'.toUpperCase();
-  }
-
-  static ({String label, Color bg, Color fg}) _statusStyle(
-    PropertyStatus status,
-  ) {
-    switch (status) {
-      case PropertyStatus.pending:
-        return (
-          label: 'Pending',
-          bg: const Color(0xFFFFF8E1),
-          fg: const Color(0xFFF57F17),
-        );
-      case PropertyStatus.loaded:
-        return (
-          label: 'Loaded',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFE65100),
-        );
-      case PropertyStatus.inTransit:
-        return (
-          label: 'In Transit',
-          bg: const Color(0xFFE3F2FD),
-          fg: const Color(0xFF1565C0),
-        );
-      case PropertyStatus.delivered:
-        return (
-          label: 'Delivered',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF2E7D32),
-        );
-      case PropertyStatus.pickedUp:
-        return (
-          label: 'Picked Up',
-          bg: const Color(0xFFE8F5E9),
-          fg: const Color(0xFF1B5E20),
-        );
-      case PropertyStatus.rejected:
-        return (
-          label: 'Rejected',
-          bg: const Color(0xFFFFEBEE),
-          fg: const Color(0xFFC62828),
-        );
-      case PropertyStatus.expired:
-        return (
-          label: 'Expired',
-          bg: const Color(0xFFEFEBE9),
-          fg: const Color(0xFF4E342E),
-        );
-      case PropertyStatus.underReview:
-        return (
-          label: 'Under Review',
-          bg: const Color(0xFFFFF3E0),
-          fg: const Color(0xFFFF8F00),
-        );
-    }
   }
 
   @override
@@ -469,7 +415,7 @@ class SenderDashboard extends StatelessWidget {
         : p.destination.trim();
     final code = p.propertyCode.trim().isEmpty ? '—' : p.propertyCode.trim();
     final itemCount = p.itemCount < 0 ? 0 : p.itemCount;
-    final style = _statusStyle(p.status);
+    final style = PropertyStatusChip.style(p.status);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),

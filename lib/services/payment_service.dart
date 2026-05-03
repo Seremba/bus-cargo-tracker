@@ -10,6 +10,26 @@ import 'sync_service.dart';
 class PaymentService {
   static String _id() => DateTime.now().millisecondsSinceEpoch.toString();
 
+  /// Finds the Property associated with a PaymentRecord.
+  ///
+  /// PaymentRecord.propertyKey is the Hive integer key from the originating
+  /// device and is NOT reliable across devices. This method first tries the
+  /// integer key (fast, works for locally-recorded payments), then falls back
+  /// to a full scan matching by the string key representation.
+  static Property? findPropertyForPayment(PaymentRecord x) {
+    final propBox = HiveService.propertyBox();
+    final key = int.tryParse(x.propertyKey);
+    if (key != null) {
+      final p = propBox.get(key);
+      if (p != null) return p;
+    }
+    // Cross-device fallback: scan by string key match
+    for (final p in propBox.values) {
+      if (p.key.toString() == x.propertyKey) return p;
+    }
+    return null;
+  }
+
   static List<PaymentRecord> getPaymentsForProperty(String propertyKey) {
     final key = propertyKey.trim();
     if (key.isEmpty) return const <PaymentRecord>[];

@@ -623,7 +623,7 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                           const SizedBox(height: 10),
                           Center(
                             child: QrImageView(
-                              data: pickupQrPayload as String,
+                              data: pickupQrPayload,
                               version: QrVersions.auto,
                               size: 220,
                               gapless: false,

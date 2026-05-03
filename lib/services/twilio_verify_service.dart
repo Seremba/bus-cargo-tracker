@@ -28,7 +28,7 @@ class TwilioVerifyService {
   /// [phone] may be any supported format — it is normalised to E.164 here.
   /// Returns null on success, or an error string on failure.
   static Future<String?> sendOtp(String phone) async {
-    final e164 = _toE164(phone);
+    final e164 = PhoneNormalizer.toE164(phone);
     // ignore: avoid_print
     print('[TwilioVerify] raw="$phone" e164="$e164"');
     if (e164 == null) {
@@ -74,7 +74,7 @@ class TwilioVerifyService {
     required String phone,
     required String code,
   }) async {
-    final e164 = _toE164(phone);
+    final e164 = PhoneNormalizer.toE164(phone);
     if (e164 == null) return VerifyCheckResult.error;
 
     try {
@@ -118,40 +118,6 @@ class TwilioVerifyService {
     }
   }
 
-  /// Converts any supported format to E.164 (+XXXXXXXXXXX).
-  ///
-  /// PhoneNormalizer.normalizeForMessaging returns digits only (no + prefix).
-  /// Twilio Verify requires E.164 with the + prefix, so we add it here.
-  static String? _toE164(String raw) {
-    // PhoneNormalizer returns digits only — prepend + to make valid E.164
-    final normalized = PhoneNormalizer.normalizeForMessaging(raw);
-    if (normalized.isNotEmpty) return '+$normalized';
-
-    // Fallback for formats PhoneNormalizer doesn't handle
-    var p = raw.replaceAll(RegExp(r'[\s\-()]'), '');
-    if (p.isEmpty) return null;
-
-    // Already E.164
-    if (p.startsWith('+') && p.length >= 10) return p;
-
-    // Uganda: 07XXXXXXXX → +2567XXXXXXXX
-    if (p.startsWith('07') && p.length == 10) return '+256${p.substring(1)}';
-
-    // Uganda: 0XXXXXXXXX → +256XXXXXXXXX
-    if (p.startsWith('0') && p.length == 10) return '+256${p.substring(1)}';
-
-    // Uganda short: 7XXXXXXXX or 3XXXXXXXX → +2567XXXXXXXX
-    if (p.length == 9 && (p.startsWith('7') || p.startsWith('3'))) {
-      return '+256$p';
-    }
-
-    // Has country code digits but no +
-    if (p.length >= 10 && p.length <= 15 && !p.startsWith('0')) {
-      return '+$p';
-    }
-
-    return null;
-  }
 }
 
 /// Result of a [TwilioVerifyService.checkOtp] call.

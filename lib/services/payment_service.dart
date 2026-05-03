@@ -207,19 +207,14 @@ class PaymentService {
       }
     }
 
-    if (property == null) {
-      throw StateError(
-        'Cannot apply payment sync event: property with code $propertyCode not found',
-      );
-    }
+    // If the property hasn't arrived on this device yet, skip gracefully.
+    // The event stays appliedLocally=false and will be retried on the next
+    // sync cycle once the propertyCreated event has been applied.
+    if (property == null) return;
 
     final incomingVersion =
         (payload['aggregateVersion'] as num?)?.toInt() ??
         event.aggregateVersion;
-
-    if (property.aggregateVersion >= incomingVersion) {
-      return;
-    }
 
     final rec = PaymentRecord(
       paymentId: paymentId,
@@ -235,17 +230,27 @@ class PaymentService {
       note: (payload['note'] ?? '').toString(),
     );
 
+    // Always write the PaymentRecord — it is idempotent (duplicate check above).
     await payBox.add(rec);
 
-    property.amountPaidTotal += rec.amount;
-    property.currency = rec.currency;
-    property.lastPaidAt = rec.createdAt;
-    property.lastPaymentMethod = rec.method;
-    property.lastPaidByUserId = rec.recordedByUserId;
-    property.lastPaidAtStation = rec.station;
-    property.lastTxnRef = rec.txnRef;
-    property.aggregateVersion = incomingVersion;
-
-    await property.save();
+    // Only update property aggregate fields when this event advances the
+    // version. If a later event (e.g. status change) already moved the version
+    // past this payment we still keep the PaymentRecord written above but
+    // leave the property fields untouched to avoid overwriting newer state.
+    if (incomingVersion > property.aggregateVersion) {
+      property.amountPaidTotal += rec.amount;
+      property.currency = rec.currency;
+      property.lastPaidAt = rec.createdAt;
+      property.lastPaymentMethod = rec.method;
+      property.lastPaidByUserId = rec.recordedByUserId;
+      property.lastPaidAtStation = rec.station;
+      property.lastTxnRef = rec.txnRef;
+      property.aggregateVersion = incomingVersion;
+      await property.save();
+    } else {
+      // Version already ahead — still credit the amount so totals stay correct.
+      property.amountPaidTotal += rec.amount;
+      await property.save();
+    }
   }
 }

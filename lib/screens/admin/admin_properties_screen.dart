@@ -11,6 +11,7 @@ import '../../services/hive_service.dart';
 import '../../services/property_service.dart';
 import '../../services/property_ttl_service.dart';
 import '../../services/role_guard.dart';
+import 'admin_property_detail_screen.dart';
 
 class AdminPropertiesScreen extends StatefulWidget {
   const AdminPropertiesScreen({super.key});
@@ -262,7 +263,7 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
                   const SizedBox(width: 8),
                   InkWell(
                     borderRadius: BorderRadius.circular(8),
-                    onTap: () => _handleCardTap(context, p),
+                    onTap: () => _handleEditTap(context, p),
                     child: Padding(
                       padding: const EdgeInsets.all(4),
                       child: Icon(Icons.edit_outlined, size: 18, color: muted),
@@ -400,6 +401,16 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   }
 
   Future<void> _handleCardTap(BuildContext context, Property p) async {
+    if (!RoleGuard.hasRole(UserRole.admin)) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AdminPropertyDetailScreen(property: p),
+      ),
+    );
+  }
+
+  Future<void> _handleEditTap(BuildContext context, Property p) async {
     if (!RoleGuard.hasRole(UserRole.admin)) return;
 
     switch (p.status) {

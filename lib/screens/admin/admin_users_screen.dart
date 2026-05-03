@@ -9,6 +9,7 @@ import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/sync_service.dart';
 import '../../models/sync_event_type.dart';
+import 'admin_user_detail_screen.dart';
 
 class AdminUsersScreen extends StatefulWidget {
   const AdminUsersScreen({super.key});
@@ -280,9 +281,17 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-        child: Row(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (_) => AdminUserDetailScreen(user: u),
+          ),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
+          child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
@@ -474,8 +483,9 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
               ],
             ),
           ],
-        ),
-      ),
+        ),      // Row
+      ),        // Padding
+    ), // InkWell
     );
   }
 

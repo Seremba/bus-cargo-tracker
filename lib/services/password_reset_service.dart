@@ -38,19 +38,25 @@ class PasswordResetService {
       return const ResetResult(false, 'Enter a valid phone number.');
     }
 
-    final msgPhone = PhoneNormalizer.normalizeForMessaging(rawPhone);
-    if (msgPhone.isEmpty) {
-      return const ResetResult(
-        false,
-        'Enter a message-ready phone (07.. or include country code).',
-      );
-    }
-
+    // Find user first — we need the stored phone for messaging.
+    // The user may type any format (07.., +25.., digits only) but we always
+    // send OTP to the stored phone which has the correct country code.
     final user = _findUserByPhoneDigits(phoneDigits);
     if (user == null) {
       return const ResetResult(
         false,
         'No account found for that phone number.',
+      );
+    }
+
+    // Use stored phone for messaging — not raw user input.
+    // This ensures international numbers (RW, KE, SS, CD, TZ) get the
+    // correct country code regardless of how the user typed their number.
+    final msgPhone = PhoneNormalizer.normalizeForMessaging(user.phone);
+    if (msgPhone.isEmpty) {
+      return const ResetResult(
+        false,
+        'Could not determine a valid phone number. Contact support.',
       );
     }
 
@@ -104,7 +110,8 @@ class PasswordResetService {
       );
     }
 
-    final msgPhone = PhoneNormalizer.normalizeForMessaging(rawPhone);
+    // Use stored phone for OTP check — must match what was used in requestOtp.
+    final msgPhone = PhoneNormalizer.normalizeForMessaging(user.phone);
     if (msgPhone.isEmpty) {
       return const ResetResult(false, 'Invalid phone number.');
     }

@@ -483,6 +483,23 @@ class StaffStationScreen extends StatelessWidget {
                       ),
                     ],
                   ),
+                  if (p.description.trim().isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Row(
+                      children: [
+                        Icon(Icons.inventory_2_outlined, size: 12, color: muted),
+                        const SizedBox(width: 3),
+                        Expanded(
+                          child: Text(
+                            p.description.trim(),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(fontSize: 12, color: muted),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
                 ],
               ),
             ),
@@ -610,6 +627,23 @@ class StaffStationScreen extends StatelessWidget {
                           ),
                         ],
                       ),
+                      if (p.description.trim().isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Icon(Icons.inventory_2_outlined, size: 12, color: muted),
+                            const SizedBox(width: 3),
+                            Expanded(
+                              child: Text(
+                                p.description.trim(),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(fontSize: 12, color: muted),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
                     ],
                   ),
                 ),

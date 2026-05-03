@@ -44,12 +44,11 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
     if (raw.isEmpty) return '—';
     try {
       final user =
-          HiveService.userBox().values.firstWhere((u) => (u as User).id == raw)
-              as User;
+          HiveService.userBox().values.firstWhere((u) => u.id == raw);
       final name = user.fullName.trim();
-      return name.isEmpty ? raw : name;
+      return name.isEmpty ? 'Unknown sender' : name;
     } catch (_) {
-      return raw;
+      return 'Sender (not synced)';
     }
   }
 
@@ -282,6 +281,13 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               const SizedBox(height: 4),
               Text(
                 '${p.itemCount} item${p.itemCount == 1 ? '' : 's'}  •  $routeText',
+                style: TextStyle(fontSize: 12, color: muted),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              Text(
+                p.description.trim().isEmpty ? '—' : p.description.trim(),
                 style: TextStyle(fontSize: 12, color: muted),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,

@@ -509,6 +509,7 @@ class _DeskPropertyDetailsScreenState
                           _infoRow(Icons.phone_outlined,      'Phone',       p.receiverPhone),
                           _infoRow(Icons.place_outlined,      'Destination', p.destination),
                           _infoRow(Icons.route_outlined,      'Route',       p.routeName.trim().isEmpty ? '—' : p.routeName),
+                          _infoRow(Icons.inventory_2_outlined, 'Description', p.description.trim().isEmpty ? '—' : p.description.trim()),
                           _infoRow(Icons.numbers_outlined,    'Items',       p.itemCount.toString()),
 
                           const SizedBox(height: 12),

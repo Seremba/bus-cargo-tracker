@@ -386,6 +386,10 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       Text('Destination: ${p.destination}'),
                       const SizedBox(height: 6),
                       Text('Items: ${p.itemCount}'),
+                      if (p.description.trim().isNotEmpty) ...[
+                        const SizedBox(height: 4),
+                        Text('Description: ${p.description.trim()}'),
+                      ],
                       Text(
                         'Route: ${p.routeName.trim().isEmpty ? '—' : p.routeName}',
                       ),

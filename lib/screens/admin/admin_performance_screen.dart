@@ -45,8 +45,7 @@ class _AdminPerformanceScreenState extends State<AdminPerformanceScreen> {
     if (raw.isEmpty) return '—';
     try {
       final user =
-          HiveService.userBox().values.firstWhere((u) => (u as User).id == raw)
-              as User;
+          HiveService.userBox().values.firstWhere((u) => u.id == raw);
       final name = user.fullName.trim();
       return name.isEmpty ? raw : name;
     } catch (_) {

@@ -78,6 +78,7 @@ class _SessionGuardState extends State<SessionGuard>
     // Auto-logout after warning duration
     await Future.delayed(_warningDuration);
 
+    // Widget may have been disposed during the delay
     if (!mounted) return;
     await _logout();
   }
@@ -87,7 +88,12 @@ class _SessionGuardState extends State<SessionGuard>
     if (!mounted) return;
     setState(() => _showingWarning = false);
 
-    Navigator.of(context, rootNavigator: true).pushAndRemoveUntil(
+    // Capture the navigator before any async gap to avoid
+    // "Navigator operation requested with a context that does not include a Navigator"
+    final navigator = Navigator.maybeOf(context, rootNavigator: true);
+    if (navigator == null) return;
+
+    navigator.pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const LoginScreen()),
       (_) => false,
     );

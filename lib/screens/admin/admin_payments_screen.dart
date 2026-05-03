@@ -77,6 +77,20 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
   bool _dateMatches(PaymentRecord x) =>
       !x.createdAt.isBefore(_dayStart) && !x.createdAt.isAfter(_dayEnd);
 
+  Property? _findProperty(PaymentRecord x) {
+    // First try by Hive integer key (works for locally-originated payments)
+    final key = int.tryParse(x.propertyKey);
+    if (key != null) {
+      final p = HiveService.propertyBox().get(key);
+      if (p != null) return p;
+    }
+    // Fall back to scanning by propertyKey string match
+    for (final p in HiveService.propertyBox().values) {
+      if (p.key.toString() == x.propertyKey) return p;
+    }
+    return null;
+  }
+
   String _safeCode(Property? prop) {
     final code = (prop?.propertyCode ?? '').trim();
     return code.isEmpty ? '—' : code;
@@ -124,7 +138,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
                   'station,createdAt,propertyCode,kind,amount,currency,method,txnRef,note',
                 );
                 for (final x in filtered) {
-                  final prop = propBox.get(int.tryParse(x.propertyKey));
+                  final prop = _findProperty(x);
                   b.writeln(
                     [
                       _csvEscape(stationLabel),
@@ -194,9 +208,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
                             'TxnRef',
                           ],
                           data: filtered.take(120).map((x) {
-                            final prop = propBox.get(
-                              int.tryParse(x.propertyKey),
-                            );
+                            final prop = _findProperty(x);
                             final curr = x.currency.trim().isEmpty
                                 ? 'UGX'
                                 : x.currency.trim();
@@ -450,7 +462,7 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
     ColorScheme cs,
     Color muted,
   ) {
-    final prop = propBox.get(int.tryParse(x.propertyKey));
+    final prop = _findProperty(x);
     final code = _safeCode(prop);
     final currency = x.currency.trim().isEmpty ? 'UGX' : x.currency.trim();
     final method = x.method.trim().isEmpty ? '—' : x.method.trim();

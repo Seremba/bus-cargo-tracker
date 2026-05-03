@@ -86,8 +86,7 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
     if (raw.isEmpty) return '—';
     try {
       final user =
-          HiveService.userBox().values.firstWhere((u) => (u as User).id == raw)
-              as User;
+          HiveService.userBox().values.firstWhere((u) => u.id == raw);
       final name = user.fullName.trim();
       return name.isEmpty ? raw : name;
     } catch (_) {
@@ -350,9 +349,19 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
         filled: true,
         fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.30),
       ),
-      items: items,
+      dropdownColor: cs.surface,
+      items: items.map((item) => DropdownMenuItem<String>(
+        value: item.value,
+        child: DefaultTextStyle(
+          style: TextStyle(
+            fontSize: 12,
+            color: cs.onSurface,
+          ),
+          child: item.child!,
+        ),
+      )).toList(),
       onChanged: onChanged,
-      style: const TextStyle(fontSize: 12),
+      style: TextStyle(fontSize: 12, color: cs.onSurface),
     );
   }
 

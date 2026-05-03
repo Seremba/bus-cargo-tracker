@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
@@ -531,6 +532,32 @@ class SenderDashboard extends StatelessWidget {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
               ),
+              const SizedBox(height: 2),
+              if (code != '—')
+                GestureDetector(
+                  onTap: () async {
+                    await Clipboard.setData(ClipboardData(text: code));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('$code copied ✅')),
+                    );
+                  },
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.copy_outlined, size: 12, color: muted),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Copy code',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: muted,
+                          decoration: TextDecoration.underline,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               const SizedBox(height: 2),
               Text(
                 'Route: $route',

@@ -23,6 +23,13 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
   final Set<dynamic> _repairedKeys = {};
   bool _autoRepairScheduled = false;
   bool _isRepairing = false;
+  final _search = TextEditingController();
+
+  @override
+  void dispose() {
+    _search.dispose();
+    super.dispose();
+  }
 
   String _fmt16(DateTime? d) {
     if (d == null) return '—';
@@ -144,20 +151,72 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
           HiveService.userBox().listenable(),
         ]),
         builder: (context, _) {
-          final items = propertyBox.values.toList()
+          final q = _search.text.trim().toLowerCase();
+
+          final items = propertyBox.values
+              .where((p) {
+                if (q.isEmpty) return true;
+                return p.receiverName.toLowerCase().contains(q) ||
+                    p.propertyCode.toLowerCase().contains(q) ||
+                    p.trackingCode.toLowerCase().contains(q) ||
+                    p.destination.toLowerCase().contains(q) ||
+                    p.description.toLowerCase().contains(q) ||
+                    p.receiverPhone.toLowerCase().contains(q);
+              })
+              .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          if (items.isEmpty) {
+          final allItems = propertyBox.values.toList();
+
+          if (allItems.isEmpty) {
             return const Center(child: Text('No properties yet.'));
           }
 
-          _scheduleAutoRepairOnce(items);
+          if (items.isEmpty) {
+            return Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.search_off, size: 48,
+                      color: cs.onSurface.withValues(alpha: 0.30)),
+                  const SizedBox(height: 12),
+                  Text('No properties match "$q"',
+                      style: TextStyle(color: cs.onSurface.withValues(alpha: 0.55))),
+                ],
+              ),
+            );
+          }
 
-          final brokenCount = items.where(_isLegacyBrokenLoaded).length;
+          _scheduleAutoRepairOnce(allItems);
+
+          final brokenCount = allItems.where(_isLegacyBrokenLoaded).length;
 
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
             children: [
+              // ── Search bar ──────────────────────────────────────────
+              TextField(
+                controller: _search,
+                decoration: InputDecoration(
+                  hintText: 'Search by name, code, destination…',
+                  prefixIcon: const Icon(Icons.search),
+                  border: const OutlineInputBorder(),
+                  filled: true,
+                  fillColor: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+                  suffixIcon: q.isNotEmpty
+                      ? IconButton(
+                          tooltip: 'Clear',
+                          icon: const Icon(Icons.close),
+                          onPressed: () {
+                            _search.clear();
+                            setState(() {});
+                          },
+                        )
+                      : null,
+                ),
+                onChanged: (_) => setState(() {}),
+              ),
+              const SizedBox(height: 8),
               if (brokenCount > 0)
                 Card(
                   margin: const EdgeInsets.only(bottom: 8),

@@ -47,6 +47,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
   bool _syncing = false;
   DateTime? _lastSynced;
 
+  @override
+  void initState() {
+    super.initState();
+    // Sync immediately when admin dashboard opens so data is always fresh.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _runSync();
+    });
+  }
+
   Future<void> _runSync() async {
     if (_syncing) return;
     setState(() => _syncing = true);
@@ -359,6 +368,15 @@ class _AdminDashboardState extends State<AdminDashboard> {
                 .where((p) => p.createdAt.isAfter(todayStart))
                 .fold(0, (sum, p) => sum + p.amount);
 
+            // Revenue yesterday
+            final yesterdayStart =
+                todayStart.subtract(const Duration(days: 1));
+            final yesterdayRevenue = allPayments
+                .where((p) =>
+                    p.createdAt.isAfter(yesterdayStart) &&
+                    !p.createdAt.isAfter(todayStart))
+                .fold(0, (sum, p) => sum + p.amount);
+
             // Active trips
             final activeTrips = allTrips
                 .where((t) => t.status == TripStatus.active)
@@ -433,7 +451,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   icon: Icons.payments_outlined,
                   label: 'Revenue today',
                   value: 'UGX ${_fmtAmount(todayRevenue)}',
-                  sublabel: 'Tap to view all payments',
+                  sublabel: yesterdayRevenue > 0
+                      ? 'Yesterday: UGX ${_fmtAmount(yesterdayRevenue)}  •  Tap to view all'
+                      : 'Tap to view all payments',
                   color: Colors.green,
                   onTap: () => Navigator.push(
                     context,

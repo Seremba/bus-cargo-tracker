@@ -11,6 +11,7 @@ import '../../models/property_status.dart';
 import '../../models/user_role.dart';
 
 import '../../services/hive_service.dart';
+import '../../services/exception_service.dart';
 import '../../services/outbound_message_service.dart';
 import '../../services/property_service.dart';
 import '../../services/receiver_tracking_service.dart';
@@ -653,6 +654,22 @@ class StaffStationScreen extends StatelessWidget {
                     _statusPill('Delivered', Colors.green),
                     const SizedBox(height: 4),
                     _statusPill(otpStatus, otpColor),
+                    if (p.deliveredAt != null) ...[
+                      const SizedBox(height: 4),
+                      Builder(builder: (_) {
+                        final days = DateTime.now()
+                            .difference(p.deliveredAt!)
+                            .inDays;
+                        if (days < ExceptionService
+                            .deliveredNotPickedUpTooLong.inDays) {
+                          return const SizedBox.shrink();
+                        }
+                        return _statusPill(
+                          '$days day${days == 1 ? '' : 's'} waiting',
+                          Colors.orange.shade700,
+                        );
+                      }),
+                    ],
                   ],
                 ),
               ],

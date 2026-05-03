@@ -1,7 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'package:bus_cargo_tracker/models/twilio_settings.dart';
-import 'package:bus_cargo_tracker/services/twilio_settings_service.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
@@ -114,29 +112,7 @@ void main() async {
     );
   }
 
-  // ── Seed Twilio credentials via --dart-define ──────────────────────────────
-  // Injected at build time — never appears in source code.
-  // In release builds, _fetchAndStoreSmsConfig() fetches from Cloudflare.
-  const twilioSid   = String.fromEnvironment('TWILIO_SID',   defaultValue: '');
-  const twilioToken = String.fromEnvironment('TWILIO_TOKEN', defaultValue: '');
-  const twilioFrom  = String.fromEnvironment('TWILIO_FROM',  defaultValue: '');
-
-  final existingTw = TwilioSettingsService.getOrCreate();
-  if (!existingTw.isConfigured && twilioSid.isNotEmpty) {
-    await TwilioSettingsService.save(
-      TwilioSettings(
-        accountSid: twilioSid,
-        authToken:  twilioToken,
-        from:       twilioFrom,
-      ),
-    );
-  }
-
-  // ── Fetch Twilio config from Cloudflare Worker ─────────────────────────────
-  // Works in release builds. Falls through silently in debug due to proxy.
-  await _fetchAndStoreSmsConfig();
-
-  // ── Start sync AFTER seed ──────────────────────────────────────────────────
+  // ── Start sync ────────────────────────────────────────────────────────────
   await AutoSyncService.instance.start();
 
   // Sync immediately when connectivity is restored.
@@ -151,52 +127,6 @@ void main() async {
   await PropertyTtlService.runChecks();
 
   runApp(const MyApp());
-}
-
-/// Fetches Twilio credentials from the Cloudflare Worker /config endpoint.
-/// Awaited on startup so SMS works before the first OTP is triggered.
-Future<void> _fetchAndStoreSmsConfig() async {
-  try {
-    final existingTwilio = TwilioSettingsService.getOrCreate();
-    if (existingTwilio.isConfigured) return;
-
-    if (!SyncService.hasApiKey()) return;
-    final syncKey =
-        (HiveService.appSettingsBox().get('syncApiKey') as String? ?? '')
-            .trim();
-    if (syncKey.isEmpty) return;
-
-    final response = await http
-        .get(
-          Uri.parse('https://bus-cargo-sync.pserembae.workers.dev/config'),
-          headers: {'X-Api-Key': syncKey},
-        )
-        .timeout(const Duration(seconds: 5));
-
-    if (response.statusCode != 200) return;
-
-    final data = jsonDecode(response.body) as Map<String, dynamic>;
-    final sms = data['sms'] as Map<String, dynamic>?;
-    if (sms == null) return;
-
-    final twilio = sms['twilio'] as Map<String, dynamic>?;
-    if (twilio != null) {
-      final accountSid = (twilio['accountSid'] as String? ?? '').trim();
-      final authToken  = (twilio['authToken']  as String? ?? '').trim();
-      final from       = (twilio['from']        as String? ?? '').trim();
-      if (accountSid.isNotEmpty && authToken.isNotEmpty && from.isNotEmpty) {
-        await TwilioSettingsService.save(
-          TwilioSettings(
-            accountSid: accountSid,
-            authToken:  authToken,
-            from:       from,
-          ),
-        );
-      }
-    }
-  } catch (_) {
-    // Non-fatal — OutboundQueueRunner retries every 20s
-  }
 }
 
 class MyApp extends StatelessWidget {

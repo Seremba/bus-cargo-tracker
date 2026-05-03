@@ -361,7 +361,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
             // Active trips
             final activeTrips = allTrips
-                .where((t) => (t as Trip).status == TripStatus.active)
+                .where((t) => t.status == TripStatus.active)
                 .length;
 
             // Pending pickup (delivered but not picked up)
@@ -399,7 +399,7 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
             // Staff count
             final totalUsers = HiveService.userBox().values
-                .where((u) => (u as User).role != UserRole.sender)
+                .where((u) => u.role != UserRole.sender)
                 .length;
 
             final outboundMsgs = outboundBox.values
@@ -415,8 +415,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
               if (st == OutboundMessageService.statusQueued) queuedSms++;
               if (st == OutboundMessageService.statusFailed) failedSms++;
               if (st == OutboundMessageService.statusQueued ||
-                  st == OutboundMessageService.statusFailed)
+                  st == OutboundMessageService.statusFailed) {
                 pendingSms++;
+              }
             }
 
             return ListView(

@@ -504,8 +504,7 @@ class PropertyItemService {
   }
 
   Property? _findPropertyByKey(String propertyKey) {
-    for (final raw in HiveService.propertyBox().values) {
-      final p = raw as Property;
+    for (final p in HiveService.propertyBox().values) {
       if (p.key.toString() == propertyKey) {
         return p;
       }

@@ -1,10 +1,7 @@
-import 'dart:async';
-import 'dart:convert';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
-import 'package:http/http.dart' as http;
 
 import 'models/audit_event.dart';
 import 'models/checkpoint.dart';
@@ -86,9 +83,6 @@ void main() async {
   }
   if (!Hive.isAdapterRegistered(SyncEventAdapter().typeId)) {
     Hive.registerAdapter(SyncEventAdapter());
-  }
-  if (!Hive.isAdapterRegistered(TwilioSettingsAdapter().typeId)) {
-    Hive.registerAdapter(TwilioSettingsAdapter());
   }
 
   await HiveService.openAllBoxes();

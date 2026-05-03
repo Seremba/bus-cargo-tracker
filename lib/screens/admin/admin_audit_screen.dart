@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/audit_event.dart';
-import '../../models/user.dart';
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
 import '../../models/user_role.dart';
@@ -357,7 +356,7 @@ class _AdminAuditScreenState extends State<AdminAuditScreen> {
             fontSize: 12,
             color: cs.onSurface,
           ),
-          child: item.child!,
+          child: item.child,
         ),
       )).toList(),
       onChanged: onChanged,

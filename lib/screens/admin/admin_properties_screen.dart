@@ -5,7 +5,6 @@ import 'package:hive_flutter/hive_flutter.dart';
 
 import '../../models/property.dart';
 import '../../models/property_status.dart';
-import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/property_service.dart';

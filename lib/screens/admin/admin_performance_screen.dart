@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/metrics_service.dart';
@@ -22,12 +21,6 @@ class _AdminPerformanceScreenState extends State<AdminPerformanceScreen> {
     if (_rangeIndex == 0) return now.subtract(const Duration(days: 7));
     if (_rangeIndex == 1) return now.subtract(const Duration(days: 30));
     return null;
-  }
-
-  String _rangeLabel() {
-    if (_rangeIndex == 0) return '7 days';
-    if (_rangeIndex == 1) return '30 days';
-    return 'All time';
   }
 
   String _fmtDuration(Duration? d) {

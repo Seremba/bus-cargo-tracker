@@ -21,7 +21,6 @@ class TripService {
 
   static const double _maxAccuracyMeters = 60;
   static const Duration _enterDwell = Duration(seconds: 25);
-  static const double _exitPaddingMeters = 200;
   static const int _minSecondsBetweenSamples = 2;
 
   static bool _canTrackTrips() =>

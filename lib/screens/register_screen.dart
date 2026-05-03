@@ -26,7 +26,6 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   // Full E.164 phone number built by IntlPhoneField
   String _fullPhone = '';
-  bool _phoneValid = false;
 
   @override
   void dispose() {
@@ -153,11 +152,9 @@ class _RegisterScreenState extends State<RegisterScreen> {
                       ),
                       onChanged: (phone) {
                         _fullPhone = phone.completeNumber;
-                        _phoneValid = true;
                       },
                       onCountryChanged: (country) {
                         _fullPhone = '';
-                        _phoneValid = false;
                       },
                       validator: (phone) {
                         if (phone == null || phone.number.trim().isEmpty) {

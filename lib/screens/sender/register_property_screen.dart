@@ -36,9 +36,6 @@ class _RegisterPropertyScreenState extends State<RegisterPropertyScreen> {
     return findRoutesByDestination(dest);
   }
 
-  RouteMatch? get _singleMatch =>
-      _routeMatches.length == 1 ? _routeMatches.first : null;
-
   @override
   void initState() {
     super.initState();

@@ -9,6 +9,7 @@ import '../../models/property_status.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
 import '../../services/hive_service.dart';
+import '../../services/eta_service.dart';
 import '../../services/pickup_qr_service.dart';
 import '../../services/property_service.dart';
 import 'edit_rejected_property_screen.dart';
@@ -125,6 +126,9 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
 
         final currency = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
         final paidTotal = p.amountPaidTotal;
+
+        // Compute ETA
+        final eta = EtaService.compute(p);
 
         final propKeyStr = p.key.toString();
         final payments =
@@ -479,6 +483,56 @@ class SenderPropertyDetailsScreen extends StatelessWidget {
                       ),
                     ),
                   ),
+                const SizedBox(height: 12),
+              ],
+
+              // ── ETA card ─────────────────────────────────────────────
+              if (eta != null) ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.schedule_outlined,
+                          size: 20,
+                          color: eta.confidenceColor,
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'Estimated arrival',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.black54,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                eta.friendlyDate,
+                                style: TextStyle(
+                                  fontSize: 18,
+                                  fontWeight: FontWeight.w800,
+                                  color: eta.confidenceColor,
+                                ),
+                              ),
+                              Text(
+                                eta.basis,
+                                style: const TextStyle(
+                                  fontSize: 11,
+                                  color: Colors.black45,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 12),
               ],
 

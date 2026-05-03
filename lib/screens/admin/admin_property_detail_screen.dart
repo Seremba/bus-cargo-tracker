@@ -7,6 +7,7 @@ import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/trip.dart';
 import '../../models/trip_status.dart';
+import '../../services/eta_service.dart';
 import '../../services/hive_service.dart';
 import '../../services/user_resolver.dart';
 import '../../services/property_service.dart';
@@ -117,6 +118,7 @@ class AdminPropertyDetailScreen extends StatelessWidget {
 
         final currency = p.currency.trim().isEmpty ? 'UGX' : p.currency.trim();
         final paidTotal = p.amountPaidTotal;
+        final eta = EtaService.compute(p);
         final propKeyStr = p.key.toString();
 
         final payments = payBox.values
@@ -295,6 +297,45 @@ class AdminPropertyDetailScreen extends StatelessWidget {
                     if (nextCheckpoint != null)
                       _row('Next checkpoint', nextCheckpoint),
                   ],
+                ]),
+                const SizedBox(height: 12),
+              ],
+
+              // ── ETA ──────────────────────────────────────────────────────
+              if (eta != null) ...[
+                _sectionCard(children: [
+                  _sectionTitle('Estimated Arrival'),
+                  const SizedBox(height: 10),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.schedule_outlined,
+                        size: 18,
+                        color: eta.confidenceColor,
+                      ),
+                      const SizedBox(width: 10),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            eta.friendlyDate,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w800,
+                              color: eta.confidenceColor,
+                            ),
+                          ),
+                          Text(
+                            eta.basis,
+                            style: const TextStyle(
+                              fontSize: 11,
+                              color: Colors.black45,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ]),
                 const SizedBox(height: 12),
               ],

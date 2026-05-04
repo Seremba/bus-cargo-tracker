@@ -44,6 +44,10 @@ class SyncService {
     return (box.get(_apiKeySettingsKey) as String? ?? '').trim();
   }
 
+  /// Public accessor for the stored API key — used by TwilioService
+  /// so both services read from the same Hive source.
+  static String get apiKey => _getApiKey();
+
   static Future<void> setApiKey(String key) async {
     final box = HiveService.appSettingsBox();
     await box.put(_apiKeySettingsKey, key.trim());

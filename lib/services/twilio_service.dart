@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import 'phone_normalizer.dart';
+import 'sync_service.dart';
 
 /// Routes all SMS sends through the Cloudflare Worker /sms endpoint.
 /// Twilio credentials (accountSid, authToken, from) never leave the Worker.
@@ -11,10 +12,10 @@ class TwilioService {
   static const String _workerBase =
       'https://bus-cargo-sync.pserembae.workers.dev';
 
-  static const String _syncApiKey = String.fromEnvironment(
-    'SYNC_API_KEY',
-    defaultValue: '',
-  );
+  // Read API key from Hive at runtime — same source as SyncService.
+  // This works correctly whether the key was injected via --dart-define
+  // or set programmatically (e.g. from a future remote config).
+  static String get _syncApiKey => SyncService.apiKey;
 
   static Map<String, String> get _headers => {
     'Content-Type': 'application/json',

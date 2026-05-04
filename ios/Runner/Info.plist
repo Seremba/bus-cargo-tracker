@@ -8,6 +8,13 @@
 	<string>Bus Cargo Tracker</string>
 	<key>NSCameraUsageDescription</key>
 	<string>We need camera access to scan pickup QR codes.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>UNEx Logistics uses your location to track cargo checkpoints along the route.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>UNEx Logistics uses your location in the background to automatically detect route checkpoints while driving.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>UNEx Logistics uses Bluetooth to connect to receipt printers at cargo stations.</string>
+	<string>We need camera access to scan pickup QR codes.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

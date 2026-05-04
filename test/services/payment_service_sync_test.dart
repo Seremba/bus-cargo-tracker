@@ -114,7 +114,8 @@ void main() {
     expect(payment.kind, 'payment');
     expect(payments.length, 1);
     expect(syncEvents.length, 1);
-    expect(notifications.length, 1);
+    // Two notifications: one for the sender, one for the admin inbox
+    expect(notifications.length, 2);
 
     final syncEvent = syncEvents.first;
     expect(syncEvent.type, SyncEventType.paymentRecorded);

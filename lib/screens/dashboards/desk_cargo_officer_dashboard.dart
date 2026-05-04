@@ -39,6 +39,16 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
   final _loadCodeCtrl = TextEditingController();
 
   @override
+  void initState() {
+    super.initState();
+    // Sync immediately on open so newly registered properties
+    // and payments from other devices appear without waiting.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) AutoSyncService.instance.triggerNow();
+    });
+  }
+
+  @override
   void dispose() {
     _payCodeCtrl.dispose();
     _loadCodeCtrl.dispose();

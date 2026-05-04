@@ -152,8 +152,8 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
           ),
           actions: [TextButton(onPressed: _done, child: const Text('DONE'))],
         ),
-        body: Padding(
-          padding: const EdgeInsets.all(16),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
           child: Card(
             child: Padding(
               padding: const EdgeInsets.all(16),
@@ -169,7 +169,7 @@ class _PropertyQrDisplayScreenState extends State<PropertyQrDisplayScreen> {
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          QrImageView(data: payload, size: 240),
+                          QrImageView(data: payload, size: 200),
                           const SizedBox(height: 8),
                           Text(
                             code,

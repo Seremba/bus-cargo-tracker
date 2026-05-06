@@ -11,16 +11,18 @@ class AutoSyncService with WidgetsBindingObserver {
   static final AutoSyncService instance = AutoSyncService._();
 
   Timer? _timer;
+  Timer? _foregroundTimer;
   bool _started = false;
   bool _syncing = false;
+  bool _inForeground = true;
 
-  // Reduced from 5 minutes → 1 minute for faster cross-device property sync.
-  // Write-triggered sync (SyncService.enqueue) handles immediate pushes.
-  // This ticker is a safety net for:
-  //   • Failed pushes that need retry after backoff clears
-  //   • Pull (receiving events written by other devices)
-  //   • Devices returning from offline/background
-  static const Duration _interval = Duration(minutes: 1);
+  // Background safety net — catches up from offline/background periods.
+  static const Duration _backgroundInterval = Duration(minutes: 1);
+
+  // Foreground aggressive pull — near-realtime for desk officers and admin.
+  // 15s means maximum 15s delay between a sender registering and the
+  // property appearing on the desk officer's screen.
+  static const Duration _foregroundInterval = Duration(seconds: 15);
 
   // Phase 4: prune once per week
   static const Duration _pruneInterval = Duration(days: 7);
@@ -33,19 +35,33 @@ class AutoSyncService with WidgetsBindingObserver {
     if (_started) return;
 
     _started = true;
+    _inForeground = true;
     WidgetsBinding.instance.addObserver(this);
 
-    // Immediate sync on start — catches up from any offline period
+    // Immediate sync on start
     _safeSync();
 
-    _timer = Timer.periodic(_interval, (_) {
-      _safeSync();
+    // Aggressive foreground ticker — near-realtime pull
+    _startForegroundTimer();
+
+    // Background safety net
+    _timer = Timer.periodic(_backgroundInterval, (_) {
+      if (!_inForeground) _safeSync();
+    });
+  }
+
+  void _startForegroundTimer() {
+    _foregroundTimer?.cancel();
+    _foregroundTimer = Timer.periodic(_foregroundInterval, (_) {
+      if (_inForeground) _safeSync();
     });
   }
 
   Future<void> stop() async {
     _timer?.cancel();
+    _foregroundTimer?.cancel();
     _timer = null;
+    _foregroundTimer = null;
 
     if (_started) {
       WidgetsBinding.instance.removeObserver(this);
@@ -58,9 +74,17 @@ class AutoSyncService with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (!_started) return;
 
-    // Sync on app resume — catches up from background/offline period
     if (state == AppLifecycleState.resumed) {
+      _inForeground = true;
+      _startForegroundTimer();
+      // Immediate sync on resume to catch up from background
       _safeSync();
+    } else if (state == AppLifecycleState.paused ||
+        state == AppLifecycleState.inactive) {
+      _inForeground = false;
+      // Stop aggressive polling when app is in background
+      _foregroundTimer?.cancel();
+      _foregroundTimer = null;
     }
   }
 

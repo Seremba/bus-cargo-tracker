@@ -199,7 +199,7 @@ class OutboundMessageService {
     final now = DateTime.now();
     const minCooldown = Duration(seconds: 2);
     if (msg.lastAttemptAt != null &&
-        now.difference(msg.lastAttemptAt!) < minCooldown) return msg;
+        now.difference(msg.lastAttemptAt!) < minCooldown) { return msg; }
     if (msg.attempts >= maxAttempts) {
       msg.status = statusFailed;
       await msg.save();

@@ -203,7 +203,7 @@ class _CountdownBarState extends State<_CountdownBar>
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: _ctrl,
-      builder: (_, __) => ClipRRect(
+      builder: (ctx, child) => ClipRRect(
         borderRadius: BorderRadius.circular(4),
         child: LinearProgressIndicator(
           value: 1.0 - _ctrl.value,

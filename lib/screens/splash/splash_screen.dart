@@ -131,9 +131,9 @@ class _SplashScreenState extends State<SplashScreen>
 
     Navigator.of(context).pushReplacement(
       PageRouteBuilder(
-        pageBuilder: (_, __, ___) => target,
+        pageBuilder: (ctx, anim, sec) => target,
         transitionDuration: const Duration(milliseconds: 600),
-        transitionsBuilder: (_, animation, __, child) {
+        transitionsBuilder: (ctx, animation, sec, child) {
           return FadeTransition(opacity: animation, child: child);
         },
       ),
@@ -234,7 +234,7 @@ class _SplashScreenState extends State<SplashScreen>
                           width: logoSize,
                           height: logoSize,
                           fit: BoxFit.contain,
-                          errorBuilder: (_, __, ___) => _FallbackLogo(
+                          errorBuilder: (ctx, anim, sec) => _FallbackLogo(
                             size: logoSize,
                             gold: gold,
                             goldLight: goldLight,
@@ -249,7 +249,7 @@ class _SplashScreenState extends State<SplashScreen>
                   // Expanding gold underline with glow
                   AnimatedBuilder(
                     animation: _lineWidth,
-                    builder: (_, __) {
+                    builder: (ctx, snap) {
                       return Container(
                         width: logoSize * 0.55 * _lineWidth.value,
                         height: 2.5,
@@ -427,7 +427,7 @@ class _LoadingDots extends StatelessWidget {
   Widget build(BuildContext context) {
     return AnimatedBuilder(
       animation: controller,
-      builder: (_, __) {
+      builder: (ctx, snap) {
         return Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: List.generate(3, (i) {
@@ -444,7 +444,8 @@ class _LoadingDots extends StatelessWidget {
                 shape: BoxShape.circle,
                 color: gold.withValues(alpha: opacity),
               ),
-              transform: Matrix4.identity()..scale(0.7 + 0.3 * scale),
+              transform: Matrix4.diagonal3Values(
+                  0.7 + 0.3 * scale, 0.7 + 0.3 * scale, 1.0),
               transformAlignment: Alignment.center,
             );
           }),

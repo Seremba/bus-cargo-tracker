@@ -375,6 +375,16 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     !p.createdAt.isAfter(todayStart))
                 .fold(0, (sum, p) => sum + p.amount);
 
+            // Revenue this month
+            final monthStart = DateTime(now.year, now.month, 1);
+            final monthRevenue = allPayments
+                .where((p) => p.createdAt.isAfter(monthStart))
+                .fold(0, (sum, p) => sum + p.amount);
+
+            // All-time revenue
+            final allTimeRevenue = allPayments
+                .fold(0, (sum, p) => sum + p.amount);
+
             // Active trips
             final activeTrips = allTrips
                 .where((t) => t.status == TripStatus.active)
@@ -460,6 +470,83 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                 ),
+                // Revenue — full width hero card
+                _kpiHeroCard(
+                  context: context,
+                  icon: Icons.payments_outlined,
+                  label: 'Revenue today',
+                  value: 'UGX ${_fmtAmount(todayRevenue)}',
+                  sublabel: yesterdayRevenue > 0
+                      ? 'Yesterday: UGX ${_fmtAmount(yesterdayRevenue)}  •  Tap to view all'
+                      : 'Tap to view all payments',
+                  color: Colors.green,
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => const AdminPaymentsScreen(),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // Revenue summary card
+                if (allPayments.isNotEmpty)
+                  Card(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text(
+                            'Revenue summary',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.black54,
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _revSummaryCell(
+                                  label: 'Today',
+                                  amount: todayRevenue,
+                                  count: allPayments
+                                      .where((p) => p.createdAt
+                                          .isAfter(todayStart))
+                                      .length,
+                                  color: Colors.green,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _revSummaryCell(
+                                  label: 'This month',
+                                  amount: monthRevenue,
+                                  count: allPayments
+                                      .where((p) => p.createdAt
+                                          .isAfter(monthStart))
+                                      .length,
+                                  color: Colors.blue,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: _revSummaryCell(
+                                  label: 'All time',
+                                  amount: allTimeRevenue,
+                                  count: allPayments.length,
+                                  color: Colors.purple,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+
                 const SizedBox(height: 10),
 
                 // Row 1: Active trips + In transit
@@ -866,6 +953,54 @@ class _AdminDashboardState extends State<AdminDashboard> {
   }
 
   // ── Full-width hero KPI card (revenue) ──────────────────────────────────
+  Widget _revSummaryCell({
+    required String label,
+    required int amount,
+    required int count,
+    required Color color,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 6),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.07),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.18)),
+      ),
+      child: Column(
+        children: [
+          Text(
+            'UGX ${_fmtAmount(amount)}',
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w800,
+              color: color,
+            ),
+            textAlign: TextAlign.center,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 10,
+              color: color.withValues(alpha: 0.75),
+            ),
+            textAlign: TextAlign.center,
+          ),
+          Text(
+            '$count txn${count == 1 ? '' : 's'}',
+            style: TextStyle(
+              fontSize: 10,
+              color: color.withValues(alpha: 0.55),
+            ),
+            textAlign: TextAlign.center,
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _kpiHeroCard({
     required BuildContext context,
     required IconData icon,

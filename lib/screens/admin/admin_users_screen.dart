@@ -573,6 +573,7 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
     try {
       await HiveService.userBox().delete(u.id);
+      await AuthService.markUserDeleted(u.id);
 
       await SyncService.enqueue(
         type: SyncEventType.userDeleted,

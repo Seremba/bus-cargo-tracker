@@ -242,7 +242,11 @@ class AuthService {
       }
     }
 
-    final exists = box.values.any((u) => _phonesMatch(u.phone, cleanPhone));
+    // Exclude deleted users from the phone conflict check — a deleted user's
+    // phone number can be re-registered under a new user ID.
+    final exists = box.values
+        .where((u) => !_isDeleted(u.id))
+        .any((u) => _phonesMatch(u.phone, cleanPhone));
     if (exists) return null;
 
     final id = _generateUserId();
@@ -556,6 +560,10 @@ class AuthService {
     final userId = (payload['userId'] ?? '').toString().trim();
     if (userId.isEmpty) return;
 
+    // Don't resurrect deleted users — their old userCreated events
+    // should be ignored after deletion.
+    if (_isDeleted(userId)) return;
+
     final fullName = (payload['fullName'] ?? '').toString().trim();
     final phone = (payload['phone'] ?? '').toString().trim();
     final roleRaw = (payload['role'] ?? '').toString().trim();
@@ -642,11 +650,38 @@ class AuthService {
     await box.put(userId, shell);
   }
 
+  // ── Deleted user tombstone ─────────────────────────────────────────────────
+  // Tracks user IDs that have been deleted so their old userCreated sync
+  // events don't resurrect them when replayed on other devices.
+
+  static const _deletedIdsKey = 'deletedUserIds';
+
+  static Set<String> _deletedIds() {
+    final box = HiveService.appSettingsBox();
+    final raw = box.get(_deletedIdsKey);
+    if (raw is List) return raw.cast<String>().toSet();
+    return {};
+  }
+
+  static Future<void> _markDeleted(String userId) async {
+    final box = HiveService.appSettingsBox();
+    final ids = _deletedIds()..add(userId);
+    await box.put(_deletedIdsKey, ids.toList());
+  }
+
+  /// Public — called when admin deletes a user locally so the tombstone
+  /// is set immediately without waiting for the sync event to come back.
+  static Future<void> markUserDeleted(String userId) => _markDeleted(userId);
+
+  static bool _isDeleted(String userId) => _deletedIds().contains(userId);
+
   static Future<void> applyUserDeletedSyncEvent(
     Map<String, dynamic> payload,
   ) async {
     final userId = (payload['userId'] ?? '').toString().trim();
     if (userId.isEmpty) return;
+
+    await _markDeleted(userId);
 
     final box = HiveService.userBox();
     final user = box.get(userId);

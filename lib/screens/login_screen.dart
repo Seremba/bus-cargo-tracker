@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../models/user.dart';
 import '../models/user_role.dart';
 import '../services/auth_service.dart';
 import '../services/hive_service.dart';
 import '../services/outbound_queue_runner.dart';
 import '../services/session_service.dart';
 import '../services/phone_normalizer.dart';
+import '../services/sync_service.dart';
 
 import 'forgot_password_screen.dart';
 import 'register_screen.dart';
@@ -526,6 +528,37 @@ class _LoginScreenState extends State<LoginScreen> {
     );
   }
 
+  Future<void> _continueLogin(User user) async {
+    await SessionService.saveUser(user);
+    OutboundQueueRunner.start();
+
+    if (!mounted) return;
+
+    final Widget destination;
+    switch (user.role) {
+      case UserRole.sender:
+        destination = const SenderDashboard();
+        break;
+      case UserRole.staff:
+        destination = const StaffDashboard();
+        break;
+      case UserRole.driver:
+        destination = const DriverDashboard();
+        break;
+      case UserRole.admin:
+        destination = const AdminDashboard();
+        break;
+      case UserRole.deskCargoOfficer:
+        destination = const DeskCargoOfficerDashboard();
+        break;
+    }
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (_) => destination),
+    );
+  }
+
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
@@ -554,38 +587,31 @@ class _LoginScreenState extends State<LoginScreen> {
       if (!mounted) return;
 
       if (user == null) {
-        _toast('Invalid phone or password ❌');
+        // User not found locally — could be a new account not yet synced.
+        // Pull from Supabase and retry once.
+        try {
+          await SyncService.pullRemoteEvents();
+        } catch (_) {}
+
+        if (!mounted) return;
+
+        final userAfterSync = await AuthService.loginByPhonePassword(
+          phone: phone,
+          password: password,
+        );
+
+        if (!mounted) return;
+
+        if (userAfterSync == null) {
+          _toast('Invalid phone or password ❌');
+          return;
+        }
+
+        await _continueLogin(userAfterSync);
         return;
       }
 
-      await SessionService.saveUser(user);
-      OutboundQueueRunner.start();
-
-      if (!mounted) return;
-
-      final Widget destination;
-      switch (user.role) {
-        case UserRole.sender:
-          destination = const SenderDashboard();
-          break;
-        case UserRole.staff:
-          destination = const StaffDashboard();
-          break;
-        case UserRole.driver:
-          destination = const DriverDashboard();
-          break;
-        case UserRole.admin:
-          destination = const AdminDashboard();
-          break;
-        case UserRole.deskCargoOfficer:
-          destination = const DeskCargoOfficerDashboard();
-          break;
-      }
-
-      Navigator.pushReplacement(
-        context,
-        MaterialPageRoute(builder: (_) => destination),
-      );
+      await _continueLogin(user);
     } finally {
       if (mounted) setState(() => _loading = false);
     }

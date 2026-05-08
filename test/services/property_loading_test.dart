@@ -128,7 +128,7 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala', driverUserId: 'test-driver');
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final items = HiveService.propertyItemBox().values
@@ -166,7 +166,7 @@ void main() {
         station: 'Kampala',
       );
 
-      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala', driverUserId: 'test-driver');
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final items =
@@ -215,6 +215,7 @@ void main() {
       final ok = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
+        driverUserId: 'test-driver',
         itemNos: [1, 3, 5],
       );
 
@@ -268,7 +269,7 @@ void main() {
       final key = await HiveService.propertyBox().add(property);
       final saved = HiveService.propertyBox().get(key)!;
 
-      final ok = await PropertyService.markLoaded(saved, station: 'Kampala');
+      final ok = await PropertyService.markLoaded(saved, station: 'Kampala', driverUserId: 'test-driver');
 
       final refreshed = HiveService.propertyBox().get(key)!;
       final items = HiveService.propertyItemBox().values
@@ -312,6 +313,7 @@ void main() {
       final first = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
+        driverUserId: 'test-driver',
         itemNos: [1, 2],
       );
 
@@ -322,6 +324,7 @@ void main() {
       final second = await PropertyService.markLoaded(
         mid,
         station: 'Kampala',
+        driverUserId: 'test-driver',
         itemNos: [2, 3],
       );
 
@@ -372,6 +375,7 @@ void main() {
       final ok = await PropertyService.markLoaded(
         saved,
         station: 'Kampala',
+        driverUserId: 'test-driver',
         itemNos: [1, 2],
       );
 

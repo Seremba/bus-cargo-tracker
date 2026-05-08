@@ -68,23 +68,27 @@ class DriverManifestScreen extends StatelessWidget {
           );
           final activeTripId = activeTrip?.tripId;
 
+          final currentDriverId =
+              (Session.currentUserId ?? '').trim();
+
           // Properties currently on board
           final onBoard = pBox.values.where((p) {
             if (assignedRouteId.isNotEmpty &&
                 p.routeId != assignedRouteId) { return false; }
-            // On active trip
+            // On active trip — isolated by tripId
             if (activeTripId != null && activeTripId.isNotEmpty) {
               if ((p.tripId ?? '').trim() == activeTripId.trim()) {
                 return p.status == PropertyStatus.inTransit ||
                     p.status == PropertyStatus.loaded;
               }
             }
-            // Loaded and ready (not yet on a trip)
+            // Before trip starts — filter by driverUserId
             final items = itemSvc.getItemsForProperty(p.key.toString());
             return items.any(
               (x) =>
                   x.status == PropertyItemStatus.loaded &&
-                  x.tripId.trim().isEmpty,
+                  x.tripId.trim().isEmpty &&
+                  x.driverUserId.trim() == currentDriverId,
             );
           }).toList()
             ..sort((a, b) => a.destination.compareTo(b.destination));
@@ -468,6 +472,7 @@ class DriverManifestScreen extends StatelessWidget {
     );
     final activeTripId = activeTrip?.tripId;
 
+    final currentDriverId = (Session.currentUserId ?? '').trim();
     final onBoard = (pBox.values as Iterable<Property>).where((p) {
       if (assignedRouteId.isNotEmpty && p.routeId != assignedRouteId) {
         return false;
@@ -482,7 +487,8 @@ class DriverManifestScreen extends StatelessWidget {
       return items.any(
         (x) =>
             x.status == PropertyItemStatus.loaded &&
-            x.tripId.trim().isEmpty,
+            x.tripId.trim().isEmpty &&
+            x.driverUserId.trim() == currentDriverId,
       );
     }).toList()
       ..sort((a, b) => a.destination.compareTo(b.destination));

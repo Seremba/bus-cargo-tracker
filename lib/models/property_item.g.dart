@@ -27,13 +27,14 @@ class PropertyItemAdapter extends TypeAdapter<PropertyItem> {
       deliveredAt: fields[6] as DateTime?,
       pickedUpAt: fields[7] as DateTime?,
       tripId: fields[8] as String?,
+      driverUserId: fields[10] == null ? '' : fields[10] as String?,
     );
   }
 
   @override
   void write(BinaryWriter writer, PropertyItem obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.itemKey)
       ..writeByte(1)
@@ -53,7 +54,9 @@ class PropertyItemAdapter extends TypeAdapter<PropertyItem> {
       ..writeByte(8)
       ..write(obj.tripId)
       ..writeByte(9)
-      ..write(obj.labelCode);
+      ..write(obj.labelCode)
+      ..writeByte(10)
+      ..write(obj.driverUserId);
   }
 
   @override

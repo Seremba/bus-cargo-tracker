@@ -406,6 +406,39 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
                     ),
                   ],
 
+                  // Awaiting reassignment badge
+                  if (u.role == UserRole.driver &&
+                      u.awaitingReassignment) ...[
+                    const SizedBox(height: 4),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.orange.withValues(alpha: 0.35),
+                        ),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(Icons.swap_horiz,
+                              size: 11, color: Colors.orange.shade700),
+                          const SizedBox(width: 4),
+                          Text(
+                            'Awaiting reassignment',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Colors.orange.shade700,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+
                   const SizedBox(height: 2),
 
                   Text(
@@ -782,6 +815,27 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
 
     if (saved != true || selectedRoute == null) return;
 
+    // Log route history entry before updating
+    final now = DateTime.now();
+    final historyEntry = <String, dynamic>{
+      'routeId': selectedRoute!.id,
+      'routeName': selectedRoute!.name,
+      'assignedAt': now.toIso8601String(),
+    };
+
+    final updatedHistory = [
+      ...user.routeHistory,
+      historyEntry,
+    ];
+
+    // Clear awaitingReassignment flag and update route + history
+    user.assignedRouteId = selectedRoute!.id;
+    user.assignedRouteName = selectedRoute!.name;
+    user.awaitingReassignment = false;
+    user.routeHistory = updatedHistory;
+    await user.save();
+
+    // Sync the update
     final ok = await AuthService.adminUpdateDriverAssignedRoute(
       userId: user.id,
       assignedRouteId: selectedRoute!.id,

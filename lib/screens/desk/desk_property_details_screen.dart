@@ -55,6 +55,102 @@ class _DeskPropertyDetailsScreenState
     return null;
   }
 
+  /// Shows a driver picker for the given routeId.
+  /// Returns {'id': userId, 'name': fullName} or null if cancelled / none found.
+  Future<Map<String, String>?> _pickDriver(
+      BuildContext context, String routeId) async {
+    final userBox = HiveService.userBox();
+    final drivers = userBox.values
+        .where((u) =>
+            u.role == UserRole.driver &&
+            (u.assignedRouteId ?? '').trim() == routeId.trim())
+        .toList()
+      ..sort((a, b) => a.fullName.compareTo(b.fullName));
+
+    if (drivers.isEmpty) {
+      if (!context.mounted) return null;
+      await showDialog<void>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('No drivers on this route'),
+          content: const Text(
+            'No drivers are assigned to this route yet.\n'
+            'Ask admin to assign a driver before loading cargo.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
+      return null;
+    }
+
+    if (!context.mounted) return null;
+    return showDialog<Map<String, String>>(
+      context: context,
+      builder: (ctx) {
+        final cs = Theme.of(ctx).colorScheme;
+        return AlertDialog(
+          title: const Text('Assign to driver'),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: drivers.length,
+              itemBuilder: (_, i) {
+                final d = drivers[i];
+                final hasActiveTrip = HiveService.tripBox().values.any(
+                  (t) =>
+                      t.driverUserId == d.id &&
+                      t.status.name == 'active',
+                );
+                final badge = hasActiveTrip ? '🟠 On trip' : '🟢 Available';
+                final badgeColor =
+                    hasActiveTrip ? Colors.orange : Colors.green;
+                return ListTile(
+                  leading: CircleAvatar(
+                    backgroundColor: cs.primary.withValues(alpha: 0.12),
+                    child: Text(
+                      d.fullName.trim().isNotEmpty
+                          ? d.fullName.trim()[0].toUpperCase()
+                          : '?',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w700,
+                        color: cs.primary,
+                      ),
+                    ),
+                  ),
+                  title: Text(d.fullName),
+                  subtitle: Text(
+                    badge,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: badgeColor,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(
+                    ctx,
+                    {'id': d.id, 'name': d.fullName},
+                  ),
+                );
+              },
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   Future<int?> _askCopiesPerItem(BuildContext context) async {
     final controller = TextEditingController(text: '1');
     return showDialog<int>(
@@ -695,9 +791,15 @@ class _DeskPropertyDetailsScreenState
                               if (selectedNos == null ||
                                   selectedNos.isEmpty) { return; }
 
+                              // ── Driver picker ──────────────────────
+                              if (!ctx.mounted) return;
+                              final driver = await _pickDriver(ctx, p.routeId);
+                              if (driver == null) return;
+
                               final ok = await PropertyService.markLoaded(
                                 p,
                                 station: st,
+                                driverUserId: driver['id'] as String,
                                 itemNos: selectedNos,
                               );
 
@@ -706,7 +808,7 @@ class _DeskPropertyDetailsScreenState
                                 SnackBar(
                                   content: Text(
                                     ok
-                                        ? 'Marked Loaded ✅ (${selectedNos.length} item(s))'
+                                        ? 'Marked Loaded ✅ (${selectedNos.length} item(s)) → ${driver['name']}'
                                         : 'Cannot mark loaded ❌',
                                   ),
                                 ),

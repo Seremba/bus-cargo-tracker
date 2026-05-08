@@ -4,6 +4,7 @@ import 'package:hive/hive.dart';
 
 import '../models/checkpoint.dart';
 import '../models/sync_event.dart';
+import '../models/sync_event_type.dart';
 import '../models/trip.dart';
 import '../models/trip_status.dart';
 import '../models/user_role.dart';
@@ -561,7 +562,6 @@ class TripService {
     trip.aggregateVersion += 1;
     await trip.save();
 
-    // Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted
     await SyncService.enqueueTripCompleted(
       tripId: trip.tripId,
       actorUserId: trip.driverUserId,
@@ -574,6 +574,7 @@ class TripService {
       },
     );
 
+    await _markDriverAwaitingReassignment(trip);
     await _notifyTripEnded(trip);
   }
 
@@ -586,7 +587,6 @@ class TripService {
     trip.aggregateVersion += 1;
     await trip.save();
 
-    // Phase 3: renamed from enqueueTripEnded → enqueueTripCompleted
     await SyncService.enqueueTripCompleted(
       tripId: trip.tripId,
       actorUserId: trip.driverUserId,
@@ -599,17 +599,67 @@ class TripService {
       },
     );
 
+    // Mark driver as awaiting reassignment
+    await _markDriverAwaitingReassignment(trip);
+
     await _notifyTripEnded(trip);
   }
 
+  static Future<void> _markDriverAwaitingReassignment(Trip trip) async {
+    final driverUserId = trip.driverUserId.trim();
+    if (driverUserId.isEmpty) return;
+
+    final user = HiveService.userBox().get(driverUserId);
+    if (user == null || user.role != UserRole.driver) return;
+
+    // Record route in history
+    final historyEntry = <String, dynamic>{
+      'routeId': trip.routeId,
+      'routeName': trip.routeName,
+      'assignedAt': user.routeHistory.isNotEmpty
+          ? (user.routeHistory.last['assignedAt'] ?? trip.startedAt.toIso8601String())
+          : trip.startedAt.toIso8601String(),
+      'endedAt': trip.endedAt?.toIso8601String() ?? DateTime.now().toIso8601String(),
+      'tripId': trip.tripId,
+    };
+
+    user.routeHistory = [...user.routeHistory, historyEntry];
+    user.awaitingReassignment = true;
+    await user.save();
+
+    // Sync the driver update
+    await SyncService.enqueue(
+      type: SyncEventType.userCreated,
+      aggregateType: 'user',
+      aggregateId: driverUserId,
+      actorUserId: driverUserId,
+      payload: {
+        'userId': user.id,
+        'fullName': user.fullName,
+        'phone': user.phone,
+        'role': user.role.name,
+        'assignedRouteId': user.assignedRouteId ?? '',
+        'assignedRouteName': user.assignedRouteName ?? '',
+        'awaitingReassignment': true,
+        'phoneVerified': user.phoneVerified,
+        'createdAt': user.createdAt.toIso8601String(),
+      },
+      aggregateVersion: 1,
+    );
+  }
+
   static Future<void> _notifyTripEnded(Trip trip) async {
+    final driver = HiveService.userBox().get(trip.driverUserId.trim());
+    final driverLabel = driver?.fullName.trim().isNotEmpty == true
+        ? driver!.fullName.trim()
+        : trip.driverUserId;
+
     await NotificationService.notify(
       targetUserId: NotificationService.adminInbox,
-      title: 'Trip ended',
+      title: '🏁 Trip ended — reassign driver',
       message:
-          '${trip.routeName} ended at '
-          '${trip.endedAt!.toLocal().toString().substring(0, 16)} '
-          '(Driver: ${trip.driverUserId}).',
+          '$driverLabel completed ${trip.routeName}.\n'
+          'Go to Manage Users → $driverLabel to assign a new route.',
     );
 
     final pBox = HiveService.propertyBox();

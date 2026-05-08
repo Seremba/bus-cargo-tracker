@@ -35,6 +35,9 @@ class PropertyItem extends HiveObject {
   @HiveField(9)
   final String labelCode; // per-item QR value
 
+  @HiveField(10, defaultValue: '')
+  String driverUserId; // driver this item is assigned to at loading time
+
   // (optional future fields: append only)
 
   PropertyItem({
@@ -48,5 +51,7 @@ class PropertyItem extends HiveObject {
     this.deliveredAt,
     this.pickedUpAt,
     String? tripId,
-  }) : tripId = (tripId ?? '').trim();
+    String? driverUserId,
+  })  : tripId = (tripId ?? '').trim(),
+        driverUserId = (driverUserId ?? '').trim();
 }

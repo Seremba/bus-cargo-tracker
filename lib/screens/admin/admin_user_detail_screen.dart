@@ -207,10 +207,54 @@ class AdminUserDetailScreen extends StatelessWidget {
                           ? '—'
                           : u.assignedRouteId!.trim(),
                     ),
+                    if (u.awaitingReassignment) ...[
+                      const SizedBox(height: 8),
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(
+                            color: Colors.orange.withValues(alpha: 0.30),
+                          ),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.swap_horiz,
+                                size: 16, color: Colors.orange.shade700),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'This driver has completed their last trip and is awaiting route reassignment.',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.orange.shade800,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
                   ],
                 ]),
                 const SizedBox(height: 10),
+
               ],
+
+                // ── Route History ─────────────────────────────────────────
+                if (u.role == UserRole.driver &&
+                    u.routeHistory.isNotEmpty) ...[
+                  _sectionCard(children: [
+                    _sectionTitle(
+                        'Route History (${u.routeHistory.length})'),
+                    const SizedBox(height: 8),
+                    for (int i = u.routeHistory.length - 1; i >= 0; i--)
+                      _routeHistoryRow(
+                          u.routeHistory[i], i, u.routeHistory.length, muted),
+                  ]),
+                  const SizedBox(height: 10),
+                ],
 
               // ── Sender properties ─────────────────────────────────────
               if (isSender) ...[
@@ -259,6 +303,78 @@ class AdminUserDetailScreen extends StatelessWidget {
   }
 
   // ── Helpers ────────────────────────────────────────────────────────────────
+
+  Widget _routeHistoryRow(
+      Map entry, int index, int total, Color muted) {
+    final routeName = (entry['routeName'] ?? '—').toString();
+    final assignedAt = entry['assignedAt'] != null
+        ? DateTime.tryParse(entry['assignedAt'].toString())
+        : null;
+    final endedAt = entry['endedAt'] != null
+        ? DateTime.tryParse(entry['endedAt'].toString())
+        : null;
+    final isLatest = index == total - 1;
+
+    String fmt(DateTime? d) =>
+        d == null ? '—' : d.toLocal().toString().substring(0, 10);
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Column(
+            children: [
+              Container(
+                width: 28,
+                height: 28,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: isLatest
+                      ? Colors.green.withValues(alpha: 0.12)
+                      : Colors.grey.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(
+                  Icons.route_outlined,
+                  size: 14,
+                  color: isLatest ? Colors.green : Colors.grey,
+                ),
+              ),
+              if (index > 0)
+                Container(
+                  width: 2,
+                  height: 20,
+                  color: Colors.grey.withValues(alpha: 0.25),
+                ),
+            ],
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  routeName,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700,
+                    color: isLatest ? Colors.green : null,
+                  ),
+                ),
+                Text(
+                  endedAt != null
+                      ? '${fmt(assignedAt)} → ${fmt(endedAt)}'
+                      : 'From ${fmt(assignedAt)}',
+                  style: TextStyle(fontSize: 11, color: muted),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   Widget _sectionCard({required List<Widget> children}) {
     return Card(

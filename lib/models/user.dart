@@ -41,6 +41,15 @@ class User extends HiveObject {
   @HiveField(11, defaultValue: false)
   bool phoneVerified;
 
+  /// Set to true when the driver's trip ends — signals admin to reassign.
+  @HiveField(12, defaultValue: false)
+  bool awaitingReassignment;
+
+  /// Chronological log of every route this driver has been assigned to.
+  /// Each entry: {'routeId', 'routeName', 'assignedAt', 'endedAt'?}
+  @HiveField(13, defaultValue: [])
+  List<Map> routeHistory;
+
   User({
     required this.id,
     required this.fullName,
@@ -54,5 +63,7 @@ class User extends HiveObject {
     this.assignedRouteName,
     this.passwordSalt,
     this.phoneVerified = false,
-  });
+    this.awaitingReassignment = false,
+    List<Map>? routeHistory,
+  }) : routeHistory = routeHistory ?? [];
 }

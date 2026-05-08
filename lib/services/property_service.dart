@@ -405,6 +405,7 @@ class PropertyService {
   static Future<bool> markLoaded(
     Property p, {
     required String station,
+    required String driverUserId,
     List<int>? itemNos,
   }) async {
     if (!RoleGuard.hasAnyVerified({
@@ -483,6 +484,7 @@ class PropertyService {
       propertyKey: fresh.key.toString(),
       itemNos: selectedNos,
       now: now,
+      driverUserId: driverUserId.trim(),
     );
 
     fresh.loadedAt ??= now;

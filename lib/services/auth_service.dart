@@ -571,6 +571,7 @@ class AuthService {
     final assignedRouteId = (payload['assignedRouteId'] ?? '').toString().trim();
     final assignedRouteName = (payload['assignedRouteName'] ?? '').toString().trim();
     final phoneVerified = (payload['phoneVerified'] as bool?) ?? false;
+    final awaitingReassignment = (payload['awaitingReassignment'] as bool?) ?? false;
     final createdAtRaw = (payload['createdAt'] ?? '').toString().trim();
 
     if (fullName.isEmpty || phone.isEmpty || roleRaw.isEmpty) return;
@@ -626,6 +627,8 @@ class AuthService {
             ? existing.assignedRouteName
             : assignedRouteName,
         phoneVerified: phoneVerified,
+        awaitingReassignment: awaitingReassignment,
+        routeHistory: existing.routeHistory,
       );
       await box.put(userId, updated);
       return;

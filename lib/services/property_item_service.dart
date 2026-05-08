@@ -71,6 +71,7 @@ class PropertyItemService {
     required String propertyKey,
     required List<int> itemNos,
     required DateTime now,
+    String driverUserId = '',
   }) async {
     final items = getItemsForProperty(propertyKey);
     final validNos = items.map((x) => x.itemNo).toSet();
@@ -92,6 +93,7 @@ class PropertyItemService {
 
       item.status = PropertyItemStatus.loaded;
       item.loadedAt = now;
+      item.driverUserId = driverUserId.trim();
       await item.save();
 
       await _emitItemEvent(

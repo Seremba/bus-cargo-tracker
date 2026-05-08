@@ -452,16 +452,21 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           );
           final activeTripId = activeTrip?.tripId;
 
+          final currentDriverId = Session.currentUserId ?? '';
+
           final routeProperties = pBox.values.where((p) {
             if (p.routeId != assignedRouteId) return false;
             if (activeTripId != null && activeTripId.isNotEmpty) {
+              // During active trip — isolated by tripId
               return (p.tripId ?? '').trim() == activeTripId.trim();
             }
+            // Before trip starts — filter by driverUserId on loaded items
             final items = itemSvc.getItemsForProperty(p.key.toString());
             return items.any(
               (x) =>
                   x.status == PropertyItemStatus.loaded &&
-                  x.tripId.trim().isEmpty,
+                  x.tripId.trim().isEmpty &&
+                  x.driverUserId.trim() == currentDriverId.trim(),
             );
           }).toList()..sort((a, b) => a.createdAt.compareTo(b.createdAt));
 

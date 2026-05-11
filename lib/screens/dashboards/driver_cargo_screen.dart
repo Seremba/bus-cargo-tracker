@@ -701,12 +701,41 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
         _gpsStatus.toLowerCase().contains('failed') ||
         _gpsStatus.toLowerCase().contains('denied');
 
+    // Extract accuracy value for quality colour coding
+    final accMatch = RegExp(r'±(\d+)m').firstMatch(_gpsStatus);
+    final accValue = accMatch != null
+        ? int.tryParse(accMatch.group(1) ?? '')
+        : null;
+
+    final Color qualityColor;
+    final String qualityLabel;
+
+    if (isError) {
+      qualityColor = Colors.red;
+      qualityLabel = 'GPS error — checkpoints will not trigger';
+    } else if (accValue == null) {
+      qualityColor = Colors.grey;
+      qualityLabel = 'Acquiring GPS signal...';
+    } else if (accValue <= 30) {
+      qualityColor = Colors.green;
+      qualityLabel = 'Excellent GPS signal';
+    } else if (accValue <= 80) {
+      qualityColor = Colors.lightGreen;
+      qualityLabel = 'Good GPS signal';
+    } else if (accValue <= 150) {
+      qualityColor = Colors.orange;
+      qualityLabel = 'Poor signal — checkpoints may be missed';
+    } else {
+      qualityColor = Colors.red;
+      qualityLabel = 'Bad signal — move to open area';
+    }
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withValues(alpha: 0.30),
+        color: qualityColor.withValues(alpha: 0.06),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: cs.outlineVariant),
+        border: Border.all(color: qualityColor.withValues(alpha: 0.30)),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -714,7 +743,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           Icon(
             isError ? Icons.gps_off : Icons.gps_fixed,
             size: 18,
-            color: isError ? Colors.red : Colors.green,
+            color: qualityColor,
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -726,6 +755,15 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  qualityLabel,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: qualityColor,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 const SizedBox(height: 3),

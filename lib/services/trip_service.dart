@@ -20,7 +20,7 @@ class TripService {
 
   static Completer<void>? _checkpointLock;
 
-  static const double _maxAccuracyMeters = 60;
+  static const double _maxAccuracyMeters = 150; // raised from 60 — more forgiving at night/rural areas
   static const Duration _enterDwell = Duration(seconds: 25);
   static const int _minSecondsBetweenSamples = 2;
 

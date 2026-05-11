@@ -18,13 +18,16 @@ class LocationService {
       locationSettings: AndroidSettings(
         accuracy: LocationAccuracy.high,
 
-        distanceFilter: 50,
+        // Lowered from 50m — triggers more frequently so checkpoints
+        // near town centres and borders aren't missed
+        distanceFilter: 20,
 
-        intervalDuration: const Duration(seconds: 15),
+        intervalDuration: const Duration(seconds: 10),
         foregroundNotificationConfig: const ForegroundNotificationConfig(
           notificationText: 'UNEX LOGISTICS is tracking your trip',
           notificationTitle: 'Trip in progress',
           enableWakeLock: true,
+          setOngoing: true, // prevents notification from being dismissed
         ),
       ),
     );

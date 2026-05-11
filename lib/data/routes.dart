@@ -10,7 +10,7 @@ class RouteCheckpoint {
     required this.name,
     required this.lat,
     required this.lng,
-    this.radiusMeters = 800,
+    this.radiusMeters = 2000,
   });
 
   Checkpoint toCheckpoint() {

@@ -30,7 +30,8 @@ class DriverCargoScreen extends StatefulWidget {
   State<DriverCargoScreen> createState() => _DriverCargoScreenState();
 }
 
-class _DriverCargoScreenState extends State<DriverCargoScreen> {
+class _DriverCargoScreenState extends State<DriverCargoScreen>
+    with WidgetsBindingObserver {
   StreamSubscription<Position>? _sub;
   Timer? _retryTimer;
   int _lastSnackCheckpointIndex = -1;
@@ -42,6 +43,10 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
   DateTime _lastCheckpointCheck = DateTime.fromMillisecondsSinceEpoch(0);
   bool _startingTrip = false;
+
+  // Location pre-flight
+  LocationStatus _locationStatus = LocationStatus.ready;
+  bool _checkingLocation = true;
 
   bool get _canUseDriverTools =>
       RoleGuard.hasAny({UserRole.driver, UserRole.admin});
@@ -58,9 +63,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (_canUseDriverTools) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
+        _checkLocation();
         _startGps();
       });
     } else {
@@ -70,6 +77,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _retryTimer?.cancel();
     try {
       _sub?.cancel();
@@ -79,6 +87,135 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       _sub = null;
     }
     super.dispose();
+  }
+
+  Future<void> _showLocationBlockedDialog(LocationStatus status) async {
+    final isServiceOff = status == LocationStatus.serviceDisabled;
+    final isDeniedForever = status == LocationStatus.permissionDeniedForever;
+
+    final title = isServiceOff
+        ? 'Location services are off'
+        : isDeniedForever
+            ? 'Location access denied'
+            : 'Location permission needed';
+
+    final message = isServiceOff
+        ? 'Please enable Location Services on your device before starting a trip. '
+          'Without GPS, checkpoints cannot be tracked.'
+        : isDeniedForever
+            ? 'Location access has been permanently denied. '
+              'Open app settings to allow location access, then try again.'
+            : 'UNEx Logistics needs location permission to track checkpoints during your trip.';
+
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.location_off, color: Colors.orange),
+            const SizedBox(width: 10),
+            Expanded(child: Text(title)),
+          ],
+        ),
+        content: Text(message),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              if (isDeniedForever) {
+                await Geolocator.openAppSettings();
+              } else {
+                await Geolocator.openLocationSettings();
+              }
+              // Re-check after returning from settings
+              if (mounted) await _checkLocation();
+            },
+            child: Text(
+              isDeniedForever ? 'Open App Settings' : 'Open Location Settings',
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _locationBanner() {
+    if (_checkingLocation || _locationStatus == LocationStatus.ready) {
+      return const SizedBox.shrink();
+    }
+
+    final isServiceOff = _locationStatus == LocationStatus.serviceDisabled;
+    final isDeniedForever =
+        _locationStatus == LocationStatus.permissionDeniedForever;
+
+    final message = isServiceOff
+        ? '📍 Location services are OFF — turn on to track checkpoints'
+        : isDeniedForever
+            ? '📍 Location access denied — open settings to allow'
+            : '📍 Location permission needed — tap to allow';
+
+    return GestureDetector(
+      onTap: () async {
+        if (_locationStatus == LocationStatus.permissionDenied) {
+          await LocationService.ensurePermission();
+          if (mounted) await _checkLocation();
+        } else if (isDeniedForever) {
+          await Geolocator.openAppSettings();
+          if (mounted) await _checkLocation();
+        } else {
+          await Geolocator.openLocationSettings();
+          if (mounted) await _checkLocation();
+        }
+      },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        color: Colors.orange.shade700,
+        child: Row(
+          children: [
+            const Icon(Icons.location_off, color: Colors.white, size: 18),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                message,
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.white, size: 18),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _checkLocation() async {
+    if (!mounted) return;
+    setState(() => _checkingLocation = true);
+    final status = await LocationService.checkStatus();
+    if (!mounted) return;
+    setState(() {
+      _locationStatus = status;
+      _checkingLocation = false;
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Re-check location when driver returns from Settings
+      _checkLocation();
+      _startGps();
+    }
   }
 
   Future<void> _startGps() async {
@@ -192,6 +329,17 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
       );
       return;
     }
+
+    // Location pre-flight — re-check at the moment of tapping
+    final status = await LocationService.checkStatus();
+    if (!mounted) return;
+    setState(() => _locationStatus = status);
+
+    if (status != LocationStatus.ready) {
+      await _showLocationBlockedDialog(status);
+      return;
+    }
+
     if (_startingTrip) return;
     setState(() => _startingTrip = true);
     try {
@@ -442,6 +590,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
           const SizedBox(width: 4),
         ],
       ),
+      // Location banner — shown when location is off or denied
+      bottomNavigationBar: _locationStatus != LocationStatus.ready &&
+              !_checkingLocation
+          ? _locationBanner()
+          : null,
       body: AnimatedBuilder(
         animation: Listenable.merge([pBox.listenable(), iBox.listenable()]),
         builder: (context, _) {
@@ -602,7 +755,9 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton(
-                          onPressed: (_startingTrip || readyItems <= 0)
+                          onPressed: (_startingTrip ||
+                                  readyItems <= 0 ||
+                                  _locationStatus != LocationStatus.ready)
                               ? null
                               : _startAssignedRouteTrip,
                           style: ElevatedButton.styleFrom(
@@ -614,7 +769,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen> {
                             ),
                           ),
                           child: Text(
-                            _startingTrip ? 'Starting...' : 'Start Trip',
+                            _startingTrip
+                                ? 'Starting...'
+                                : _locationStatus != LocationStatus.ready
+                                    ? 'Enable Location to Start'
+                                    : 'Start Trip',
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 15,

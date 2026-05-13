@@ -50,12 +50,37 @@ class EscPosReceiptBuilder {
 
     bytes.addAll(gen.text('Property: $shownCode'));
 
-    // Tracking code (NEW)
+    // Tracking code
     final tracking = _s(property?.trackingCode);
     if (tracking.isNotEmpty) {
       bytes.addAll(
         gen.text('Tracking: $tracking', styles: const PosStyles(bold: true)),
       );
+    }
+
+    // QR code — encodes property code for easy re-scanning at pickup
+    final qrData = propCode.isNotEmpty
+        ? propCode
+        : tracking.isNotEmpty
+            ? tracking
+            : null;
+    if (qrData != null) {
+      bytes.addAll(gen.feed(1));
+      bytes.addAll(
+        gen.text(
+          'Scan to verify at pickup:',
+          styles: const PosStyles(align: PosAlign.center),
+        ),
+      );
+      bytes.addAll(
+        gen.qrcode(
+          qrData,
+          align: PosAlign.center,
+          size: QRSize.size6,
+          cor: QRCorrection.H,
+        ),
+      );
+      bytes.addAll(gen.feed(1));
     }
 
     // Receiver updates (NEW — safe even if fields are missing at runtime)

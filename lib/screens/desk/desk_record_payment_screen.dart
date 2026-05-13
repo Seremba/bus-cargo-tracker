@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../../data/routes.dart';
 import '../../data/routes_helpers.dart';
+import '../../models/payment_record.dart';
 import '../../models/property.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
@@ -10,6 +11,7 @@ import '../../services/payment_service.dart';
 import '../../services/role_guard.dart';
 import '../../services/session.dart';
 import '../../services/printing/payment_receipt_print_service.dart';
+import '../../services/printing/receipt_share_service.dart';
 import '../../services/receiver_tracking_service.dart';
 
 class DeskRecordPaymentScreen extends StatefulWidget {
@@ -331,6 +333,167 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     );
   }
 
+  Future<void> _showReceiptOptions({
+    required BuildContext context,
+    required PaymentRecord record,
+    required Property property,
+    required bool? printed,
+  }) async {
+    final cs = Theme.of(context).colorScheme;
+
+    final printLabel = printed == true
+        ? '✅ Receipt printed'
+        : printed == false
+            ? '⚠️ Print failed — try again'
+            : '🖨️ Print receipt';
+
+    await showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Payment recorded ✅',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w800,
+                  color: cs.onSurface,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                'How would you like to share the receipt?',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: cs.onSurface.withValues(alpha: 0.60),
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Print option
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: cs.primary.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.print_outlined,
+                      color: cs.primary, size: 22),
+                ),
+                title: Text(printLabel,
+                    style: const TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Bluetooth thermal printer'),
+                onTap: printed != true
+                    ? () async {
+                        Navigator.pop(ctx);
+                        final ok =
+                            await PaymentReceiptPrintService.printAfterPayment(
+                          record: record,
+                          property: property,
+                        );
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              ok == true
+                                  ? 'Receipt printed ✅'
+                                  : ok == false
+                                      ? 'Print failed ⚠️'
+                                      : 'No printer configured',
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
+              ),
+
+              const Divider(height: 1),
+
+              // Share as text
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.green.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.message_outlined,
+                      color: Colors.green, size: 22),
+                ),
+                title: const Text('Share as text',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('WhatsApp, SMS, email…'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await ReceiptShareService.shareAsText(
+                    pay: record,
+                    property: property,
+                  );
+                },
+              ),
+
+              const Divider(height: 1),
+
+              // Share as PDF
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: Colors.red.withValues(alpha: 0.10),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.picture_as_pdf_outlined,
+                      color: Colors.red, size: 22),
+                ),
+                title: const Text('Share as PDF',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                subtitle: const Text('Save or send as document'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  await ReceiptShareService.shareAsPdf(
+                    pay: record,
+                    property: property,
+                  );
+                },
+              ),
+
+              const Divider(height: 1),
+
+              // Done
+              ListTile(
+                contentPadding: EdgeInsets.zero,
+                leading: Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: cs.onSurface.withValues(alpha: 0.08),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: Icon(Icons.check,
+                      color: cs.onSurface.withValues(alpha: 0.55),
+                      size: 22),
+                ),
+                title: const Text('Done — no receipt needed',
+                    style: TextStyle(fontWeight: FontWeight.w600)),
+                onTap: () => Navigator.pop(ctx),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _submit() async {
     if (!_canUse) return;
     if (!_formKey.currentState!.validate()) return;
@@ -412,13 +575,15 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
 
       if (!mounted) return;
 
-      final msg = (printed == true)
-          ? 'Payment + receipt ✅'
-          : (printed == false)
-          ? 'Payment saved (receipt failed) ⚠️'
-          : 'Payment recorded ✅';
+      // Show receipt options bottom sheet
+      await _showReceiptOptions(
+        context: context,
+        record: rec,
+        property: fresh,
+        printed: printed,
+      );
 
-      messenger.showSnackBar(SnackBar(content: Text(msg)));
+      if (!mounted) return;
       Navigator.pop(context, true);
     } catch (e) {
       if (!mounted) return;

@@ -7,6 +7,7 @@ import '../../models/property_status.dart';
 import '../../models/user.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
+import '../../services/phone_otp_service.dart';
 
 class AdminUserDetailScreen extends StatelessWidget {
   final User user;
@@ -175,6 +176,42 @@ class AdminUserDetailScreen extends StatelessWidget {
                           ? '✅ Phone verified'
                           : '⚠️ Phone not verified',
                 ),
+                if (!u.phoneVerified && u.role != UserRole.admin) ...[
+                  const SizedBox(height: 8),
+                  OutlinedButton.icon(
+                    icon: const Icon(Icons.sms_outlined, size: 16),
+                    label: const Text('Send verification OTP'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.orange,
+                      side: const BorderSide(color: Colors.orange),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      minimumSize: Size.zero,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    ),
+                    onPressed: () async {
+                      try {
+                        await PhoneOtpService.generateAndSend(
+                          userId: u.id,
+                          phone: u.phone,
+                        );
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(
+                            content: Text(
+                              'OTP sent to ${u.phone} ✅',
+                            ),
+                          ),
+                        );
+                      } catch (e) {
+                        if (!context.mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('Failed: $e')),
+                        );
+                      }
+                    },
+                  ),
+                ],
               ]),
 
               const SizedBox(height: 10),

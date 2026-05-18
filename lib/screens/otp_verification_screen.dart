@@ -16,11 +16,15 @@ import 'login_screen.dart';
 class OtpVerificationScreen extends StatefulWidget {
   final String userId;
   final String phone;
+  /// If provided, called after successful verification instead of
+  /// navigating back to LoginScreen. Used when redirected from login.
+  final VoidCallback? onVerified;
 
   const OtpVerificationScreen({
     super.key,
     required this.userId,
     required this.phone,
+    this.onVerified,
   });
 
   @override
@@ -163,15 +167,19 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           _expiryTimer?.cancel();
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
-              content: Text('Phone verified ✅ You can now log in'),
+              content: Text('Phone verified ✅'),
               backgroundColor: Colors.green,
             ),
           );
-          Navigator.pushAndRemoveUntil(
-            context,
-            MaterialPageRoute(builder: (_) => const LoginScreen()),
-            (_) => false,
-          );
+          if (widget.onVerified != null) {
+            widget.onVerified!();
+          } else {
+            Navigator.pushAndRemoveUntil(
+              context,
+              MaterialPageRoute(builder: (_) => const LoginScreen()),
+              (_) => false,
+            );
+          }
           break;
 
         case OtpVerifyResult.wrongOtp:

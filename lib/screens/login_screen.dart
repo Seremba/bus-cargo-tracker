@@ -8,9 +8,11 @@ import '../services/hive_service.dart';
 import '../services/outbound_queue_runner.dart';
 import '../services/session_service.dart';
 import '../services/phone_normalizer.dart';
+import '../services/phone_otp_service.dart';
 import '../services/sync_service.dart';
 
 import 'forgot_password_screen.dart';
+import 'otp_verification_screen.dart';
 import 'register_screen.dart';
 
 import 'sender/sender_dashboard.dart';
@@ -534,6 +536,51 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!mounted) return;
 
+    // ── OTP enforcement ──────────────────────────────────────────────────
+    // Admin-created users (drivers, staff, desk officers, senders) start
+    // with phoneVerified: false. On first login they must verify their phone
+    // via Twilio Verify before accessing their dashboard.
+    if (!user.phoneVerified && user.role != UserRole.admin) {
+      try {
+        await PhoneOtpService.generateAndSend(
+          userId: user.id,
+          phone: user.phone,
+        );
+      } catch (_) {
+        // If OTP send fails (no internet), allow login but show a warning
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text(
+                'Could not send verification SMS. '
+                'Please verify your phone when connected.',
+              ),
+              duration: Duration(seconds: 4),
+            ),
+          );
+        }
+      }
+
+      if (!mounted) return;
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => OtpVerificationScreen(
+            userId: user.id,
+            phone: user.phone,
+            onVerified: () => _goToDashboard(user),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // ── Verified — go to dashboard ───────────────────────────────────────
+    _goToDashboard(user);
+  }
+
+  void _goToDashboard(User user) {
+    if (!mounted) return;
     final Widget destination;
     switch (user.role) {
       case UserRole.sender:
@@ -552,7 +599,6 @@ class _LoginScreenState extends State<LoginScreen> {
         destination = const DeskCargoOfficerDashboard();
         break;
     }
-
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (_) => destination),

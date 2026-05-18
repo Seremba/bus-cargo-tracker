@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl_phone_field/intl_phone_field.dart';
 
 import '../services/password_reset_service.dart';
 import '../services/phone_normalizer.dart';
@@ -23,6 +24,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
   final _otp = TextEditingController();
   final FocusNode _otpFocus = FocusNode();
 
+  // Full E.164 number from IntlPhoneField (e.g. +250788438097)
+  String _fullPhone = '';
+
   bool _loading = false;
   bool _otpSent = false;
 
@@ -32,6 +36,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     final init = widget.initialPhone?.trim() ?? '';
     if (init.isNotEmpty) {
       _phone.text = init;
+      _fullPhone = PhoneNormalizer.toE164(init) ?? init;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
         _sendOtp();
@@ -223,41 +228,39 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
                     const SizedBox(height: 14),
 
                     // Phone field — locked once OTP sent
-                    TextFormField(
-                      controller: _phone,
-                      enabled: !_otpSent && !_loading && !isFirstLogin,
-                      keyboardType: TextInputType.phone,
-                      textInputAction: TextInputAction.done,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(15),
-                      ],
-                      decoration: const InputDecoration(
-                        labelText: 'Phone',
-                        hintText: '07XXXXXXXX or +2567XXXXXXXX',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.phone_outlined),
-                      ),
-                      validator: (v) {
-                        final raw = (v ?? '').trim();
-                        if (raw.isEmpty) return 'Phone is required';
-                        final digits = PhoneNormalizer.digitsOnly(raw);
-                        if (digits.length < 9) return 'Enter a valid phone number';
-                        if (digits.length > 15) return 'Phone number too long';
-                        if (RegExp(r'^0+$').hasMatch(digits)) {
-                          return 'Enter a valid phone number';
-                        }
-                        if (!_otpSent) {
-                          final msg = PhoneNormalizer.normalizeForMessaging(raw);
-                          if (msg.isEmpty) {
-                            return 'Enter a message-ready number (07.. or include country code).';
+                    if (!_otpSent && !isFirstLogin)
+                      IntlPhoneField(
+                        controller: _phone,
+                        enabled: !_loading,
+                        initialCountryCode: 'UG',
+                        decoration: const InputDecoration(
+                          labelText: 'Phone Number',
+                          border: OutlineInputBorder(),
+                        ),
+                        onChanged: (phone) {
+                          _fullPhone = phone.completeNumber;
+                        },
+                        onCountryChanged: (_) {
+                          _fullPhone = '';
+                        },
+                        validator: (phone) {
+                          if (phone == null ||
+                              phone.number.trim().isEmpty) {
+                            return 'Phone number required';
                           }
-                        }
-                        return null;
-                      },
-                      onFieldSubmitted: (_) =>
-                          _otpSent ? null : (_loading ? null : _sendOtp()),
-                    ),
+                          return null;
+                        },
+                      )
+                    else if (_otpSent || isFirstLogin)
+                      TextFormField(
+                        controller: _phone,
+                        enabled: false,
+                        decoration: const InputDecoration(
+                          labelText: 'Phone',
+                          border: OutlineInputBorder(),
+                          prefixIcon: Icon(Icons.phone_outlined),
+                        ),
+                      ),
 
                     // OTP field — shown after OTP is sent
                     if (_otpSent) ...[
@@ -361,7 +364,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     setState(() => _loading = true);
     try {
       final res = await PasswordResetService.requestOtp(
-        rawPhone: _phone.text.trim(),
+        rawPhone: _fullPhone.isNotEmpty ? _fullPhone : _phone.text.trim(),
       );
 
       if (!mounted) return;
@@ -387,7 +390,7 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
     setState(() => _loading = true);
     try {
       final res = await PasswordResetService.verifyOtpOnly(
-        rawPhone: _phone.text.trim(),
+        rawPhone: _fullPhone.isNotEmpty ? _fullPhone : _phone.text.trim(),
         otp: _otp.text.trim(),
       );
 
@@ -399,7 +402,9 @@ class _ForgotPasswordScreenState extends State<ForgotPasswordScreen> {
       }
 
       // OTP verified — navigate to set new password screen
-      final phone = _phone.text.trim();
+      final phone = _fullPhone.isNotEmpty
+          ? _fullPhone
+          : _phone.text.trim();
       final returnedPhone = await Navigator.push<String>(
         context,
         MaterialPageRoute(

@@ -1,12 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
+import '../../data/routes.dart';
 import '../../models/trip.dart';
 import '../../models/checkpoint.dart';
 import '../../models/trip_status.dart';
 import '../../models/user.dart';
 import '../../models/user_role.dart';
 
+import '../../services/auth_service.dart';
 import '../../services/hive_service.dart';
 import '../../services/trip_service.dart';
 import '../../services/role_guard.dart';
@@ -55,6 +57,135 @@ class AdminTripDetailsScreen extends StatelessWidget {
 
     final lastName = t.checkpoints[t.lastCheckpointIndex].name;
     return 'Last: $lastName ($reached / $total)';
+  }
+
+  Future<void> _promptDriverReassignment(
+      BuildContext context, Trip trip) async {
+    final driverUserId = trip.driverUserId.trim();
+    if (driverUserId.isEmpty) return;
+
+    final driver = HiveService.userBox().get(driverUserId);
+    if (driver == null) return;
+
+    final driverName = driver.fullName.trim().isEmpty
+        ? driverUserId
+        : driver.fullName.trim();
+
+    AppRoute? selectedRoute;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setSheet) => Padding(
+          padding: EdgeInsets.fromLTRB(
+            16, 20, 16,
+            MediaQuery.of(ctx).viewInsets.bottom + 20,
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.swap_horiz, color: Colors.orange),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      'Reassign $driverName',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$driverName completed ${trip.routeName}. '
+                'Assign their next route:',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.black.withValues(alpha: 0.55),
+                ),
+              ),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<AppRoute>(
+                decoration: const InputDecoration(
+                  labelText: 'New route',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.route_outlined),
+                ),
+                items: routes
+                    .map((r) => DropdownMenuItem(
+                          value: r,
+                          child: Text(r.name),
+                        ))
+                    .toList(),
+                onChanged: (v) => setSheet(() => selectedRoute = v),
+              ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Later'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: selectedRoute == null
+                          ? null
+                          : () async {
+                              Navigator.pop(ctx);
+                              final now = DateTime.now();
+                              driver.routeHistory = [
+                                ...driver.routeHistory,
+                                {
+                                  'routeId': selectedRoute!.id,
+                                  'routeName': selectedRoute!.name,
+                                  'assignedAt': now.toIso8601String(),
+                                },
+                              ];
+                              driver.assignedRouteId = selectedRoute!.id;
+                              driver.assignedRouteName =
+                                  selectedRoute!.name;
+                              driver.awaitingReassignment = false;
+                              await driver.save();
+
+                              await AuthService
+                                  .adminUpdateDriverAssignedRoute(
+                                userId: driver.id,
+                                assignedRouteId: selectedRoute!.id,
+                                assignedRouteName: selectedRoute!.name,
+                              );
+
+                              if (!context.mounted) return;
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(
+                                    '$driverName assigned to '
+                                    '${selectedRoute!.name} ✅',
+                                  ),
+                                ),
+                              );
+                            },
+                      child: const Text('Assign'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   Future<String?> _askCancelReason(BuildContext context) async {
@@ -184,6 +315,11 @@ class AdminTripDetailsScreen extends StatelessWidget {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('Trip ended ✅')),
                     );
+
+                    // Prompt admin to reassign driver immediately
+                    if (!context.mounted) return;
+                    await _promptDriverReassignment(
+                        context, refreshedTrip);
                   },
                 ),
                 IconButton(

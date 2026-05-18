@@ -10,6 +10,7 @@ import 'package:pdf/widgets.dart' as pw;
 import '../../models/payment_record.dart';
 import '../../models/property.dart';
 import '../../models/user_role.dart';
+import '../../data/routes.dart' show currencyForStation;
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
 import '../admin/admin_refund_adjustment_screen.dart';
@@ -274,7 +275,104 @@ class _AdminPaymentsScreenState extends State<AdminPaymentsScreen> {
           return ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 32),
             children: [
-              // ── Filters card ───────────────────────────────────────────
+
+              // ── Station revenue summary ────────────────────────────────
+              if (_stationFilter.isEmpty && stations.isNotEmpty) ...[
+                Card(
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.bar_chart,
+                                size: 16, color: cs.primary),
+                            const SizedBox(width: 8),
+                            const Text(
+                              'Revenue by station',
+                              style: TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        for (final station in stations) ...[
+                          Builder(builder: (_) {
+                            final stationPayments = all
+                                .where((x) =>
+                                    x.station.trim() == station &&
+                                    _dateMatches(x))
+                                .toList();
+
+                            // Group by currency
+                            final byCurrency =
+                                <String, int>{};
+                            for (final p in stationPayments) {
+                              final curr = p.currency.trim().isEmpty
+                                  ? currencyForStation(station)
+                                  : p.currency.trim();
+                              byCurrency[curr] =
+                                  (byCurrency[curr] ?? 0) + p.amount;
+                            }
+
+                            if (byCurrency.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+
+                            return Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(vertical: 4),
+                              child: Row(
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      station,
+                                      style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.end,
+                                    children: byCurrency.entries
+                                        .map((e) => Text(
+                                              '${e.key} ${_fmtAmount(e.value)}',
+                                              style: TextStyle(
+                                                fontSize: 13,
+                                                fontWeight: FontWeight.w700,
+                                                color: e.value >= 0
+                                                    ? Colors.green
+                                                    : Colors.red,
+                                              ),
+                                            ))
+                                        .toList(),
+                                  ),
+                                  const SizedBox(width: 4),
+                                  Text(
+                                    '${stationPayments.length} txn${stationPayments.length == 1 ? '' : 's'}',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      color: muted,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                          if (station != stations.last)
+                            const Divider(height: 8),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(14),

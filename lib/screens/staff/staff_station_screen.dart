@@ -898,6 +898,62 @@ class StaffStationScreen extends StatelessWidget {
                   },
                 ),
 
+                // Scan Receipt QR — scans the printed receipt QR (no OTP needed)
+                _tileButton(
+                  label: 'Scan Receipt QR',
+                  icon: Icons.qr_code_scanner,
+                  disabled: locked || expired,
+                  onTap: () async {
+                    final scanned = await Navigator.push<String>(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => const PickupQrScannerScreen(),
+                      ),
+                    );
+                    if (scanned == null || scanned.trim().isEmpty) return;
+                    if (!context.mounted) return;
+
+                    // Receipt QR encodes property code directly (not pickup|key|nonce)
+                    // If it looks like a pickup QR, reject it — wrong QR type
+                    if (scanned.trim().startsWith('pickup|')) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text(
+                            'This is a Pickup QR, not a Receipt QR. '
+                            'Use "Scan Pickup QR" instead.',
+                          ),
+                        ),
+                      );
+                      return;
+                    }
+
+                    final err =
+                        await PickupQrService.confirmPickupByReceiptQr(
+                      propertyCode: scanned.trim(),
+                    );
+                    final ok = err == null;
+
+                    await AuditService.log(
+                      action: ok
+                          ? 'staff_receipt_qr_pickup_ok'
+                          : 'staff_receipt_qr_pickup_failed',
+                      propertyKey: p.key.toString(),
+                      details: ok
+                          ? 'Pickup confirmed via receipt QR'
+                          : 'Receipt QR failed: $err',
+                    );
+
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          ok ? 'Pickup confirmed via receipt ✅' : err,
+                        ),
+                      ),
+                    );
+                  },
+                ),
+
                 // Admin tools
                 if (isAdmin)
                   PopupMenuButton<String>(

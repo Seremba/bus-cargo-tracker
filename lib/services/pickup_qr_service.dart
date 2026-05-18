@@ -132,7 +132,48 @@ class PickupQrService {
     return null;
   }
 
-  /// Sender/Staff can call this to refresh an expired QR session (OTP stays same).
+  /// Confirms pickup by scanning the property code from the printed receipt QR.
+  /// No OTP required — the receipt QR proves the receiver has the receipt.
+  /// Returns null on success, or an error message on failure.
+  static Future<String?> confirmPickupByReceiptQr({
+    required String propertyCode,
+  }) async {
+    final box = HiveService.propertyBox();
+
+    // Find property by code or tracking code
+    final code = propertyCode.trim();
+    if (code.isEmpty) return 'Invalid QR — no property code found.';
+
+    Property? p;
+    try {
+      p = box.values.firstWhere(
+        (x) =>
+            x.propertyCode.trim() == code ||
+            x.trackingCode.trim() == code ||
+            x.key.toString() == code,
+      );
+    } catch (_) {
+      return 'Property not found for code: $code';
+    }
+
+    if (p.status == PropertyStatus.pickedUp) {
+      return 'Already picked up ✅';
+    }
+
+    if (p.status != PropertyStatus.delivered) {
+      return 'Property is not yet delivered (status: ${p.status.name}).';
+    }
+
+    final now = DateTime.now();
+    p.qrConsumedAt = now;
+    p.staffPickupConfirmed = true;
+    p.receiverPickupConfirmed = true;
+    p.pickedUpAt = now;
+    p.status = PropertyStatus.pickedUp;
+
+    await p.save();
+    return null;
+  }
   static Future<bool> refreshForDelivered(Property p) async {
     final box = HiveService.propertyBox();
     final fresh = box.get(p.key) ?? p;

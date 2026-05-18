@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:qr_flutter/qr_flutter.dart';
 import 'package:share_plus/share_plus.dart';
 
 import '../../models/payment_record.dart';
@@ -66,6 +69,33 @@ class ReceiptShareService {
     );
   }
 
+  // ── QR helper ────────────────────────────────────────────────────────────
+
+  static Future<Uint8List?> _generateQrPng(String data,
+      {double size = 200}) async {
+    try {
+      final painter = QrPainter(
+        data: data,
+        version: QrVersions.auto,
+        errorCorrectionLevel: QrErrorCorrectLevel.H,
+        eyeStyle: const QrEyeStyle(
+          eyeShape: QrEyeShape.square,
+          color: ui.Color(0xFF000000),
+        ),
+        dataModuleStyle: const QrDataModuleStyle(
+          dataModuleShape: QrDataModuleShape.square,
+          color: ui.Color(0xFF000000),
+        ),
+      );
+      final image = await painter.toImage(size);
+      final byteData =
+          await image.toByteData(format: ui.ImageByteFormat.png);
+      return byteData?.buffer.asUint8List();
+    } catch (_) {
+      return null;
+    }
+  }
+
   // ── PDF ─────────────────────────────────────────────────────────────────
 
   static Future<void> shareAsPdf({
@@ -80,6 +110,15 @@ class ReceiptShareService {
     final method = _s(pay.method).isEmpty ? '—' : _s(pay.method);
     final txnRef = _s(pay.txnRef).isEmpty ? '—' : _s(pay.txnRef);
     final station = _s(pay.station).isEmpty ? '—' : _s(pay.station);
+
+    // Generate QR PNG for embedding
+    final qrData = code.isNotEmpty
+        ? code
+        : tracking.isNotEmpty
+            ? tracking
+            : null;
+    final qrPng =
+        qrData != null ? await _generateQrPng(qrData) : null;
 
     final doc = pw.Document();
 
@@ -131,6 +170,25 @@ class ReceiptShareService {
             pw.SizedBox(height: 6),
             pw.Divider(),
             pw.SizedBox(height: 8),
+
+            // QR code
+            if (qrPng != null) ...[
+              pw.Center(
+                child: pw.Text(
+                  'Scan at pickup:',
+                  style: const pw.TextStyle(fontSize: 8),
+                ),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Center(
+                child: pw.Image(
+                  pw.MemoryImage(qrPng),
+                  width: 100,
+                  height: 100,
+                ),
+              ),
+              pw.SizedBox(height: 8),
+            ],
 
             // Footer
             pw.Center(

@@ -29,6 +29,8 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
   final _txnRef = TextEditingController();
 
   String _method = 'cash';
+  String _currency = 'UGX';
+  String _originStation = '';
   bool _saving = false;
 
   bool _notifyReceiver = false;
@@ -52,18 +54,42 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final c = (p.receiverNotifyChannel).trim().toLowerCase();
     _notifyChannel = (c == 'whatsapp') ? 'whatsapp' : 'sms';
 
-    final matches = findRoutesByDestination(p.destination);
-    if (matches.isNotEmpty) {
+    // Auto-set currency based on desk officer's station
+    final stationName = (Session.currentStationName ?? '').trim();
+    _currency = currencyForStation(stationName);
+
+    // Determine cargo origin from the sender's station
+    final senderUserId = p.createdByUserId.trim();
+    String originStation = '';
+    if (senderUserId.isNotEmpty) {
+      try {
+        final sender = HiveService.userBox().values
+            .firstWhere((u) => u.id == senderUserId);
+        originStation = (sender.stationName ?? '').trim();
+      } catch (_) {
+        // Sender not on this device yet — fall back to routesForStation
+      }
+    }
+    _originStation = originStation;
+
+    // Auto-select route using cargo origin + desk station
+    final cargoRoutes = routesForCargo(
+      originStation: originStation,
+      deskStation: stationName,
+    );
+
+    if (cargoRoutes.isNotEmpty) {
       if (p.routeConfirmed && p.routeId.trim().isNotEmpty) {
         try {
-          _selectedRouteForConfirmation = routes.firstWhere(
-            (r) => r.id == p.routeId.trim(),
+          _selectedRouteForConfirmation = cargoRoutes.firstWhere(
+            (r) => r.id == p.routeId.trim() ||
+                r.id == '${p.routeId.trim()}_rev',
           );
         } catch (_) {
-          _selectedRouteForConfirmation = matches.first.route;
+          _selectedRouteForConfirmation = cargoRoutes.first;
         }
       } else {
-        _selectedRouteForConfirmation = matches.first.route;
+        _selectedRouteForConfirmation = cargoRoutes.first;
       }
     }
   }
@@ -114,7 +140,6 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     for (final m in routeMatches) {
       uniqueRoutes[m.route.id] = m.route;
     }
-    final candidateRoutes = uniqueRoutes.values.toList();
 
     return Scaffold(
       appBar: AppBar(centerTitle: true, title: const Text('Record Payment')),
@@ -193,7 +218,10 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                             labelText: 'Operational route',
                             border: OutlineInputBorder(),
                           ),
-                          items: candidateRoutes
+                          items: routesForCargo(
+                                  originStation: _originStation,
+                                  deskStation:
+                                      Session.currentStationName ?? '')
                               .map(
                                 (r) => DropdownMenuItem(
                                   value: r,
@@ -228,9 +256,9 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
                   FilteringTextInputFormatter.digitsOnly,
                   LengthLimitingTextInputFormatter(9),
                 ],
-                decoration: const InputDecoration(
-                  labelText: 'Amount (UGX)',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: 'Amount ($_currency)',
+                  border: const OutlineInputBorder(),
                 ),
                 validator: (v) {
                   final t = (v ?? '').trim();
@@ -535,7 +563,7 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
       final rec = await PaymentService.recordPayment(
         property: freshBeforePayment,
         amount: amount,
-        currency: 'UGX',
+        currency: _currency,
         method: _method,
         txnRef: _txnRef.text.trim(),
         station: station,

@@ -222,3 +222,106 @@ const routes = <AppRoute>[
     ],
   ),
 ];
+// ── Station utilities ───────────────────────────────────────────────────────
+
+/// Currency for a given station name.
+/// Falls back to UGX if the station is unknown.
+String currencyForStation(String stationName) {
+  final s = stationName.trim().toLowerCase();
+  if (s.contains('kigali') || s.contains('byumba') || s.contains('musanze') ||
+      s.contains('rubavu') || s.contains('gisenyi')) { return 'RWF'; }
+  if (s.contains('nairobi') || s.contains('kisumu') || s.contains('nakuru') ||
+      s.contains('bumala') || s.contains('busia (ke)')) { return 'KES'; }
+  if (s.contains('juba') || s.contains('nimule') || s.contains('magwi') ||
+      s.contains('lobonok') || s.contains('pageri')) { return 'SSP'; }
+  if (s.contains('goma') || s.contains('gisenyi') ||
+      s.contains('kyanika')) { return 'CDF'; }
+  return 'UGX';
+}
+
+/// Returns routes that pass through the given station,
+/// sorted so routes where the station is the DESTINATION appear first.
+List<AppRoute> routesForStation(String stationName) {
+  final s = stationName.trim().toLowerCase();
+  if (s.isEmpty) return routes.toList();
+
+  final passing = routes.where((r) => r.checkpoints.any(
+    (cp) => cp.name.toLowerCase().contains(s) || s.contains(cp.name.toLowerCase()),
+  )).toList();
+
+  // Sort: routes where station is the last checkpoint (destination) come first
+  passing.sort((a, b) {
+    final aIsEnd = a.checkpoints.last.name.toLowerCase().contains(s) ||
+        s.contains(a.checkpoints.last.name.toLowerCase());
+    final bIsEnd = b.checkpoints.last.name.toLowerCase().contains(s) ||
+        s.contains(b.checkpoints.last.name.toLowerCase());
+    if (aIsEnd && !bIsEnd) return -1;
+    if (!aIsEnd && bIsEnd) return 1;
+    return 0;
+  });
+
+  return passing.isEmpty ? routes.toList() : passing;
+}
+
+/// Generates a reversed version of a route.
+/// e.g. "Kampala → Kigali" becomes "Kigali → Kampala"
+AppRoute reverseRoute(AppRoute r) {
+  final reversed = r.checkpoints.reversed.toList();
+  final origin = reversed.first.name;
+  final dest = reversed.last.name;
+  return AppRoute(
+    id: '${r.id}_rev',
+    name: '$origin → $dest',
+    checkpoints: reversed,
+  );
+}
+
+/// Returns routes relevant to a desk officer based on the cargo's origin station.
+///
+/// Logic:
+/// - If origin == destination station → show all routes through that station
+/// - If origin is known → show routes FROM origin passing through station
+///   PLUS auto-generated reverse routes FROM station back to origin
+/// - Falls back to all routes if nothing matches
+List<AppRoute> routesForCargo({
+  required String originStation,
+  required String deskStation,
+}) {
+  final origin = originStation.trim().toLowerCase();
+  final desk = deskStation.trim().toLowerCase();
+
+  // If origin and desk are the same (cargo registered locally)
+  // show forward routes departing from this station
+  if (origin.isEmpty || origin == desk) {
+    return routesForStation(deskStation);
+  }
+
+  final result = <AppRoute>[];
+
+  for (final route in routes) {
+    final checkpointNames =
+        route.checkpoints.map((cp) => cp.name.toLowerCase()).toList();
+
+    final hasOrigin = checkpointNames
+        .any((n) => n.contains(origin) || origin.contains(n));
+    final hasDesk = checkpointNames
+        .any((n) => n.contains(desk) || desk.contains(n));
+
+    if (!hasOrigin || !hasDesk) continue;
+
+    final originIdx =
+        checkpointNames.indexWhere((n) => n.contains(origin) || origin.contains(n));
+    final deskIdx =
+        checkpointNames.indexWhere((n) => n.contains(desk) || desk.contains(n));
+
+    if (originIdx < deskIdx) {
+      // Cargo travels forward on this route (origin → ... → desk)
+      result.add(route);
+    } else {
+      // Cargo travels in reverse (desk → ... → origin becomes origin → ... → desk)
+      result.add(reverseRoute(route));
+    }
+  }
+
+  return result.isEmpty ? routesForStation(deskStation) : result;
+}

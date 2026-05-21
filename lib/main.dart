@@ -10,6 +10,7 @@ import 'models/audit_event.dart';
 import 'models/checkpoint.dart';
 import 'models/notification_item.dart';
 import 'models/outbound_message.dart';
+import 'services/printing/printer_settings_service.dart';
 import 'models/payment_record.dart';
 import 'models/printer_settings.dart';
 import 'models/property.dart';
@@ -91,6 +92,9 @@ void main() async {
 
   await HiveService.openAllBoxes();
   await SyncService.ensureDeviceId();
+
+  // Auto-detect POS printer brand and configure accordingly
+  await PrinterSettingsService.initAutoDetect();
 
   // API key injected via --dart-define and persisted to Hive on first run.
   const injectedKey = String.fromEnvironment('SYNC_API_KEY', defaultValue: '');

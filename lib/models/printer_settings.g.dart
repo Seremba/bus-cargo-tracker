@@ -20,19 +20,22 @@ class PrinterSettingsAdapter extends TypeAdapter<PrinterSettings> {
       bluetoothAddress: fields[0] as String?,
       bluetoothName: fields[1] as String?,
       paperMm: fields[2] as int,
+      printerTypeRaw: fields[3] == null ? 'auto' : fields[3] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, PrinterSettings obj) {
     writer
-      ..writeByte(3)
+      ..writeByte(4)
       ..writeByte(0)
       ..write(obj.bluetoothAddress)
       ..writeByte(1)
       ..write(obj.bluetoothName)
       ..writeByte(2)
-      ..write(obj.paperMm);
+      ..write(obj.paperMm)
+      ..writeByte(3)
+      ..write(obj.printerTypeRaw);
   }
 
   @override

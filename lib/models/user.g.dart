@@ -32,9 +32,9 @@ class UserAdapter extends TypeAdapter<User> {
       awaitingReassignment: fields[12] == null ? false : fields[12] as bool,
       routeHistory: fields[13] == null
           ? []
-          : (fields[13] as List)
-              .map((dynamic e) => (e as Map).cast<dynamic, dynamic>())
-              .toList(),
+          : (fields[13] as List?)
+              ?.map((dynamic e) => (e as Map).cast<dynamic, dynamic>())
+              ?.toList(),
     );
   }
 

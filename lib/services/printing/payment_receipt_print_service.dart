@@ -1,8 +1,10 @@
 import '../../models/payment_record.dart';
+import '../../models/printer_settings.dart';
 import '../../models/property.dart';
 import 'escpos_receipt_builder.dart';
 import 'printer_service.dart';
 import 'printer_settings_service.dart';
+import 'urovo_printer_service.dart';
 
 class PaymentReceiptPrintService {
   PaymentReceiptPrintService._();
@@ -12,8 +14,29 @@ class PaymentReceiptPrintService {
     required Property property,
   }) async {
     final settings = PrinterSettingsService.getOrCreate();
+    final effective = await PrinterSettingsService.effectiveType();
+
+    // ── Urovo built-in printer ───────────────────────────────────────────
+    if (effective == PrinterType.urovoInternal) {
+      return UrovoPrinterService.printReceipt(
+        pay: record,
+        property: property,
+      );
+    }
+
+    // ── Sunmi built-in (future) ──────────────────────────────────────────
+    // if (effective == PrinterType.sunmiInternal) {
+    //   return SunmiPrinterService.printReceipt(pay: record, property: property);
+    // }
+
+    // ── Serial internal (future) ─────────────────────────────────────────
+    // if (effective == PrinterType.serialInternal) {
+    //   return SerialPrinterService.printReceipt(pay: record, property: property);
+    // }
+
+    // ── Bluetooth printer ────────────────────────────────────────────────
     final savedAddr = (settings.bluetoothAddress ?? '').trim();
-    if (savedAddr.isEmpty) return null;
+    if (savedAddr.isEmpty) return null; // not configured
 
     final bytes = await EscPosReceiptBuilder.buildPaymentReceipt(
       pay: record,
@@ -21,11 +44,9 @@ class PaymentReceiptPrintService {
       paperMm: settings.paperMm,
     );
 
-    final ok = await PrinterService.printBytesBluetoothSafe(
+    return PrinterService.printBytesBluetoothSafe(
       bytes,
       tryReconnect: true,
     );
-
-    return ok; // true/false
   }
 }

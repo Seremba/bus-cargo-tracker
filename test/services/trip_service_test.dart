@@ -59,7 +59,7 @@ void main() {
     }
   });
 
-  Trip _makeTrip({
+  Trip makeTrip({
     required String tripId,
     int aggregateVersion = 1,
     int lastCheckpointIndex = -1,
@@ -99,7 +99,7 @@ void main() {
     );
   }
 
-  SyncEvent _makeCheckpointEvent({
+  SyncEvent makeCheckpointEvent({
     required String tripId,
     required int checkpointIndex,
     required int aggregateVersion,
@@ -126,7 +126,7 @@ void main() {
     );
   }
 
-  SyncEvent _makeEndedEvent({
+  SyncEvent makeEndedEvent({
     required String tripId,
     required int aggregateVersion,
     String endedAt = '2026-03-10T11:30:00Z',
@@ -152,7 +152,7 @@ void main() {
     );
   }
 
-  SyncEvent _makeCancelledEvent({
+  SyncEvent makeCancelledEvent({
     required String tripId,
     required int aggregateVersion,
     String endedAt = '2026-03-10T11:45:00Z',
@@ -177,22 +177,22 @@ void main() {
     );
   }
 
-  Future<void> _saveTrip(Trip trip) async {
+  Future<void> saveTrip(Trip trip) async {
     await HiveService.tripBox().add(trip);
   }
 
-  Trip _getTrip(String tripId) {
+  Trip getTrip(String tripId) {
     return HiveService.tripBox().values.firstWhere(
       (t) => t.tripId == tripId,
-    ) as Trip;
+    );
   }
 
   group('TripService sync replay', () {
     test('applies checkpoint replay once', () async {
-      final trip = _makeTrip(tripId: 'trip-1', aggregateVersion: 1);
-      await _saveTrip(trip);
+      final trip = makeTrip(tripId: 'trip-1', aggregateVersion: 1);
+      await saveTrip(trip);
 
-      final event = _makeCheckpointEvent(
+      final event = makeCheckpointEvent(
         tripId: 'trip-1',
         checkpointIndex: 0,
         aggregateVersion: 2,
@@ -200,27 +200,27 @@ void main() {
 
       await TripService.applyTripCheckpointReachedFromSync(event);
 
-      final updated = _getTrip('trip-1');
+      final updated = getTrip('trip-1');
       expect(updated.lastCheckpointIndex, 0);
       expect(updated.aggregateVersion, 2);
       expect(updated.checkpoints[0].reachedAt, isNotNull);
 
       await TripService.applyTripCheckpointReachedFromSync(event);
 
-      final replayedAgain = _getTrip('trip-1');
+      final replayedAgain = getTrip('trip-1');
       expect(replayedAgain.lastCheckpointIndex, 0);
       expect(replayedAgain.aggregateVersion, 2);
     });
 
     test('ignores stale checkpoint replay by aggregate version', () async {
-      final trip = _makeTrip(
+      final trip = makeTrip(
         tripId: 'trip-2',
         aggregateVersion: 5,
         lastCheckpointIndex: 1,
       );
-      await _saveTrip(trip);
+      await saveTrip(trip);
 
-      final staleEvent = _makeCheckpointEvent(
+      final staleEvent = makeCheckpointEvent(
         tripId: 'trip-2',
         checkpointIndex: 2,
         aggregateVersion: 4,
@@ -228,21 +228,21 @@ void main() {
 
       await TripService.applyTripCheckpointReachedFromSync(staleEvent);
 
-      final updated = _getTrip('trip-2');
+      final updated = getTrip('trip-2');
       expect(updated.aggregateVersion, 5);
       expect(updated.lastCheckpointIndex, 1);
       expect(updated.checkpoints[2].reachedAt, isNull);
     });
 
     test('ignores backward checkpoint replay even if version is newer', () async {
-      final trip = _makeTrip(
+      final trip = makeTrip(
         tripId: 'trip-3',
         aggregateVersion: 2,
         lastCheckpointIndex: 2,
       );
-      await _saveTrip(trip);
+      await saveTrip(trip);
 
-      final backwardEvent = _makeCheckpointEvent(
+      final backwardEvent = makeCheckpointEvent(
         tripId: 'trip-3',
         checkpointIndex: 1,
         aggregateVersion: 6,
@@ -250,20 +250,20 @@ void main() {
 
       await TripService.applyTripCheckpointReachedFromSync(backwardEvent);
 
-      final updated = _getTrip('trip-3');
+      final updated = getTrip('trip-3');
       expect(updated.aggregateVersion, 2);
       expect(updated.lastCheckpointIndex, 2);
     });
 
     test('ignores same checkpoint replay even if version is newer', () async {
-      final trip = _makeTrip(
+      final trip = makeTrip(
         tripId: 'trip-4',
         aggregateVersion: 2,
         lastCheckpointIndex: 1,
       );
-      await _saveTrip(trip);
+      await saveTrip(trip);
 
-      final duplicateIndexEvent = _makeCheckpointEvent(
+      final duplicateIndexEvent = makeCheckpointEvent(
         tripId: 'trip-4',
         checkpointIndex: 1,
         aggregateVersion: 3,
@@ -273,13 +273,13 @@ void main() {
         duplicateIndexEvent,
       );
 
-      final updated = _getTrip('trip-4');
+      final updated = getTrip('trip-4');
       expect(updated.aggregateVersion, 2);
       expect(updated.lastCheckpointIndex, 1);
     });
 
     test('ignores checkpoint replay for missing trip', () async {
-      final event = _makeCheckpointEvent(
+      final event = makeCheckpointEvent(
         tripId: 'missing-trip',
         checkpointIndex: 0,
         aggregateVersion: 2,
@@ -291,8 +291,8 @@ void main() {
     });
 
     test('ignores malformed checkpoint replay', () async {
-      final trip = _makeTrip(tripId: 'trip-5', aggregateVersion: 1);
-      await _saveTrip(trip);
+      final trip = makeTrip(tripId: 'trip-5', aggregateVersion: 1);
+      await saveTrip(trip);
 
       final malformed = SyncEvent(
         eventId: 'evt-bad',
@@ -315,49 +315,49 @@ void main() {
 
       await TripService.applyTripCheckpointReachedFromSync(malformed);
 
-      final updated = _getTrip('trip-5');
+      final updated = getTrip('trip-5');
       expect(updated.aggregateVersion, 1);
       expect(updated.lastCheckpointIndex, -1);
       expect(updated.checkpoints[0].reachedAt, isNull);
     });
 
     test('applies trip ended replay safely', () async {
-      final trip = _makeTrip(
+      final trip = makeTrip(
         tripId: 'trip-6',
         aggregateVersion: 2,
         status: TripStatus.active,
       );
-      await _saveTrip(trip);
+      await saveTrip(trip);
 
-      final event = _makeEndedEvent(
+      final event = makeEndedEvent(
         tripId: 'trip-6',
         aggregateVersion: 3,
       );
 
       await TripService.applyTripEndedFromSync(event);
 
-      final updated = _getTrip('trip-6');
+      final updated = getTrip('trip-6');
       expect(updated.status, TripStatus.ended);
       expect(updated.endedAt, isNotNull);
       expect(updated.aggregateVersion, 3);
     });
 
     test('applies trip cancelled replay as cancelled', () async {
-      final trip = _makeTrip(
+      final trip = makeTrip(
         tripId: 'trip-7',
         aggregateVersion: 2,
         status: TripStatus.active,
       );
-      await _saveTrip(trip);
+      await saveTrip(trip);
 
-      final event = _makeCancelledEvent(
+      final event = makeCancelledEvent(
         tripId: 'trip-7',
         aggregateVersion: 3,
       );
 
       await TripService.applyTripCancelledFromSync(event);
 
-      final updated = _getTrip('trip-7');
+      final updated = getTrip('trip-7');
       expect(updated.status, TripStatus.cancelled);
       expect(updated.endedAt, isNotNull);
       expect(updated.aggregateVersion, 3);

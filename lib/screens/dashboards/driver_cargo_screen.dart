@@ -633,7 +633,8 @@ class _DriverCargoScreenState extends State<DriverCargoScreen>
                 .where(
                   (x) =>
                       x.status == PropertyItemStatus.loaded &&
-                      x.tripId.trim().isEmpty,
+                      x.tripId.trim().isEmpty &&
+                      x.driverUserId.trim() == currentDriverId.trim(),
                 )
                 .length;
             final remaining = items
@@ -757,6 +758,7 @@ class _DriverCargoScreenState extends State<DriverCargoScreen>
                         child: ElevatedButton(
                           onPressed: (_startingTrip ||
                                   readyItems <= 0 ||
+                                  _checkingLocation ||
                                   _locationStatus != LocationStatus.ready)
                               ? null
                               : _startAssignedRouteTrip,
@@ -771,9 +773,11 @@ class _DriverCargoScreenState extends State<DriverCargoScreen>
                           child: Text(
                             _startingTrip
                                 ? 'Starting...'
-                                : _locationStatus != LocationStatus.ready
-                                    ? 'Enable Location to Start'
-                                    : 'Start Trip',
+                                : _checkingLocation
+                                    ? 'Checking location...'
+                                    : _locationStatus != LocationStatus.ready
+                                        ? 'Enable Location to Start'
+                                        : 'Start Trip',
                             style: const TextStyle(
                               fontWeight: FontWeight.w700,
                               fontSize: 15,

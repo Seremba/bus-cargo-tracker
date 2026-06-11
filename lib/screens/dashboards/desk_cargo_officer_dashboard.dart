@@ -860,10 +860,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                   0,
                   (sum, x) => sum + x.amount,
                 );
-                final allTotal = stationItems.fold(
-                  0,
-                  (sum, x) => sum + x.amount,
-                );
 
                 if (stationItems.isEmpty) {
                   return Padding(
@@ -911,14 +907,6 @@ class _DeskCargoOfficerDashboardState extends State<DeskCargoOfficerDashboard> {
                               amount: todayTotal,
                               count: todayItems.length,
                               color: AppColors.primary,
-                            ),
-                            const SizedBox(height: 6),
-                            _summaryRow(
-                              icon: Icons.history_outlined,
-                              label: 'All time',
-                              amount: allTotal,
-                              count: stationItems.length,
-                              color: Colors.blue,
                             ),
                           ],
                         ),

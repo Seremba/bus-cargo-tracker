@@ -104,7 +104,9 @@ class _AdminDashboardState extends State<AdminDashboard> {
 
   @override
   Widget build(BuildContext context) {
-    if (!RoleGuard.hasRole(UserRole.admin)) {
+    final isPartnerAdmin =
+        Session.currentRole == UserRole.partnerAdmin;
+    if (!RoleGuard.hasRole(UserRole.admin) && !isPartnerAdmin) {
       return const Scaffold(body: Center(child: Text('Not authorized')));
     }
 
@@ -250,6 +252,33 @@ class _AdminDashboardState extends State<AdminDashboard> {
     return PopScope(
       canPop: false,
       child: Scaffold(
+        bottomNavigationBar: isPartnerAdmin
+            ? Container(
+                color: Colors.blue.shade700,
+                padding: const EdgeInsets.symmetric(
+                    vertical: 8, horizontal: 14),
+                child: SafeArea(
+                  top: false,
+                  child: Row(
+                    children: [
+                      const Icon(Icons.visibility_outlined,
+                          color: Colors.white, size: 16),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'View-only — ${Session.currentPartnerName.isNotEmpty ? Session.currentPartnerName : "Partner"} Rwanda routes',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            : null,
         appBar: AppBar(
           elevation: 1,
           centerTitle: false,
@@ -356,9 +385,18 @@ class _AdminDashboardState extends State<AdminDashboard> {
             final todayStart = DateTime(now.year, now.month, now.day);
 
             // ── KPI calculations ──────────────────────────────────────
-            final allProperties = HiveService.propertyBox().values.toList();
-            final allPayments = HiveService.paymentBox().values.toList();
-            final allTrips = HiveService.tripBox().values.toList();
+            final allProperties = HiveService.propertyBox().values
+                .where((p) => Session.canAccessRoute(p.routeId))
+                .toList();
+            final allPayments = HiveService.paymentBox().values
+                .where((p) =>
+                    !isPartnerAdmin ||
+                    allProperties.any(
+                        (prop) => prop.key.toString() == p.propertyKey))
+                .toList();
+            final allTrips = HiveService.tripBox().values
+                .where((t) => Session.canAccessRoute(t.routeId))
+                .toList();
             final outboundBox = HiveService.outboundMessageBox();
 
             // Revenue today
@@ -759,24 +797,25 @@ class _AdminDashboardState extends State<AdminDashboard> {
                   title: 'Users',
                   icon: Icons.people_outline,
                   children: [
-                    actionTile(
-                      icon: Icons.person_add_outlined,
-                      title: 'Create User',
-                      subtitle: 'Add staff, driver, desk officer',
-                      onTap: () async {
-                        final createdUser = await Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => const AdminCreateUserScreen(),
-                          ),
-                        );
-                        if (createdUser != null && context.mounted) {
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('User created ✅')),
+                    if (!isPartnerAdmin)
+                      actionTile(
+                        icon: Icons.person_add_outlined,
+                        title: 'Create User',
+                        subtitle: 'Add staff, driver, desk officer',
+                        onTap: () async {
+                          final createdUser = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (_) => const AdminCreateUserScreen(),
+                            ),
                           );
-                        }
-                      },
-                    ),
+                          if (createdUser != null && context.mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('User created ✅')),
+                            );
+                          }
+                        },
+                      ),
                     actionTile(
                       icon: Icons.manage_accounts_outlined,
                       title: 'Manage Users',

@@ -2,7 +2,7 @@ import 'package:hive/hive.dart';
 
 part 'user_role.g.dart';
 
-@HiveType(typeId: 8) // pick a UNIQUE typeId not used by other adapters
+@HiveType(typeId: 8)
 enum UserRole {
   @HiveField(0)
   sender,
@@ -17,7 +17,9 @@ enum UserRole {
   admin,
 
   @HiveField(4)
-  deskCargoOfficer, 
+  deskCargoOfficer,
+
+  /// Partner company admin (e.g. Shaft Ltd) — scoped to specific routes only.
+  @HiveField(5)
+  partnerAdmin,
 }
-
-

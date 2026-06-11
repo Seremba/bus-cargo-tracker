@@ -8,12 +8,29 @@ class Session {
   static String? currentAssignedRouteId;
   static String? currentAssignedRouteName;
 
+  /// Partner company name e.g. "Shaft Ltd" — empty for regular users.
+  static String currentPartnerName = '';
+
+  /// Route IDs this partnerAdmin is restricted to — empty = no restriction.
+  static List<String> scopedRouteIds = [];
+
+  /// Whether current user is a partner admin with route restrictions.
+  static bool get isPartnerAdmin =>
+      currentRole == UserRole.partnerAdmin && scopedRouteIds.isNotEmpty;
+
+  /// Returns true if the given routeId is accessible to the current user.
+  static bool canAccessRoute(String routeId) {
+    if (!isPartnerAdmin) return true;
+    return scopedRouteIds.contains(routeId) ||
+        scopedRouteIds.contains('${routeId}_rev');
+  }
+
   static DateTime? lastActivityAt;
 
-  /// Role-aware inactivity timeouts.
   static Duration timeoutForRole(UserRole? role) {
     switch (role) {
       case UserRole.admin:
+      case UserRole.partnerAdmin:
       case UserRole.staff:
       case UserRole.deskCargoOfficer:
         return const Duration(minutes: 15);
@@ -34,7 +51,7 @@ class Session {
   static bool get isExpired {
     if (currentUserId == null) return false;
     final last = lastActivityAt;
-    if (last == null) return true; // session exists but was never touched
+    if (last == null) return true;
     return DateTime.now().isAfter(last.add(timeoutForRole(currentRole)));
   }
 
@@ -45,6 +62,8 @@ class Session {
     currentStationName = null;
     currentAssignedRouteId = null;
     currentAssignedRouteName = null;
+    currentPartnerName = '';
+    scopedRouteIds = [];
     lastActivityAt = null;
   }
 }

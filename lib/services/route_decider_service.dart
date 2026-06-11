@@ -24,6 +24,8 @@ class RouteDeciderService {
         return const DriverDashboard();
       case UserRole.admin:
         return const AdminDashboard();
+      case UserRole.partnerAdmin:
+        return const AdminDashboard();
       case UserRole.deskCargoOfficer:
         return const DeskCargoOfficerDashboard();
     }

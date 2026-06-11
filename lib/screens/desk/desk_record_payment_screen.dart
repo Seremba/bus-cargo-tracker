@@ -54,9 +54,7 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
     final c = (p.receiverNotifyChannel).trim().toLowerCase();
     _notifyChannel = (c == 'whatsapp') ? 'whatsapp' : 'sms';
 
-    // Auto-set currency based on desk officer's station
     final stationName = (Session.currentStationName ?? '').trim();
-    _currency = currencyForStation(stationName);
 
     // Determine cargo origin from the sender's station
     final senderUserId = p.createdByUserId.trim();
@@ -67,10 +65,18 @@ class _DeskRecordPaymentScreenState extends State<DeskRecordPaymentScreen> {
             .firstWhere((u) => u.id == senderUserId);
         originStation = (sender.stationName ?? '').trim();
       } catch (_) {
-        // Sender not on this device yet — fall back to routesForStation
+        // Sender not on this device yet — fall back to desk station
       }
     }
     _originStation = originStation;
+
+    // Currency follows WHERE THE CARGO COMES FROM (origin station).
+    // Rwanda→Uganda: cargo from Kigali → RWF
+    // Uganda→Rwanda: cargo from Kampala → UGX
+    // Falls back to desk station currency if origin unknown.
+    final effectiveOrigin =
+        originStation.isNotEmpty ? originStation : stationName;
+    _currency = currencyForStation(effectiveOrigin);
 
     // Auto-select route using cargo origin + desk station
     final cargoRoutes = routesForCargo(

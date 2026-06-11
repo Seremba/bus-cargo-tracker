@@ -226,7 +226,7 @@ class AuthService {
     if (role == UserRole.admin && !allowAdminCreation) return null;
 
     if (requireAdminForNonSender && role != UserRole.sender) {
-      if (!RoleGuard.hasRoleVerified(UserRole.admin)) return null;
+      { if (!RoleGuard.hasRoleVerified(UserRole.admin)) return null; }
     }
 
     if (_requiresStation(role)) {

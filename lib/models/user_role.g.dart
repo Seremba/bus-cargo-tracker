@@ -23,6 +23,8 @@ class UserRoleAdapter extends TypeAdapter<UserRole> {
         return UserRole.admin;
       case 4:
         return UserRole.deskCargoOfficer;
+      case 5:
+        return UserRole.partnerAdmin;
       default:
         return UserRole.sender;
     }
@@ -45,6 +47,9 @@ class UserRoleAdapter extends TypeAdapter<UserRole> {
         break;
       case UserRole.deskCargoOfficer:
         writer.writeByte(4);
+        break;
+      case UserRole.partnerAdmin:
+        writer.writeByte(5);
         break;
     }
   }

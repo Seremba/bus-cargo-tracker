@@ -42,6 +42,8 @@ class SessionService {
     Session.currentStationName = user.stationName;
     Session.currentAssignedRouteId = user.assignedRouteId;
     Session.currentAssignedRouteName = user.assignedRouteName;
+    Session.currentPartnerName = user.partnerName;
+    Session.scopedRouteIds = List<String>.from(user.scopedRouteIds);
 
     // S5: record login time as first activity
     Session.touch();
@@ -83,9 +85,12 @@ class SessionService {
     // Session is still valid — fully populate and refresh timestamp
     Session.currentUserId = user.id;
     Session.currentUserFullName = user.fullName;
+    Session.currentRole = user.role;
     Session.currentStationName = user.stationName;
     Session.currentAssignedRouteId = user.assignedRouteId;
     Session.currentAssignedRouteName = user.assignedRouteName;
+    Session.currentPartnerName = user.partnerName;
+    Session.scopedRouteIds = List<String>.from(user.scopedRouteIds);
 
     Session.touch();
     await _persistActivity();

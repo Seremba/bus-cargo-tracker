@@ -50,6 +50,16 @@ class User extends HiveObject {
   @HiveField(13, defaultValue: [])
   List<Map> routeHistory;
 
+  /// Partner company name e.g. "Shaft Ltd" — shown on receipts for
+  /// partner-scoped admins and their stations.
+  @HiveField(14, defaultValue: '')
+  String partnerName;
+
+  /// Route IDs this partnerAdmin is restricted to.
+  /// Empty list = no restriction (regular admin).
+  @HiveField(15, defaultValue: [])
+  List<String> scopedRouteIds;
+
   User({
     required this.id,
     required this.fullName,
@@ -65,5 +75,8 @@ class User extends HiveObject {
     this.phoneVerified = false,
     this.awaitingReassignment = false,
     List<Map>? routeHistory,
-  }) : routeHistory = routeHistory ?? [];
+    this.partnerName = '',
+    List<String>? scopedRouteIds,
+  })  : routeHistory = routeHistory ?? [],
+        scopedRouteIds = scopedRouteIds ?? [];
 }

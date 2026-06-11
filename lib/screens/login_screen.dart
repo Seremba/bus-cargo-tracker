@@ -593,6 +593,7 @@ class _LoginScreenState extends State<LoginScreen> {
         destination = const DriverDashboard();
         break;
       case UserRole.admin:
+      case UserRole.partnerAdmin:
         destination = const AdminDashboard();
         break;
       case UserRole.deskCargoOfficer:

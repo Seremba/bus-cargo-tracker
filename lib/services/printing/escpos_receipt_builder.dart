@@ -12,8 +12,9 @@ class EscPosReceiptBuilder {
 
   static Future<Uint8List> buildPaymentReceipt({
     required PaymentRecord pay,
-    Property? property, // optional for code + tracking
+    Property? property,
     required int paperMm,
+    String partnerName = '',
   }) async {
     final profile = await CapabilityProfile.load();
     final gen = Generator(
@@ -22,16 +23,32 @@ class EscPosReceiptBuilder {
     );
 
     final List<int> bytes = [];
+    final hasPartner = partnerName.trim().isNotEmpty;
 
     bytes.addAll(gen.reset());
 
-    // Header
-    bytes.addAll(
-      gen.text(
-        'UNEX LOGISTICS',
-        styles: const PosStyles(align: PosAlign.center, bold: true),
-      ),
-    );
+    // Header — show partner name if set, with UNEx as powered by
+    if (hasPartner) {
+      bytes.addAll(
+        gen.text(
+          partnerName.trim().toUpperCase(),
+          styles: const PosStyles(align: PosAlign.center, bold: true),
+        ),
+      );
+      bytes.addAll(
+        gen.text(
+          'Powered by UNEx Logistics',
+          styles: const PosStyles(align: PosAlign.center),
+        ),
+      );
+    } else {
+      bytes.addAll(
+        gen.text(
+          'UNEX LOGISTICS',
+          styles: const PosStyles(align: PosAlign.center, bold: true),
+        ),
+      );
+    }
     bytes.addAll(
       gen.text(
         'PAYMENT RECEIPT',

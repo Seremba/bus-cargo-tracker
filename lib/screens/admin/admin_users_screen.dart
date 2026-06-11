@@ -67,6 +67,12 @@ class _AdminUsersScreenState extends State<AdminUsersScreen> {
           bg: const Color(0xFFF3E5F5),
           fg: const Color(0xFF6A1B9A),
         );
+      case UserRole.partnerAdmin:
+        return (
+          label: 'Partner Admin',
+          bg: const Color(0xFFE0F2F1),
+          fg: const Color(0xFF00695C),
+        );
     }
   }
 

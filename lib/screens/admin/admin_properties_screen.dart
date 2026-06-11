@@ -7,6 +7,7 @@ import '../../models/property.dart';
 import '../../models/property_status.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
+import '../../services/session.dart';
 import '../../services/user_resolver.dart';
 import '../../theme/status_colors.dart';
 import '../../services/property_service.dart';
@@ -102,7 +103,9 @@ class _AdminPropertiesScreenState extends State<AdminPropertiesScreen> {
               .toList()
             ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
 
-          final allItems = propertyBox.values.toList();
+          final allItems = propertyBox.values
+              .where((p) => Session.canAccessRoute(p.routeId))
+              .toList();
 
           if (allItems.isEmpty) {
             return const Center(child: Text('No properties yet.'));

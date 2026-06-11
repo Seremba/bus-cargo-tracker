@@ -10,6 +10,7 @@ import '../../models/user_role.dart';
 
 import '../../services/auth_service.dart';
 import '../../services/hive_service.dart';
+import '../../services/session.dart';
 import '../../services/trip_service.dart';
 import '../../services/role_guard.dart';
 
@@ -225,7 +226,12 @@ class AdminTripDetailsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!RoleGuard.hasRole(UserRole.admin)) return _notAuthorized();
+    if (!RoleGuard.hasRole(UserRole.admin) &&
+        Session.currentRole != UserRole.partnerAdmin) {
+      return _notAuthorized();
+    }
+
+    final isReadOnly = Session.currentRole == UserRole.partnerAdmin;
 
     final tripBox = HiveService.tripBox();
     final propertyBox = HiveService.propertyBox();
@@ -278,7 +284,7 @@ class AdminTripDetailsScreen extends StatelessWidget {
               ],
             ),
             actions: [
-              if (refreshedTrip.status == TripStatus.active) ...[
+              if (refreshedTrip.status == TripStatus.active && !isReadOnly) ...[
                 IconButton(
                   tooltip: 'End Trip',
                   icon: const Icon(Icons.stop_circle_outlined),

@@ -54,11 +54,13 @@ class UrovoPrinterService {
   static Future<bool> printReceipt({
     required PaymentRecord pay,
     required Property property,
+    String partnerName = '',
   }) async {
     try {
       final result = await _printer.open();
       if (result != 0) return false;
 
+      final hasPartner = partnerName.trim().isNotEmpty;
       final code = _s(property.propertyCode).isEmpty
           ? _s(pay.propertyKey)
           : property.propertyCode;
@@ -78,7 +80,14 @@ class UrovoPrinterService {
       int y = 0;
 
       // ── Header ──────────────────────────────────────────────────
-      y = await _centeredBoldText('UNEX LOGISTICS', y, size: 32);
+      if (hasPartner) {
+        y = await _centeredBoldText(
+            partnerName.trim().toUpperCase(), y, size: 32);
+        y += 2;
+        y = await _centeredText('Powered by UNEx Logistics', y, size: 20);
+      } else {
+        y = await _centeredBoldText('UNEX LOGISTICS', y, size: 32);
+      }
       y += 4;
       y = await _centeredText('PAYMENT RECEIPT', y, size: 24);
       y += 8;

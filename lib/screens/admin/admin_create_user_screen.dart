@@ -230,6 +230,11 @@ class _AdminCreateUserScreenState extends State<AdminCreateUserScreen> {
                     child: Text('Desk Cargo Officer',
                         maxLines: 1, overflow: TextOverflow.ellipsis),
                   ),
+                  DropdownMenuItem(
+                    value: UserRole.partnerAdmin,
+                    child: Text('Partner Admin (view-only)',
+                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                  ),
                 ],
                 onChanged: (v) {
                   setState(() {

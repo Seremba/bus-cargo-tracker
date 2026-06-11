@@ -7,6 +7,7 @@ import '../../models/trip_status.dart';
 import '../../models/user_role.dart';
 import '../../services/hive_service.dart';
 import '../../services/role_guard.dart';
+import '../../services/session.dart';
 
 
 import '../../theme/status_colors.dart';
@@ -90,7 +91,9 @@ class AdminTripsScreen extends StatelessWidget {
         body: ValueListenableBuilder(
           valueListenable: tripBox.listenable(),
           builder: (context, Box<Trip> box, _) {
-            final allTrips = box.values.toList()
+            final allTrips = box.values
+                .where((t) => Session.canAccessRoute(t.routeId))
+                .toList()
               ..sort((a, b) => b.startedAt.compareTo(a.startedAt));
 
             List<Trip> byStatus(TripStatus s) =>

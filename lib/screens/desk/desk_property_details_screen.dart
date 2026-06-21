@@ -60,10 +60,23 @@ class _DeskPropertyDetailsScreenState
   Future<Map<String, String>?> _pickDriver(
       BuildContext context, String routeId) async {
     final userBox = HiveService.userBox();
+    final cleanRouteId = routeId.trim();
+
+    // Match drivers on the exact route OR its forward/reverse counterpart,
+    // since routeId may carry a '_rev' suffix for return-leg cargo.
+    bool matchesRoute(String? driverRouteId) {
+      final did = (driverRouteId ?? '').trim();
+      if (did.isEmpty) return false;
+      if (did == cleanRouteId) return true;
+      if (did == '${cleanRouteId}_rev') return true;
+      if ('${did}_rev' == cleanRouteId) return true;
+      return false;
+    }
+
     final drivers = userBox.values
         .where((u) =>
             u.role == UserRole.driver &&
-            (u.assignedRouteId ?? '').trim() == routeId.trim())
+            matchesRoute(u.assignedRouteId))
         .toList()
       ..sort((a, b) => a.fullName.compareTo(b.fullName));
 
@@ -790,6 +803,31 @@ class _DeskPropertyDetailsScreenState
                               if (!ctx.mounted) return;
                               if (selectedNos == null ||
                                   selectedNos.isEmpty) { return; }
+
+                              // Route must be confirmed (via payment) before loading
+                              if (p.routeId.trim().isEmpty) {
+                                if (!ctx.mounted) return;
+                                await showDialog<void>(
+                                  context: ctx,
+                                  builder: (_) => AlertDialog(
+                                    title: const Text('Route not confirmed'),
+                                    content: const Text(
+                                      'This property\'s route has not been '
+                                      'confirmed yet. Please record payment '
+                                      'first — this confirms the route and '
+                                      'currency before cargo can be loaded.',
+                                    ),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () =>
+                                            Navigator.pop(ctx),
+                                        child: const Text('OK'),
+                                      ),
+                                    ],
+                                  ),
+                                );
+                                return;
+                              }
 
                               // ── Driver picker ──────────────────────
                               if (!ctx.mounted) return;

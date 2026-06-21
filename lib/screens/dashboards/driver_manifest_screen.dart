@@ -71,10 +71,21 @@ class DriverManifestScreen extends StatelessWidget {
           final currentDriverId =
               (Session.currentUserId ?? '').trim();
 
+          // Accept both the assigned route ID and its reverse-route
+          // counterpart for cargo loaded on the return leg.
+          bool matchesAssignedRoute(String propertyRouteId) {
+            final pid = propertyRouteId.trim();
+            final aid = assignedRouteId.trim();
+            if (aid.isEmpty) return true;
+            if (pid == aid) return true;
+            if (pid == '${aid}_rev') return true;
+            if ('${pid}_rev' == aid) return true;
+            return false;
+          }
+
           // Properties currently on board
           final onBoard = pBox.values.where((p) {
-            if (assignedRouteId.isNotEmpty &&
-                p.routeId != assignedRouteId) { return false; }
+            if (!matchesAssignedRoute(p.routeId)) return false;
             // On active trip — isolated by tripId
             if (activeTripId != null && activeTripId.isNotEmpty) {
               if ((p.tripId ?? '').trim() == activeTripId.trim()) {
@@ -473,8 +484,19 @@ class DriverManifestScreen extends StatelessWidget {
     final activeTripId = activeTrip?.tripId;
 
     final currentDriverId = (Session.currentUserId ?? '').trim();
+
+    bool matchesAssignedRoute(String propertyRouteId) {
+      final pid = propertyRouteId.trim();
+      final aid = assignedRouteId.trim();
+      if (aid.isEmpty) return true;
+      if (pid == aid) return true;
+      if (pid == '${aid}_rev') return true;
+      if ('${pid}_rev' == aid) return true;
+      return false;
+    }
+
     final onBoard = (pBox.values as Iterable<Property>).where((p) {
-      if (assignedRouteId.isNotEmpty && p.routeId != assignedRouteId) {
+      if (!matchesAssignedRoute(p.routeId)) {
         return false;
       }
       if (activeTripId != null && activeTripId.isNotEmpty) {

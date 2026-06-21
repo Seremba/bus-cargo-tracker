@@ -607,8 +607,20 @@ class _DriverCargoScreenState extends State<DriverCargoScreen>
 
           final currentDriverId = Session.currentUserId ?? '';
 
+          // Accept both the assigned route ID and its reverse-route
+          // counterpart, since cargo loaded for the return leg may have
+          // been saved with the '_rev' suffixed route ID.
+          bool matchesAssignedRoute(String propertyRouteId) {
+            final pid = propertyRouteId.trim();
+            final aid = (assignedRouteId).trim();
+            if (pid == aid) return true;
+            if (pid == '${aid}_rev') return true;
+            if ('${pid}_rev' == aid) return true;
+            return false;
+          }
+
           final routeProperties = pBox.values.where((p) {
-            if (p.routeId != assignedRouteId) return false;
+            if (!matchesAssignedRoute(p.routeId)) return false;
             if (activeTripId != null && activeTripId.isNotEmpty) {
               // During active trip — isolated by tripId
               return (p.tripId ?? '').trim() == activeTripId.trim();

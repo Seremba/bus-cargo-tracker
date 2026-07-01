@@ -60,6 +60,12 @@ class User extends HiveObject {
   @HiveField(15, defaultValue: [])
   List<String> scopedRouteIds;
 
+  /// True for the auto-seeded default admin — forces a password change
+  /// on first login so the hardcoded 'admin123' is never left active.
+  /// Cleared to false once the admin sets their own password.
+  @HiveField(16, defaultValue: false)
+  bool mustChangePassword;
+
   User({
     required this.id,
     required this.fullName,
@@ -77,6 +83,7 @@ class User extends HiveObject {
     List<Map>? routeHistory,
     this.partnerName = '',
     List<String>? scopedRouteIds,
+    this.mustChangePassword = false,
   })  : routeHistory = routeHistory ?? [],
         scopedRouteIds = scopedRouteIds ?? [];
 }

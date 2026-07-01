@@ -35,13 +35,19 @@ class UserAdapter extends TypeAdapter<User> {
           : (fields[13] as List)
               .map((dynamic e) => (e as Map).cast<dynamic, dynamic>())
               .toList(),
+      partnerName: fields[14] == null ? '' : fields[14] as String,
+      scopedRouteIds: fields[15] == null
+          ? []
+          : (fields[15] as List).cast<String>(),
+      mustChangePassword:
+          fields[16] == null ? false : fields[16] as bool,
     );
   }
 
   @override
   void write(BinaryWriter writer, User obj) {
     writer
-      ..writeByte(14)
+      ..writeByte(17)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -69,7 +75,13 @@ class UserAdapter extends TypeAdapter<User> {
       ..writeByte(12)
       ..write(obj.awaitingReassignment)
       ..writeByte(13)
-      ..write(obj.routeHistory);
+      ..write(obj.routeHistory)
+      ..writeByte(14)
+      ..write(obj.partnerName)
+      ..writeByte(15)
+      ..write(obj.scopedRouteIds)
+      ..writeByte(16)
+      ..write(obj.mustChangePassword);
   }
 
   @override

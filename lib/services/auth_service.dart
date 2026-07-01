@@ -121,6 +121,7 @@ class AuthService {
       assignedRouteId: null,
       assignedRouteName: null,
       phoneVerified: true,
+      mustChangePassword: true, // forces password change on first login
     );
 
     await box.put(id, admin);
@@ -163,12 +164,64 @@ class AuthService {
       role: UserRole.admin,
       allowAdminCreation: true,
       phoneVerified: true,
+      mustChangePassword: false, // reviewer goes straight to dashboard
     );
 
     // ignore: avoid_print
     print(user != null
         ? '[Seed] Reviewer admin created OK — phone: $phone'
         : '[Seed] Reviewer admin creation FAILED');
+  }
+
+  // ── First-login password change ────────────────────────────────────────────
+
+  /// Called by ForcePasswordChangeScreen after the seeded admin sets their
+  /// own password. Rehashes with a fresh salt and clears mustChangePassword.
+  static Future<bool> changeFirstLoginPassword({
+    required String userId,
+    required String newPassword,
+  }) async {
+    final box = HiveService.userBox();
+    final user = box.get(userId);
+    if (user == null) return false;
+
+    final salt = _generateSalt();
+    final hash = _hashWithSalt(newPassword, salt);
+
+    final updated = User(
+      id: user.id,
+      fullName: user.fullName,
+      phone: user.phone,
+      passwordHash: hash,
+      passwordSalt: salt,
+      role: user.role,
+      stationName: user.stationName,
+      createdAt: user.createdAt,
+      photoPath: user.photoPath,
+      assignedRouteId: user.assignedRouteId,
+      assignedRouteName: user.assignedRouteName,
+      phoneVerified: user.phoneVerified,
+      awaitingReassignment: user.awaitingReassignment,
+      routeHistory: user.routeHistory,
+      partnerName: user.partnerName,
+      scopedRouteIds: user.scopedRouteIds,
+      mustChangePassword: false, // ← cleared
+    );
+
+    await box.put(userId, updated);
+
+    try {
+      await SyncService.enqueue(
+        type: SyncEventType.userUpdated,
+        aggregateType: 'user',
+        aggregateId: updated.id,
+        actorUserId: updated.id,
+        payload: _userSyncPayload(updated),
+        aggregateVersion: 2,
+      );
+    } catch (_) {}
+
+    return true;
   }
 
   // ── Role helpers ───────────────────────────────────────────────────────────
@@ -245,6 +298,7 @@ class AuthService {
     bool requireAdminForNonSender = false,
     bool allowAdminCreation = false,
     bool phoneVerified = false,
+    bool mustChangePassword = false,
   }) async {
     final box = HiveService.userBox();
 
@@ -302,6 +356,7 @@ class AuthService {
           ? cleanAssignedRouteName
           : null,
       phoneVerified: phoneVerified,
+      mustChangePassword: mustChangePassword,
     );
 
     await box.put(id, user);

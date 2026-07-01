@@ -12,6 +12,7 @@ import '../services/phone_otp_service.dart';
 import '../services/sync_service.dart';
 
 import 'forgot_password_screen.dart';
+import 'force_password_change_screen.dart';
 import 'otp_verification_screen.dart';
 import 'register_screen.dart';
 
@@ -173,7 +174,7 @@ class _LoginScreenState extends State<LoginScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'UNEx LOGISTICS',
+                          'UNEX LOGISTICS',
                           style: TextStyle(
                             fontSize: 22,
                             fontWeight: FontWeight.w900,
@@ -569,6 +570,20 @@ class _LoginScreenState extends State<LoginScreen> {
             userId: user.id,
             phone: user.phone,
             onVerified: () => _goToDashboard(user),
+          ),
+        ),
+      );
+      return;
+    }
+
+    // ── Force password change (seeded default admin) ─────────────────────
+    if (user.mustChangePassword) {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(
+          builder: (_) => ForcePasswordChangeScreen(
+            userId: user.id,
+            onPasswordChanged: () => _goToDashboard(user),
           ),
         ),
       );

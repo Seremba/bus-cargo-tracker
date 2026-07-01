@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:app_links/app_links.dart';
 import 'package:bus_cargo_tracker/services/session_guard.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 
@@ -112,6 +113,13 @@ void main() async {
       password: 'admin123',
       fullName: 'System Admin',
     );
+  }
+
+  // ── ONE-OFF: seed Play Store reviewer admin (debug-only) ──────────────────
+  // Run once via `flutter run`, confirm in logs + on a second device that
+  // login works, then DELETE this block before the next release build.
+  if (kDebugMode) {
+    await AuthService.seedReviewerAdminIfMissing();
   }
 
   // ── Start sync ────────────────────────────────────────────────────────────

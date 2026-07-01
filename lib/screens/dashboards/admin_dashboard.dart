@@ -508,23 +508,6 @@ class _AdminDashboardState extends State<AdminDashboard> {
                     ),
                   ),
                 ),
-                // Revenue — full width hero card
-                _kpiHeroCard(
-                  context: context,
-                  icon: Icons.payments_outlined,
-                  label: 'Revenue today',
-                  value: 'UGX ${_fmtAmount(todayRevenue)}',
-                  sublabel: yesterdayRevenue > 0
-                      ? 'Yesterday: UGX ${_fmtAmount(yesterdayRevenue)}  •  Tap to view all'
-                      : 'Tap to view all payments',
-                  color: Colors.green,
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => const AdminPaymentsScreen(),
-                    ),
-                  ),
-                ),
                 const SizedBox(height: 8),
 
                 // Revenue summary card

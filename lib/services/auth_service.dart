@@ -137,6 +137,40 @@ class AuthService {
     } catch (_) {}
   }
 
+  // ── Seed Play Store reviewer admin (one-off, debug-only) ──────────────────
+  // Run once locally via `flutter run` with kDebugMode active, confirm the
+  // account synced to Supabase, then remove the call from main.dart.
+  // Idempotent — safe to call more than once, it no-ops if already created.
+  static Future<void> seedReviewerAdminIfMissing() async {
+    const phone = '0700000001'; // placeholder — never messaged, admin skips OTP
+    const password = 'Review#UNEx2026!';
+    const fullName = 'Play Reviewer';
+
+    final box = HiveService.userBox();
+    final cleanPhone = PhoneNormalizer.normalizeForStorage(phone);
+    final exists = box.values.any((u) => _phonesMatch(u.phone, cleanPhone));
+
+    if (exists) {
+      // ignore: avoid_print
+      print('[Seed] Reviewer admin already exists — skipping.');
+      return;
+    }
+
+    final user = await register(
+      fullName: fullName,
+      phone: phone,
+      password: password,
+      role: UserRole.admin,
+      allowAdminCreation: true,
+      phoneVerified: true,
+    );
+
+    // ignore: avoid_print
+    print(user != null
+        ? '[Seed] Reviewer admin created OK — phone: $phone'
+        : '[Seed] Reviewer admin creation FAILED');
+  }
+
   // ── Role helpers ───────────────────────────────────────────────────────────
 
   static bool _requiresStation(UserRole role) {
